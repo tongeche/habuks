@@ -2027,11 +2027,19 @@ img {
 
 .dashboard-sidebar-close {
   display: none;
-  background: none;
+  background: rgba(255,255,255,0.1);
   border: none;
   color: #fff;
-  font-size: 2rem;
+  font-size: 1.5rem;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
   cursor: pointer;
+  transition: background 0.15s;
+}
+
+.dashboard-sidebar-close:hover {
+  background: rgba(255,255,255,0.2);
 }
 
 .dashboard-nav {
@@ -2110,11 +2118,37 @@ img {
   align-items: center;
   justify-content: space-between;
   background: #fff;
-  padding: 1.2rem 2rem;
+  padding: 1rem 1.5rem;
   border-bottom: 1px solid #e5e7eb;
   position: sticky;
   top: 0;
   z-index: 10;
+  gap: 1rem;
+}
+
+.dashboard-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.dashboard-menu-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--green-primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.dashboard-menu-toggle:hover {
+  background: var(--green-secondary);
 }
 
 .dashboard-header h1 {
@@ -2151,20 +2185,6 @@ img {
 .dashboard-content {
   flex: 1;
   padding: 2rem;
-}
-
-.dashboard-menu-toggle {
-  display: none;
-  position: fixed;
-  top: 1rem;
-  left: 1rem;
-  z-index: 200;
-  background: var(--green-primary);
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  padding: 0.5rem;
-  cursor: pointer;
 }
 
 .dashboard-overlay {
@@ -4556,32 +4576,108 @@ img {
   color: #9ca3af;
 }
 
-/* Mobile Responsive */
-@media (max-width: 900px) {
+/* ========================================
+   MOBILE RESPONSIVE - Dashboard Layout
+   ======================================== */
+
+/* Tablet: 768px - 1024px */
+@media (max-width: 1024px) {
   .dashboard-sidebar {
-    transform: translateX(-100%);
+    width: 220px;
   }
+  .dashboard-main {
+    margin-left: 220px;
+  }
+  .dashboard-content {
+    padding: 1.5rem;
+  }
+}
+
+/* Mobile: < 768px */
+@media (max-width: 768px) {
+  /* Sidebar - Hidden by default, slides in */
+  .dashboard-sidebar {
+    width: 280px;
+    transform: translateX(-100%);
+    box-shadow: 4px 0 20px rgba(0,0,0,0.3);
+  }
+  
   .dashboard-sidebar.open {
     transform: translateX(0);
   }
+  
+  /* Show close button */
   .dashboard-sidebar-close {
     display: block;
   }
+  
+  /* Main content - Full width */
   .dashboard-main {
     margin-left: 0;
+    width: 100%;
   }
+  
+  /* Show hamburger menu in header */
   .dashboard-menu-toggle {
     display: flex;
   }
+  
+  /* Overlay when sidebar open */
   .dashboard-overlay {
     display: block;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.3);
+    background: rgba(0,0,0,0.5);
     z-index: 99;
+    backdrop-filter: blur(2px);
   }
+  
+  /* Header adjustments */
   .dashboard-header {
-    padding-left: 4rem;
+    padding: 0.75rem 1rem;
+  }
+  
+  .dashboard-header h1 {
+    font-size: 1.1rem;
+  }
+  
+  .dashboard-user-name {
+    display: none;
+  }
+  
+  /* Content padding */
+  .dashboard-content {
+    padding: 1rem;
+  }
+}
+
+/* Small Mobile: < 480px */
+@media (max-width: 480px) {
+  .dashboard-sidebar {
+    width: 100%;
+  }
+  
+  .dashboard-header {
+    padding: 0.5rem 0.75rem;
+  }
+  
+  .dashboard-header h1 {
+    font-size: 0.95rem;
+  }
+  
+  .dashboard-menu-toggle {
+    width: 36px;
+    height: 36px;
+  }
+  
+  .dashboard-content {
+    padding: 0.75rem;
+  }
+  
+  .dashboard-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 0.9rem;
   }
 }
 
@@ -8333,5 +8429,123 @@ img {
 
   .admin-table-row span {
     font-size: 0.85rem;
+  }
+}
+
+/* Admin Panel - Mobile < 768px */
+@media (max-width: 768px) {
+  .admin-panel {
+    gap: 1.25rem;
+  }
+  
+  .admin-header {
+    gap: 1rem;
+  }
+  
+  .admin-header h2 {
+    font-size: 1.25rem;
+  }
+  
+  .admin-header p {
+    font-size: 0.9rem;
+  }
+  
+  .admin-header-actions {
+    width: 100%;
+  }
+  
+  .admin-header-actions button {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.85rem;
+    padding: 0.6rem 0.8rem;
+  }
+  
+  .admin-grid {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+  
+  .admin-card {
+    padding: 1.25rem;
+    border-radius: 14px;
+  }
+  
+  .admin-card h3 {
+    font-size: 1.1rem;
+  }
+  
+  .admin-form-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .admin-form-actions {
+    flex-direction: column;
+  }
+  
+  .admin-form-actions button {
+    width: 100%;
+  }
+  
+  .admin-list-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+  
+  .admin-search {
+    width: 100%;
+  }
+  
+  .admin-search input {
+    width: 100%;
+  }
+  
+  /* Convert table rows to cards */
+  .admin-table-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1rem;
+    background: #f8fafc;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+  }
+  
+  .admin-table-row span {
+    font-size: 0.9rem;
+  }
+  
+  .admin-table-row span:first-child {
+    font-weight: 600;
+    color: var(--navy-900);
+  }
+  
+  .admin-invite-output {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+}
+
+/* Admin Panel - Small Mobile < 480px */
+@media (max-width: 480px) {
+  .admin-card {
+    padding: 1rem;
+  }
+  
+  .admin-card h3 {
+    font-size: 1rem;
+  }
+  
+  .admin-help {
+    font-size: 0.85rem;
+  }
+  
+  .admin-form-field input,
+  .admin-form-field select,
+  .admin-form-field textarea {
+    padding: 0.6rem 0.75rem;
+    font-size: 0.9rem;
   }
 }

@@ -36,15 +36,6 @@ export default function DashboardLayout({ activePage, setActivePage, children, u
 
   return (
     <div className="dashboard-layout">
-      {/* Mobile menu toggle */}
-      <button
-        className="dashboard-menu-toggle"
-        onClick={() => setSidebarOpen(!sidebarOpen)}
-        aria-label="Toggle menu"
-      >
-        <Icon name="menu" size={24} />
-      </button>
-
       {/* Sidebar */}
       <aside className={`dashboard-sidebar${sidebarOpen ? " open" : ""}`}>
         <div className="dashboard-sidebar-header">
@@ -89,7 +80,16 @@ export default function DashboardLayout({ activePage, setActivePage, children, u
       {/* Main content */}
       <main className="dashboard-main">
         <header className="dashboard-header">
-          <h1>{menuItems.find((m) => m.key === activePage)?.label || "Dashboard"}</h1>
+          <div className="dashboard-header-left">
+            <button
+              className="dashboard-menu-toggle"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              aria-label="Toggle menu"
+            >
+              <Icon name="menu" size={22} />
+            </button>
+            <h1>{menuItems.find((m) => m.key === activePage)?.label || "Dashboard"}</h1>
+          </div>
           <div className="dashboard-user">
             <span className="dashboard-user-name">{user?.name || "Member"}</span>
             <div className="dashboard-avatar">
