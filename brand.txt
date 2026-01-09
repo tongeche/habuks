@@ -1,0 +1,17 @@
+JONGOL Brand Colors (derived from logo.png)
+
+Primary
+- JONGOL Green: #398426 (57, 132, 38) - primary brand color for headers, buttons, links, key icons.
+
+Secondary
+- Leaf Green: #6CA71F (108, 167, 31) - accents, hover states, highlights.
+- Forest Green: #216317 (33, 99, 23) - dark tone for text, outlines, footer.
+
+Support / Neutrals
+- Light Leaf: #B1CBA6 (177, 203, 166) - soft backgrounds, section panels, subtle borders.
+- Off White: #FEFEFE (254, 254, 254) - page background, negative space.
+
+Usage notes
+- Use JONGOL Green + Off White as the default pairing.
+- Use Forest Green for body text to maintain contrast on light backgrounds.
+- Limit Leaf Green accents to small UI moments (badges, highlights, hover).
