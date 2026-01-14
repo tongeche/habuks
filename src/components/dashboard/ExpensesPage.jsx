@@ -7,6 +7,7 @@ import {
   getJppBatches,
   getProjectExpenseCategories,
   getProjectExpenses,
+  getRecentProjectExpenses,
   getProjectsWithMembership,
   updateProjectExpense,
 } from "../../lib/dataService.js";
@@ -45,6 +46,8 @@ export default function ExpensesPage({ user }) {
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [expandedExpenseId, setExpandedExpenseId] = useState(null);
+  const [recentExpenses, setRecentExpenses] = useState([]);
+  const [recentExpensesLoading, setRecentExpensesLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -118,6 +121,24 @@ export default function ExpensesPage({ user }) {
     }
   };
 
+  const loadRecentExpenses = async (projectIds) => {
+    if (!projectIds.length) {
+      setRecentExpenses([]);
+      setRecentExpensesLoading(false);
+      return;
+    }
+    setRecentExpensesLoading(true);
+    try {
+      const data = await getRecentProjectExpenses(projectIds, 3);
+      setRecentExpenses(data || []);
+    } catch (error) {
+      console.error("Error loading recent expenses:", error);
+      setRecentExpenses([]);
+    } finally {
+      setRecentExpensesLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadProjects();
   }, [user]);
@@ -125,6 +146,17 @@ export default function ExpensesPage({ user }) {
   const projectLookup = useMemo(() => {
     return new Map(projects.map((project) => [String(project.id), project]));
   }, [projects]);
+
+  const accessibleProjectIds = useMemo(() => {
+    return projects.map((project) => project.id).filter(Boolean);
+  }, [projects]);
+
+  useEffect(() => {
+    if (projectsLoading) {
+      return;
+    }
+    loadRecentExpenses(accessibleProjectIds);
+  }, [accessibleProjectIds, projectsLoading]);
 
   useEffect(() => {
     if (selectedProjectId && !projectLookup.has(selectedProjectId)) {
@@ -310,6 +342,10 @@ export default function ExpensesPage({ user }) {
     });
   }, [expenses]);
 
+  const recentTotal = useMemo(() => {
+    return recentExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
+  }, [recentExpenses]);
+
   const handleProjectSelect = (event) => {
     const value = event.target.value;
     setSelectedProjectId(value);
@@ -381,6 +417,7 @@ export default function ExpensesPage({ user }) {
       setEditingExpenseId(null);
       setShowExpenseForm(false);
       await loadExpenseData(selectedProjectId, false, expenseConfig);
+      await loadRecentExpenses(accessibleProjectIds);
     } catch (error) {
       setErrorMessage(error.message || "Failed to save expense.");
     }
@@ -414,6 +451,7 @@ export default function ExpensesPage({ user }) {
       setStatusMessage("Expense deleted.");
       setExpandedExpenseId(null);
       await loadExpenseData(selectedProjectId, false, expenseConfig);
+      await loadRecentExpenses(accessibleProjectIds);
     } catch (error) {
       setErrorMessage(error.message || "Failed to delete expense.");
     }
@@ -614,6 +652,48 @@ export default function ExpensesPage({ user }) {
               </button>
             </div>
           </div>
+          {projects.length > 0 && (
+            <div className="expense-mobile-summary">
+              <div className="expense-summary-card">
+                <div className="expense-summary-header">
+                  <span className="expense-summary-title">Expense Summary</span>
+                  <span className="expense-summary-tag">All Projects</span>
+                </div>
+                <div className="expense-summary-amount">{formatExpenseTotal(recentTotal)}</div>
+                <span className="expense-summary-sub">Last 3 expenses</span>
+              </div>
+              <div className="expense-summary-list">
+                {recentExpensesLoading ? (
+                  <div className="expense-summary-loading">Loading recent expenses...</div>
+                ) : recentExpenses.length === 0 ? (
+                  <div className="expense-summary-empty">No recent expenses yet.</div>
+                ) : (
+                  recentExpenses.slice(0, 3).map((expense) => {
+                    const categoryLabel = expense.category || "Other";
+                    const tone = getCategoryTone(categoryLabel);
+                    const project = projectLookup.get(String(expense.project_id));
+                    const meta = [project?.code || project?.name, formatDate(expense.expense_date)]
+                      .filter(Boolean)
+                      .join(" · ");
+                    return (
+                      <div className="expense-summary-item" key={`recent-${expense.id}`}>
+                        <div className={`expense-summary-icon expense-tone-${tone}`}>
+                          {getCategoryInitial(categoryLabel)}
+                        </div>
+                        <div className="expense-summary-info">
+                          <span className="expense-summary-name">{categoryLabel}</span>
+                          <span className="expense-summary-subtext">{meta || "Unassigned"}</span>
+                        </div>
+                        <span className="expense-summary-value">
+                          {formatExpenseTotal(expense.amount)}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
           {!selectedProjectId ? (
             <div className="empty-state">
               <Icon name="briefcase" size={40} />

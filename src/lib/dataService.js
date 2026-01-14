@@ -832,6 +832,71 @@ export async function getProjectExpenses(projectRef) {
 }
 
 /**
+ * Get recent expenses across multiple projects
+ */
+export async function getRecentProjectExpenses(projectIds = [], limit = 3) {
+  if (!Array.isArray(projectIds) || projectIds.length === 0) {
+    return [];
+  }
+
+  const mockExpenses = [
+    {
+      id: 101,
+      project_id: projectIds[0],
+      batch_id: null,
+      expense_date: "2026-03-05",
+      category: "Feed",
+      amount: 4800,
+      vendor: "Kosele Feeds",
+      description: "Starter feed",
+      receipt: true,
+    },
+    {
+      id: 102,
+      project_id: projectIds[1] || projectIds[0],
+      batch_id: null,
+      expense_date: "2026-03-04",
+      category: "Utilities",
+      amount: 1500,
+      vendor: "PowerCo",
+      description: "Electricity",
+      receipt: false,
+    },
+    {
+      id: 103,
+      project_id: projectIds[0],
+      batch_id: null,
+      expense_date: "2026-03-03",
+      category: "Supplements",
+      amount: 2300,
+      vendor: "AgroVet",
+      description: "Vitamins",
+      receipt: true,
+    },
+  ];
+
+  const safeLimit = Math.max(1, Number(limit) || 3);
+
+  if (!isSupabaseConfigured || !supabase) {
+    return mockExpenses.slice(0, safeLimit);
+  }
+
+  const { data, error } = await supabase
+    .from("project_expenses")
+    .select("*")
+    .in("project_id", projectIds)
+    .order("expense_date", { ascending: false })
+    .limit(safeLimit);
+
+  if (error) {
+    console.error("Error fetching recent project expenses:", error);
+    throw error;
+  }
+
+  return data || [];
+}
+
+/**
  * Get project sales (by project code or id)
  */
 export async function getProjectSales(projectRef) {
