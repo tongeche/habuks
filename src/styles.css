@@ -5513,9 +5513,11 @@ img {
 
 .expense-mobile-details {
   display: none;
-  padding: 0.7rem 0.9rem 0.9rem;
+  padding: 0.75rem 0.9rem 0.9rem;
   border-top: 1px solid #e5e7eb;
   background: #f8fafc;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .expense-mobile-card.is-open .expense-mobile-details {
@@ -5526,20 +5528,26 @@ img {
   display: grid;
   gap: 0.5rem 0.75rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
 }
 
 .expense-mobile-detail {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.25rem;
 }
 
 .expense-mobile-detail.is-full {
   grid-column: 1 / -1;
+  padding-top: 0.4rem;
+  border-top: 1px dashed #e2e8f0;
 }
 
 .expense-mobile-label {
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -5547,15 +5555,45 @@ img {
 }
 
 .expense-mobile-value {
-  font-size: 0.85rem;
-  color: #1f2937;
+  font-size: 0.88rem;
+  color: #0f172a;
+}
+
+.expense-mobile-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.expense-mobile-tag.is-yes {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.expense-mobile-tag.is-no {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.expense-mobile-notes {
+  color: #334155;
 }
 
 .expense-mobile-actions {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  margin-top: 0.75rem;
+  justify-content: flex-end;
+  gap: 0.85rem;
+  padding: 0 0.2rem 0.15rem;
+}
+
+.expense-mobile-actions .link-button {
+  font-weight: 600;
 }
 
 .jpp-checklist {

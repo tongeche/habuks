@@ -739,14 +739,18 @@ export default function ExpensesPage({ user }) {
                                   </div>
                                   <div className="expense-mobile-detail">
                                     <span className="expense-mobile-label">Receipt</span>
-                                    <span className="expense-mobile-value">
+                                    <span
+                                      className={`expense-mobile-value expense-mobile-tag${
+                                        expense.receipt ? " is-yes" : " is-no"
+                                      }`}
+                                    >
                                       {expense.receipt ? "Yes" : "No"}
                                     </span>
                                   </div>
                                   {expense.description ? (
                                     <div className="expense-mobile-detail is-full">
                                       <span className="expense-mobile-label">Notes</span>
-                                      <span className="expense-mobile-value">
+                                      <span className="expense-mobile-value expense-mobile-notes">
                                         {expense.description}
                                       </span>
                                     </div>
