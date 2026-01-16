@@ -7236,17 +7236,12 @@ img {
 }
 
 @media (max-width: 768px) {
-  .jpp-page.is-overview .page-header {
+  .jpp-page .page-header {
     display: none;
   }
 
   .jpp-page {
     padding-bottom: calc(96px + env(safe-area-inset-bottom));
-  }
-
-  .jpp-page .page-header {
-    flex-direction: column;
-    align-items: flex-start;
   }
 
   .jpp-tabs {

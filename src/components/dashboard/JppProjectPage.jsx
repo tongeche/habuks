@@ -2750,7 +2750,7 @@ export default function JppProjectPage({ user }) {
           <div className="admin-card">
             <div className="section-header">
               <h3>
-                <Icon name="folder" size={18} /> Recent Birds
+                <Icon name="folder" size={18} /> Birds
               </h3>
             </div>
             {birds.length === 0 ? (
@@ -2795,40 +2795,10 @@ export default function JppProjectPage({ user }) {
                           icon: "calendar",
                           tone: "sky",
                         },
-                        {
-                          label: "Status Date",
-                          value: formatDate(bird.status_date),
-                          icon: "clock",
-                          tone: "slate",
-                        },
-                        { label: "Batch", value: batchLabel, icon: "layers", tone: "lime" },
                       ];
-                      const dailyCount = bird.daily_alive_count ?? bird.daily_bird_count ?? null;
-                      const lastLogLabel = bird.last_log_date
-                        ? formatDate(bird.last_log_date)
-                        : "No daily log";
                       const lastWeekLabel = bird.last_week_ending
                         ? formatDate(bird.last_week_ending)
                         : "No weekly log";
-                      const dailyMetrics = [
-                        { label: "Birds counted", value: formatOptional(dailyCount, formatNumber) },
-                        {
-                          label: "Feed",
-                          value: formatOptional(bird.feed_per_bird_kg, formatKg),
-                        },
-                        {
-                          label: "Water refills",
-                          value: formatOptional(bird.water_refills_per_bird, formatNumber),
-                        },
-                        {
-                          label: "Eggs",
-                          value: formatOptional(bird.eggs_per_bird, formatNumber),
-                        },
-                        {
-                          label: "Spend",
-                          value: formatOptional(bird.spend_per_bird, formatCurrency),
-                        },
-                      ];
                       const weeklyMetrics = [
                         {
                           label: "Birds counted",
@@ -2888,10 +2858,9 @@ export default function JppProjectPage({ user }) {
                               <h4>{birdTitle}</h4>
                               <p className="jpp-bird-meta">
                                 <span>{productLabel}</span>
-                                <span className="jpp-bird-meta-dot">•</span>
-                                <span>{batchLabel}</span>
                               </p>
                             </div>
+                            <p className="jpp-bird-bio">{bio}</p>
                             <div className="jpp-bird-feature-grid">
                               <div className="jpp-bird-feature">
                                 <span className="jpp-bird-feature-icon" aria-hidden="true"></span>
@@ -2921,19 +2890,7 @@ export default function JppProjectPage({ user }) {
                                 </div>
                               ))}
                             </div>
-                            <p className="jpp-bird-bio">{bio}</p>
                             <div className="jpp-bird-metrics">
-                              <div className="jpp-bird-metric-block">
-                                <span className="jpp-bird-metric-title">{lastLogLabel}</span>
-                                <div className="jpp-bird-metric-grid">
-                                  {dailyMetrics.map((metric) => (
-                                    <div className="jpp-bird-metric-item" key={metric.label}>
-                                      <span className="jpp-bird-metric-label">{metric.label}</span>
-                                      <span className="jpp-bird-metric-value">{metric.value}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
                               <div className="jpp-bird-metric-block">
                                 <span className="jpp-bird-metric-title">
                                   Latest Weekly • {lastWeekLabel}
