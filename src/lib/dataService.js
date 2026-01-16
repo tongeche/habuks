@@ -1,3 +1,34 @@
+/**
+ * Get all members with their total welfare transaction amount (for admin UI)
+ */
+export async function getMembersWithTotalWelfare() {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const fullSelect = "id, name, email, phone_number, role, status, join_date, total_welfare";
+  let { data, error } = await supabase
+    .from("member_total_welfare")
+    .select(fullSelect)
+    .order("name", { ascending: true });
+
+  if (error && String(error.message || "").toLowerCase().includes("join_date")) {
+    const fallback = await supabase
+      .from("member_total_welfare")
+      .select("id, name, email, phone_number, role, status, total_welfare")
+      .order("name", { ascending: true });
+    if (fallback.error) {
+      throw fallback.error;
+    }
+    return fallback.data || [];
+  }
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
 import { supabase, isSupabaseConfigured } from "./supabase.js";
 
 /**

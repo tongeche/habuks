@@ -176,7 +176,9 @@ export default function JppProjectPage({ user }) {
   const [birdPhotoPreview, setBirdPhotoPreview] = useState("");
   const [birdPhotoKey, setBirdPhotoKey] = useState(0);
   const [savingBird, setSavingBird] = useState(false);
+  const [showBatchFormMobile, setShowBatchFormMobile] = useState(false);
   const [showBirdFormMobile, setShowBirdFormMobile] = useState(false);
+  const batchFormRef = useRef(null);
   const birdFormRef = useRef(null);
 
   const [editingBatchId, setEditingBatchId] = useState(null);
@@ -471,6 +473,14 @@ export default function JppProjectPage({ user }) {
     if (!latest) return batch.start_date;
     return new Date(batch.start_date) > new Date(latest) ? batch.start_date : latest;
   }, null);
+  const batchTotals = batches.reduce(
+    (acc, batch) => {
+      acc.starting += toNumber(batch.starting_count);
+      acc.feed += toNumber(batch.feed_on_hand_kg);
+      return acc;
+    },
+    { starting: 0, feed: 0 }
+  );
 
   const handleBatchChange = (event) => {
     const { name, value } = event.target;
@@ -499,6 +509,19 @@ export default function JppProjectPage({ user }) {
   const handleBirdPhotoChange = (event) => {
     const file = event.target.files?.[0] || null;
     setBirdPhoto(file);
+  };
+
+  const openBatchFormMobile = () => {
+    setShowBatchFormMobile(true);
+    if (typeof window !== "undefined") {
+      setTimeout(() => {
+        batchFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    }
+  };
+
+  const closeBatchFormMobile = () => {
+    setShowBatchFormMobile(false);
   };
 
   const openBirdFormMobile = () => {
@@ -691,6 +714,7 @@ export default function JppProjectPage({ user }) {
       }
       setBatchForm(initialBatchForm);
       setEditingBatchId(null);
+      setShowBatchFormMobile(false);
       await loadJppData(false);
     } catch (error) {
       setErrorMessage(error.message || "Failed to save batch.");
@@ -880,6 +904,7 @@ export default function JppProjectPage({ user }) {
     setEditingBatchId(batch.id);
     setActiveTab("batches");
     resetMessages();
+    openBatchFormMobile();
   };
 
   const handleDailyEdit = (log) => {
@@ -969,6 +994,7 @@ export default function JppProjectPage({ user }) {
   const handleBatchCancel = () => {
     setBatchForm(initialBatchForm);
     setEditingBatchId(null);
+    setShowBatchFormMobile(false);
   };
 
   const handleDailyCancel = () => {
@@ -993,7 +1019,7 @@ export default function JppProjectPage({ user }) {
   }
 
   return (
-    <div className="jpp-page">
+    <div className={`jpp-page ${activeTab === "overview" ? "is-overview" : ""}`}>
       <div className="page-header">
         <div className="page-header-text">
           <h1>JPP Poultry Project</h1>
@@ -1060,7 +1086,7 @@ export default function JppProjectPage({ user }) {
         </button>
         {canManage && (
           <button
-            className={`jpp-tab ${activeTab === "downloads" ? "active" : ""}`}
+            className={`jpp-tab jpp-tab-downloads ${activeTab === "downloads" ? "active" : ""}`}
             onClick={() => setActiveTab("downloads")}
             type="button"
           >
@@ -1072,6 +1098,82 @@ export default function JppProjectPage({ user }) {
 
       {activeTab === "overview" && (
         <>
+          <div className="jpp-mobile-overview">
+            <div className="jpp-mobile-hero">
+              <div className="jpp-mobile-hero-media">
+                <img
+                  src="/assets/jpp_farm-bg.png"
+                  alt="JPP poultry project"
+                  loading="lazy"
+                />
+                <div className="jpp-mobile-hero-overlay">
+                  <div className="jpp-mobile-hero-top">
+                    <span className="jpp-mobile-hero-pill">
+                      <Icon name="location" size={14} />
+                      JPP Poultry Farm
+                    </span>
+                    <span className="jpp-mobile-hero-pill is-muted">
+                      <Icon name="calendar" size={14} />
+                      {formatDate(today)}
+                    </span>
+                  </div>
+                  <div className="jpp-mobile-hero-status">
+                    <span className="jpp-mobile-hero-status-pill">
+                      <Icon name="trending-up" size={14} />
+                      Stable growth
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="jpp-mobile-project-card">
+                <div className="jpp-mobile-project-header">
+                  <h2>JPP Poultry Project</h2>
+                  <span className="jpp-mobile-project-chip">
+                    <Icon name="check-circle" size={14} />
+                    Active
+                  </span>
+                </div>
+                <p>Track batches, daily logs, and growth.</p>
+                <div className="jpp-mobile-project-meta">
+                  <span>
+                    <Icon name="folder" size={14} />
+                    {formatNumber(batches.length)} batches
+                  </span>
+                  <span>
+                    <Icon name="users" size={14} />
+                    {formatNumber(totals.alive)} birds
+                  </span>
+                  <span>
+                    <Icon name="calendar" size={14} />
+                    Latest start {latestStartDate ? formatDate(latestStartDate) : "N/A"}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="jpp-mobile-stat-grid">
+              <div className="jpp-mobile-stat-card">
+                <span className="jpp-mobile-stat-icon tone-blue">
+                  <Icon name="folder" size={18} />
+                </span>
+                <span className="jpp-mobile-stat-value">{formatNumber(batches.length)}</span>
+                <span className="jpp-mobile-stat-label">Batches</span>
+              </div>
+              <div className="jpp-mobile-stat-card">
+                <span className="jpp-mobile-stat-icon tone-amber">
+                  <Icon name="trending-up" size={18} />
+                </span>
+                <span className="jpp-mobile-stat-value">{formatPercent(mortalityPct)}</span>
+                <span className="jpp-mobile-stat-label">Mortality</span>
+              </div>
+              <div className="jpp-mobile-stat-card">
+                <span className="jpp-mobile-stat-icon tone-emerald">
+                  <Icon name="receipt" size={18} />
+                </span>
+                <span className="jpp-mobile-stat-value">{formatKg(totals.feed)}</span>
+                <span className="jpp-mobile-stat-label">Feed Used</span>
+              </div>
+            </div>
+          </div>
           <div className="jpp-modern-summary-grid">
             <div className="jpp-modern-card batches">
               <div className="jpp-modern-icon" style={{background: 'linear-gradient(135deg, #60a5fa, #3b82f6)'}}>
@@ -1560,9 +1662,21 @@ export default function JppProjectPage({ user }) {
       )}
 
       {activeTab === "batches" && (
-        <div className="jpp-tab-grid">
-          <div className="admin-card">
-            <h3>{editingBatchId ? "Edit Batch" : "Add Batch"}</h3>
+        <div className="jpp-tab-grid jpp-batches-layout">
+          <div
+            className={`admin-card jpp-batch-form-card ${showBatchFormMobile ? "is-open" : ""}`}
+            ref={batchFormRef}
+          >
+            <div className="section-header jpp-batch-form-header">
+              <h3>{editingBatchId ? "Edit Batch" : "Add Batch"}</h3>
+              <button
+                type="button"
+                className="jpp-batch-form-toggle"
+                onClick={showBatchFormMobile ? closeBatchFormMobile : openBatchFormMobile}
+              >
+                {showBatchFormMobile ? "Hide form" : "Add batch"}
+              </button>
+            </div>
             <form className="admin-form" onSubmit={handleBatchSubmit}>
               <div className="admin-form-grid">
                 <div className="admin-form-field">
@@ -1709,11 +1823,15 @@ export default function JppProjectPage({ user }) {
             </form>
           </div>
 
-          <div className="admin-card">
-            <div className="section-header">
+          <div className="admin-card jpp-batch-list-card">
+            <div className="section-header jpp-batch-list-header">
               <h3>
                 <Icon name="folder" size={18} /> Batch List
               </h3>
+              <button type="button" className="jpp-batch-add-btn" onClick={openBatchFormMobile}>
+                <Icon name="plus" size={16} />
+                Add batch
+              </button>
             </div>
             {batches.length === 0 ? (
               <div className="empty-state">
@@ -1722,59 +1840,178 @@ export default function JppProjectPage({ user }) {
                 <p>Add the first batch to start tracking.</p>
               </div>
             ) : (
-              <div className="jpp-table-wrap">
-                <table className="jpp-table">
-                  <thead>
-                    <tr>
-                      <th>Batch</th>
-                      <th>Start Date</th>
-                      <th>Bird Type</th>
-                      <th>Starting Count</th>
-                      <th>Feed on Hand</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {batches.map((batch) => (
-                      <tr key={batch.id || batch.batch_code}>
-                        <td>
-                          <div className="jpp-batch-name">
-                            <span className="jpp-batch-code">{batch.batch_code || "N/A"}</span>
-                            <span className="jpp-batch-sub">
-                              {batch.batch_name || "Unnamed batch"}
+              <>
+                <div className="jpp-batches-mobile">
+                  <div className="jpp-batch-summary">
+                    <div className="jpp-batch-summary-header">
+                      <div>
+                        <span className="jpp-batch-summary-title">Batch overview</span>
+                        <span className="jpp-batch-summary-sub">
+                          Latest start {latestStartDate ? formatDate(latestStartDate) : "N/A"}
+                        </span>
+                      </div>
+                      <span className="jpp-batch-summary-pill">
+                        <Icon name="calendar" size={14} />
+                        {formatDate(today)}
+                      </span>
+                    </div>
+                    <div className="jpp-batch-summary-grid">
+                      <div className="jpp-batch-summary-item">
+                        <span className="jpp-batch-summary-icon tone-blue">
+                          <Icon name="folder" size={16} />
+                        </span>
+                        <div>
+                          <span className="jpp-batch-summary-value">
+                            {formatNumber(batches.length)}
+                          </span>
+                          <span className="jpp-batch-summary-label">Batches</span>
+                        </div>
+                      </div>
+                      <div className="jpp-batch-summary-item">
+                        <span className="jpp-batch-summary-icon tone-emerald">
+                          <Icon name="users" size={16} />
+                        </span>
+                        <div>
+                          <span className="jpp-batch-summary-value">
+                            {formatNumber(batchTotals.starting)}
+                          </span>
+                          <span className="jpp-batch-summary-label">Birds started</span>
+                        </div>
+                      </div>
+                      <div className="jpp-batch-summary-item is-wide">
+                        <span className="jpp-batch-summary-icon tone-amber">
+                          <Icon name="receipt" size={16} />
+                        </span>
+                        <div>
+                          <span className="jpp-batch-summary-value">
+                            {formatKg(batchTotals.feed)}
+                          </span>
+                          <span className="jpp-batch-summary-label">Feed on hand</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="jpp-batch-card-grid">
+                    {batches.map((batch) => {
+                      const birdType = [batch.bird_type, batch.breed].filter(Boolean).join(" · ");
+                      const batchCost =
+                        toNumber(batch.cost_birds) +
+                        toNumber(batch.cost_transport) +
+                        toNumber(batch.cost_initial_meds);
+
+                      return (
+                        <article className="jpp-batch-card" key={batch.id || batch.batch_code}>
+                          <div className="jpp-batch-card-header">
+                            <div className="jpp-batch-card-title">
+                              <span className="jpp-batch-card-code">
+                                {batch.batch_code || "Batch"}
+                              </span>
+                              <span className="jpp-batch-card-name">
+                                {batch.batch_name || "Unnamed batch"}
+                              </span>
+                            </div>
+                            <span className="jpp-batch-card-pill">
+                              <Icon name="calendar" size={14} />
+                              {formatDate(batch.start_date)}
                             </span>
                           </div>
-                        </td>
-                        <td>{formatDate(batch.start_date)}</td>
-                        <td>
-                          {batch.bird_type || "N/A"}
-                          {batch.breed ? ` - ${batch.breed}` : ""}
-                        </td>
-                        <td>{formatNumber(batch.starting_count)}</td>
-                        <td>{formatKg(batch.feed_on_hand_kg)}</td>
-                        <td>
-                          <div className="jpp-table-actions">
+                          <div className="jpp-batch-card-meta">
+                            <span className="jpp-batch-meta-item">
+                              <Icon name="feather" size={14} />
+                              {birdType || "Bird type N/A"}
+                            </span>
+                            <span className="jpp-batch-meta-item">
+                              <Icon name="users" size={14} />
+                              {formatNumber(batch.starting_count)} birds
+                            </span>
+                            <span className="jpp-batch-meta-item">
+                              <Icon name="receipt" size={14} />
+                              {formatKg(batch.feed_on_hand_kg)} feed
+                            </span>
+                            <span className="jpp-batch-meta-item">
+                              <Icon name="coins" size={14} />
+                              {formatCurrency(batchCost)} total cost
+                            </span>
+                          </div>
+                          <div className="jpp-batch-card-actions">
                             <button
                               type="button"
-                              className="link-button"
+                              className="jpp-batch-action"
                               onClick={() => handleBatchEdit(batch)}
                             >
                               Edit
                             </button>
                             <button
                               type="button"
-                              className="link-button jpp-danger"
+                              className="jpp-batch-action is-danger"
                               onClick={() => handleBatchDelete(batch.id)}
                             >
                               Delete
                             </button>
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="jpp-batches-table">
+                  <div className="jpp-table-wrap">
+                    <table className="jpp-table">
+                      <thead>
+                        <tr>
+                          <th>Batch</th>
+                          <th>Start Date</th>
+                          <th>Bird Type</th>
+                          <th>Starting Count</th>
+                          <th>Feed on Hand</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {batches.map((batch) => (
+                          <tr key={batch.id || batch.batch_code}>
+                            <td>
+                              <div className="jpp-batch-name">
+                                <span className="jpp-batch-code">
+                                  {batch.batch_code || "N/A"}
+                                </span>
+                                <span className="jpp-batch-sub">
+                                  {batch.batch_name || "Unnamed batch"}
+                                </span>
+                              </div>
+                            </td>
+                            <td>{formatDate(batch.start_date)}</td>
+                            <td>
+                              {batch.bird_type || "N/A"}
+                              {batch.breed ? ` - ${batch.breed}` : ""}
+                            </td>
+                            <td>{formatNumber(batch.starting_count)}</td>
+                            <td>{formatKg(batch.feed_on_hand_kg)}</td>
+                            <td>
+                              <div className="jpp-table-actions">
+                                <button
+                                  type="button"
+                                  className="link-button"
+                                  onClick={() => handleBatchEdit(batch)}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="link-button jpp-danger"
+                                  onClick={() => handleBatchDelete(batch.id)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         </div>

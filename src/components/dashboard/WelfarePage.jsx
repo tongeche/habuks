@@ -80,8 +80,40 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
 
   return (
     <div className="welfare-page-modern">
-      {/* Header */}
-      <div className="page-header">
+      {/* Mobile Hero Header - Banking App Style */}
+      <div className="welfare-mobile-hero">
+        <div className="welfare-hero-bg">
+          <div className="hero-circle hero-circle-1"></div>
+          <div className="hero-circle hero-circle-2"></div>
+        </div>
+        <div className="welfare-hero-content">
+          <span className="hero-balance-label">BALANCE</span>
+          <h2 className="hero-balance-amount">{formatCurrency(summary?.currentBalance || 0).replace('Ksh. ', '')}<span className="hero-currency">KES</span></h2>
+          <div className="hero-quick-actions">
+            <button className="hero-action-btn">
+              <div className="hero-action-icon">
+                <Icon name="trending-up" size={18} />
+              </div>
+              <span>Contribute</span>
+            </button>
+            <button className="hero-action-btn">
+              <div className="hero-action-icon">
+                <Icon name="calendar" size={18} />
+              </div>
+              <span>Schedule</span>
+            </button>
+            <button className="hero-action-btn">
+              <div className="hero-action-icon">
+                <Icon name="wallet" size={18} />
+              </div>
+              <span>History</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Desktop Header */}
+      <div className="page-header welfare-desktop-header">
         <div className="page-header-text">
           <h1>Welfare Fund</h1>
         </div>
@@ -147,8 +179,42 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="welfare-tabs">
+      {/* Mobile Stats Cards */}
+      <div className="welfare-mobile-stats">
+        <div className="mobile-stat-card">
+          <div className="mobile-stat-icon completed">
+            <Icon name="check-circle" size={20} />
+          </div>
+          <div className="mobile-stat-content">
+            <span className="mobile-stat-label">Completed</span>
+            <span className="mobile-stat-value">{summary?.completedCycles || 0} Cycles</span>
+          </div>
+          <span className="mobile-stat-sub">{remainingCycles} remaining</span>
+        </div>
+        <div className="mobile-stat-card">
+          <div className="mobile-stat-icon target">
+            <Icon name="trending-up" size={20} />
+          </div>
+          <div className="mobile-stat-content">
+            <span className="mobile-stat-label">Target</span>
+            <span className="mobile-stat-value">{formatCurrency(summary?.finalAmount || 12000)}</span>
+          </div>
+          <span className="mobile-stat-sub">After all cycles</span>
+        </div>
+        <div className="mobile-stat-card">
+          <div className="mobile-stat-icon cycle">
+            <Icon name="calendar" size={20} />
+          </div>
+          <div className="mobile-stat-content">
+            <span className="mobile-stat-label">Per Cycle</span>
+            <span className="mobile-stat-value">{formatCurrency(summary?.contributionPerCycle || 1000)}</span>
+          </div>
+          <span className="mobile-stat-sub">From each payout</span>
+        </div>
+      </div>
+
+      {/* Desktop Tabs */}
+      <div className="welfare-tabs welfare-tabs-desktop">
         <button 
           className={`welfare-tab ${activeTab === 'overview' ? 'active' : ''}`}
           onClick={() => setActiveTab('overview')}
@@ -169,6 +235,31 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
         >
           <Icon name="wallet" size={16} />
           Transactions
+        </button>
+      </div>
+
+      {/* Mobile Bottom Tab Navigation */}
+      <div className="welfare-mobile-tabs">
+        <button 
+          className={`mobile-tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
+          onClick={() => setActiveTab('overview')}
+        >
+          <Icon name="home" size={20} />
+          <span>Overview</span>
+        </button>
+        <button 
+          className={`mobile-tab-btn ${activeTab === 'payouts' ? 'active' : ''}`}
+          onClick={() => setActiveTab('payouts')}
+        >
+          <Icon name="calendar" size={20} />
+          <span>Payouts</span>
+        </button>
+        <button 
+          className={`mobile-tab-btn ${activeTab === 'transactions' ? 'active' : ''}`}
+          onClick={() => setActiveTab('transactions')}
+        >
+          <Icon name="wallet" size={20} />
+          <span>History</span>
         </button>
       </div>
 

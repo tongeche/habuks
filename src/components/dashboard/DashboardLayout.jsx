@@ -8,12 +8,13 @@ const baseMenuItems = [
   { key: "overview", label: "Dashboard", icon: "home" },
   {
     key: "welfare",
-    label: "Welfare Account",
+    label: "Welfare",
     icon: "heart",
     subItems: [
       { key: "payouts", label: "Payout Schedule", icon: "calendar" },
       { key: "contributions", label: "My Contributions", icon: "wallet" },
       { key: "documents", label: "Documents", icon: "folder" },
+      { key: "meetings", label: "Meetings", icon: "users" },
     ],
   },
   {
@@ -27,7 +28,7 @@ const baseMenuItems = [
   },
   { key: "expenses", label: "Expense", icon: "receipt" },
   { key: "news", label: "News & Updates", icon: "newspaper" },
-  { key: "meetings", label: "Meetings", icon: "users" },
+  // { key: "meetings", label: "Meetings", icon: "users" },
   { key: "profile", label: "My Profile", icon: "user" },
 ];
 

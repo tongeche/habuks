@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   createMemberAdmin,
   updateMemberAdmin,
-  getMembersAdmin,
+  getMembersWithTotalWelfare,
   getMemberInvites,
   createMemberInvite,
   revokeMemberInvite,
@@ -162,7 +162,7 @@ export default function AdminPage({ user }) {
   const loadMembers = async () => {
     setLoadingMembers(true);
     try {
-      const data = await getMembersAdmin();
+      const data = await getMembersWithTotalWelfare();
       setMembers(data);
     } catch (error) {
       setErrorMessage(error.message || "Failed to load members.");
@@ -334,22 +334,19 @@ export default function AdminPage({ user }) {
     );
   }
 
+  // Get first 5 modules for mobile nav (most commonly used)
+  const mobileNavModules = adminModules.filter(m => m.sections?.length).slice(0, 5);
+
   return (
     <div className="admin-panel">
       <div className="admin-header">
-        <div>
-          <h2>Admin Console</h2>
-          <p>Control members, projects, finances, welfare, and communications.</p>
-        </div>
-        <div className="admin-header-actions">
-          <div className="admin-search admin-search--top">
-            <Icon name="search" size={16} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search members, invites, email or phone"
-            />
-          </div>
+        <div className="admin-search admin-search--top">
+          <Icon name="search" size={16} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search members, invites, email or phone"
+          />
         </div>
       </div>
 
@@ -690,7 +687,7 @@ export default function AdminPage({ user }) {
         <div className="admin-card" id="admin-members-list">
           <div className="admin-card-header">
             <h3>Members</h3>
-            <div className="admin-card-actions">
+            <div className="admin-card-actions desktop-only">
               <button type="button" className="btn-primary small" onClick={handleNewMember}>
                 <Icon name="plus" size={16} />
                 New Member
@@ -707,35 +704,73 @@ export default function AdminPage({ user }) {
           {loadingMembers ? (
             <p>Loading members...</p>
           ) : (
-            <div className="admin-table">
-              <div className="admin-table-row admin-table-head">
-                <span>Name</span>
-                <span>Email</span>
-                <span>Phone</span>
-                <span>Role</span>
-                <span>Status</span>
-                <span>Actions</span>
-              </div>
-              {filteredMembers.map((member) => (
-                <div className="admin-table-row" key={member.id}>
-                  <span>{member.name}</span>
-                  <span>{member.email || "-"}</span>
-                  <span>{member.phone_number || "-"}</span>
-                  <span>{member.role || "member"}</span>
-                  <span>{member.status || "active"}</span>
-                  <span>
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={() => handleEditMember(member)}
-                    >
-                      Edit
-                    </button>
-                  </span>
+            <>
+              {/* Desktop Table */}
+              <div className="admin-table desktop-only">
+                <div className="admin-table-row admin-table-head">
+                  <span>Name</span>
+                  <span>Email</span>
+                  <span>Phone</span>
+                  <span>Role</span>
+                  <span>Status</span>
+                  <span>Total Welfare</span>
+                  <span>Actions</span>
                 </div>
-              ))}
-            </div>
+                {filteredMembers.map((member) => (
+                  <div className="admin-table-row" key={member.id}>
+                    <span>{member.name}</span>
+                    <span>{member.email || "-"}</span>
+                    <span>{member.phone_number || "-"}</span>
+                    <span>{member.role || "member"}</span>
+                    <span>{member.status || "active"}</span>
+                    <span>{typeof member.total_welfare === 'number' ? member.total_welfare.toLocaleString('en-KE', { style: 'currency', currency: 'KES', maximumFractionDigits: 0 }) : '-'}</span>
+                    <span>
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => handleEditMember(member)}
+                      >
+                        Edit
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {/* Mobile List View */}
+              <div className="members-list-mobile mobile-only">
+                {filteredMembers.map((member) => (
+                  <div className="member-list-item" key={member.id}>
+                    <div className="member-list-main" onClick={() => handleEditMember(member)}>
+                      <div className="member-avatar">
+                        {member.name ? member.name.charAt(0).toUpperCase() : <Icon name="user" size={18} />}
+                      </div>
+                      <div className="member-list-info">
+                        <div className="member-list-name">{member.name}</div>
+                        <div className="member-list-role">{member.role || "member"}</div>
+                        <div className="member-list-phone">{member.phone_number || "-"}</div>
+                        <div className="member-list-welfare">
+                          <span className="welfare-label">Total Welfare:</span>
+                          <span className="welfare-value">{typeof member.total_welfare === 'number' ? member.total_welfare.toLocaleString('en-KE', { style: 'currency', currency: 'KES', maximumFractionDigits: 0 }) : '-'}</span>
+                        </div>
+                      </div>
+                      <button className="member-list-edit" onClick={e => { e.stopPropagation(); handleEditMember(member); }}>
+                        <Icon name="edit" size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
+          {/* Sticky action bar for mobile */}
+          <div className="members-mobile-actionbar mobile-only">
+            <button className="btn-primary" onClick={handleNewMember}>
+              <Icon name="plus" size={18} /> Add Member
+            </button>
+            <button className="btn-secondary">
+              <Icon name="filter" size={18} /> Filter
+            </button>
+          </div>
         </div>
       )}
 
@@ -793,6 +828,29 @@ export default function AdminPage({ user }) {
           )}
         </div>
       )}
+
+      {/* Mobile Bottom Navigation */}
+      <div className="admin-mobile-nav">
+        <button
+          type="button"
+          className={`admin-mobile-nav-btn ${!activeModule ? 'active' : ''}`}
+          onClick={() => setActiveModule(null)}
+        >
+          <Icon name="home" size={20} />
+          <span>Home</span>
+        </button>
+        {mobileNavModules.map((module) => (
+          <button
+            key={module.key}
+            type="button"
+            className={`admin-mobile-nav-btn ${activeModule === module.key ? 'active' : ''}`}
+            onClick={() => handleModuleClick(module)}
+          >
+            <Icon name={module.icon} size={20} />
+            <span>{module.title.split(' ')[0]}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
