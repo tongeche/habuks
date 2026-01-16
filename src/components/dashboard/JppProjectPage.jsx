@@ -2155,8 +2155,8 @@ export default function JppProjectPage({ user }) {
             {dailyLogsForMobile.length === 0 ? (
               <div className="jpp-daily-empty">
                 <Icon name="check-circle" size={32} />
-                <h4>No daily logs yet</h4>
-                <p>Start recording daily activity for each batch.</p>
+                <h4>{dailyEmptyState.title}</h4>
+                <p>{dailyEmptyState.copy}</p>
               </div>
             ) : (
               <div className="jpp-daily-list">
