@@ -1,0 +1,28 @@
+{
+  "name": "Jongol Foundation",
+  "short_name": "Jongol",
+  "description": "Community-led livelihoods, food security, and sustainable enterprise in Homa Bay County, Kenya.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f6fb",
+  "theme_color": "#1f2a52",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

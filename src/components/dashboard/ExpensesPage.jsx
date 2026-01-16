@@ -1,5 +1,37 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../icons.jsx";
+function ExpenseSummaryCard({ user, project, balance = 0 }) {
+  return (
+    <div
+      style={{
+        background: "#111",
+        borderRadius: 24,
+        color: "#fff",
+        padding: "32px 24px",
+        maxWidth: 400,
+        margin: "32px auto 24px auto",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+        fontFamily: "Inter, sans-serif",
+      }}
+    >
+      <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
+        Hello {user?.name || "User"}
+      </div>
+      <div style={{ fontSize: 14, color: "#bbb", marginBottom: 4 }}>
+        Project
+      </div>
+      <div style={{ fontSize: 18, fontWeight: 500, marginBottom: 16 }}>
+        {project?.name || "No Project"}
+      </div>
+      <div style={{ fontSize: 14, color: "#bbb", marginBottom: 4 }}>
+        Available balance
+      </div>
+      <div style={{ fontSize: 32, fontWeight: 700 }}>
+        Ksh. {balance?.toLocaleString("en-KE")}
+      </div>
+    </div>
+  );
+}
 import {
   createProjectExpense,
   deleteProjectExpense,
@@ -486,10 +518,17 @@ export default function ExpensesPage({ user }) {
 
   if (projectsLoading) {
     return (
-      <div className="dashboard-loading">
-        <div className="loading-spinner"></div>
-        <p>Loading projects...</p>
-      </div>
+      <>
+        <ExpenseSummaryCard
+          user={user}
+          project={selectedProject}
+          balance={recentTotal || 0}
+        />
+        <div className="dashboard-loading">
+          <div className="loading-spinner"></div>
+          <p>Loading projects...</p>
+        </div>
+      </>
     );
   }
 

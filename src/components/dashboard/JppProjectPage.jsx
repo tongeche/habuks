@@ -73,6 +73,14 @@ const downloadDocs = [
   { key: "feed-inventory", label: "Feed Inventory Sheet" },
 ];
 
+const toDateKey = (value) => {
+  if (!value) return "";
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+  return String(value).slice(0, 10);
+};
+
 export default function JppProjectPage({ user }) {
   const today = new Date().toISOString().slice(0, 10);
   const canManage = ["admin", "superadmin", "project_manager", "member"].includes(user?.role);
@@ -177,14 +185,17 @@ export default function JppProjectPage({ user }) {
   const [birdPhotoKey, setBirdPhotoKey] = useState(0);
   const [savingBird, setSavingBird] = useState(false);
   const [showBatchFormMobile, setShowBatchFormMobile] = useState(false);
+  const [showDailyFormMobile, setShowDailyFormMobile] = useState(false);
   const [showBirdFormMobile, setShowBirdFormMobile] = useState(false);
   const batchFormRef = useRef(null);
+  const dailyFormRef = useRef(null);
   const birdFormRef = useRef(null);
 
   const [editingBatchId, setEditingBatchId] = useState(null);
   const [editingDailyId, setEditingDailyId] = useState(null);
   const [editingWeeklyId, setEditingWeeklyId] = useState(null);
   const [selectedBatchId, setSelectedBatchId] = useState("");
+  const [selectedDailyDate, setSelectedDailyDate] = useState(null);
   const [printSheet, setPrintSheet] = useState("");
   const [selectedDownloadDoc, setSelectedDownloadDoc] = useState("");
   const [showDownloadPreview, setShowDownloadPreview] = useState(false);
@@ -375,6 +386,15 @@ export default function JppProjectPage({ user }) {
     });
   }, [expenseItems]);
 
+  useEffect(() => {
+    if (selectedDailyDate === null && dailyLogs.length > 0) {
+      const nextDate = String(dailyLogs[0]?.log_date || "").slice(0, 10);
+      if (nextDate) {
+        setSelectedDailyDate(nextDate);
+      }
+    }
+  }, [dailyLogs, selectedDailyDate]);
+
   const getBatchLabel = (batchId) => {
     if (!batchId) return "Unassigned";
     const batch = batchLookup.get(String(batchId));
@@ -447,6 +467,15 @@ export default function JppProjectPage({ user }) {
       day: "numeric",
     });
   };
+  const formatLongDate = (dateStr) => {
+    if (!dateStr) return "All daily logs";
+    return new Date(dateStr).toLocaleDateString("en-KE", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  };
 
   const formatOptional = (value, formatter) => {
     if (value === null || value === undefined || value === "") {
@@ -468,6 +497,39 @@ export default function JppProjectPage({ user }) {
   );
 
   const mortalityPct = totals.starting ? (totals.deaths / totals.starting) * 100 : 0;
+  const activeDailyDate = selectedDailyDate || today;
+
+  const weekDates = useMemo(() => {
+    const baseDate = new Date(activeDailyDate);
+    if (Number.isNaN(baseDate.getTime())) {
+      return [];
+    }
+    const dayIndex = baseDate.getDay();
+    const mondayOffset = (dayIndex + 6) % 7;
+    const monday = new Date(baseDate);
+    monday.setDate(baseDate.getDate() - mondayOffset);
+    return weekDayLabels.map((label, index) => {
+      const date = new Date(monday);
+      date.setDate(monday.getDate() + index);
+      return { label, day: date.getDate(), dateKey: toDateKey(date) };
+    });
+  }, [activeDailyDate]);
+
+  const dailyLogsForMobile = useMemo(() => {
+    if (!selectedDailyDate) return dailyLogs;
+    return dailyLogs.filter((log) => toDateKey(log.log_date) === selectedDailyDate);
+  }, [dailyLogs, selectedDailyDate]);
+
+  const dailyEmptyState =
+    dailyLogs.length === 0
+      ? {
+          title: "No daily logs yet",
+          copy: "Start recording daily activity for each batch.",
+        }
+      : {
+          title: "No logs for this day",
+          copy: "Pick another day or add a log.",
+        };
   const latestStartDate = batches.reduce((latest, batch) => {
     if (!batch.start_date) return latest;
     if (!latest) return batch.start_date;
@@ -535,6 +597,28 @@ export default function JppProjectPage({ user }) {
 
   const closeBirdFormMobile = () => {
     setShowBirdFormMobile(false);
+  };
+
+  const openDailyFormMobile = () => {
+    setShowDailyFormMobile(true);
+    if (typeof window !== "undefined") {
+      setTimeout(() => {
+        dailyFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    }
+  };
+
+  const closeDailyFormMobile = () => {
+    setShowDailyFormMobile(false);
+  };
+
+  const handleDailyMobileCta = () => {
+    if (!hasBatches) {
+      setActiveTab("batches");
+      openBatchFormMobile();
+      return;
+    }
+    openDailyFormMobile();
   };
 
   const handleBatchSelect = (event) => {
@@ -766,6 +850,7 @@ export default function JppProjectPage({ user }) {
       }
       setDailyForm(initialDailyForm);
       setEditingDailyId(null);
+      setShowDailyFormMobile(false);
       await loadJppData(false);
     } catch (error) {
       setErrorMessage(error.message || "Failed to save daily log.");
@@ -925,6 +1010,7 @@ export default function JppProjectPage({ user }) {
     setEditingDailyId(log.id);
     setActiveTab("daily");
     resetMessages();
+    openDailyFormMobile();
   };
 
   const handleWeeklyEdit = (entry) => {
@@ -1000,6 +1086,7 @@ export default function JppProjectPage({ user }) {
   const handleDailyCancel = () => {
     setDailyForm(initialDailyForm);
     setEditingDailyId(null);
+    setShowDailyFormMobile(false);
   };
 
   const handleWeeklyCancel = () => {
@@ -2018,10 +2105,142 @@ export default function JppProjectPage({ user }) {
       )}
 
       {activeTab === "daily" && (
-        <div className="jpp-tab-grid">
+        <div className="jpp-tab-grid jpp-daily-layout">
+          <div className="jpp-daily-mobile-shell" aria-label="Daily log mobile view">
+            <div className="jpp-daily-mobile-header">
+              <span className="jpp-daily-mobile-date">{formatLongDate(selectedDailyDate)}</span>
+            </div>
+            <div className="jpp-daily-week-strip" aria-label="Select log day">
+              {weekDates.map((day) => (
+                <button
+                  key={day.dateKey}
+                  type="button"
+                  className={`jpp-daily-week-day${activeDailyDate === day.dateKey ? " is-active" : ""}`}
+                  onClick={() => setSelectedDailyDate(day.dateKey)}
+                  aria-pressed={activeDailyDate === day.dateKey}
+                >
+                  <span className="jpp-daily-week-label">{day.label}</span>
+                  <span className="jpp-daily-week-date">{day.day}</span>
+                </button>
+              ))}
+            </div>
+            <div className="jpp-daily-reminder">
+              <div className="jpp-daily-reminder-copy">
+                <h4>Record today's log</h4>
+                <p>Track feed, eggs, and spend in minutes.</p>
+                <button
+                  type="button"
+                  className="btn-primary jpp-daily-reminder-btn"
+                  onClick={handleDailyMobileCta}
+                >
+                  {hasBatches ? "Add daily log" : "Add a batch"}
+                </button>
+              </div>
+              <div className="jpp-daily-reminder-icon" aria-hidden="true">
+                <Icon name="clock-alert" size={28} />
+              </div>
+            </div>
+            <div className="jpp-daily-list-header">
+              <h4>Daily logs</h4>
+              {selectedDailyDate && (
+                <button
+                  type="button"
+                  className="link-button jpp-daily-see-all"
+                  onClick={() => setSelectedDailyDate("")}
+                >
+                  See all
+                </button>
+              )}
+            </div>
+            {dailyLogsForMobile.length === 0 ? (
+              <div className="jpp-daily-empty">
+                <Icon name="check-circle" size={32} />
+                <h4>No daily logs yet</h4>
+                <p>Start recording daily activity for each batch.</p>
+              </div>
+            ) : (
+              <div className="jpp-daily-list">
+                {dailyLogsForMobile.map((log) => {
+                  const aliveLabel = formatOptional(log.alive_count, formatNumber);
+                  const feedLabel = formatKg(log.feed_used_kg);
+                  const subLabel = `${formatDate(log.log_date)} • Alive ${aliveLabel} • Feed ${feedLabel}`;
+                  const spendLabel = toNumber(log.money_spent)
+                    ? formatCurrency(log.money_spent)
+                    : "No spend";
+                  const deathsToday = toNumber(log.deaths_today);
+                  const deathsLabel = deathsToday
+                    ? `${formatNumber(log.deaths_today)} deaths`
+                    : "No deaths";
+                  return (
+                    <div className="jpp-daily-item" key={log.id}>
+                      <div className="jpp-daily-item-row">
+                        <div
+                          className={`jpp-daily-item-dot${deathsToday ? " is-alert" : ""}`}
+                        >
+                          <Icon name={deathsToday ? "alert" : "check"} size={14} />
+                        </div>
+                        <div className="jpp-daily-item-body">
+                          <span className="jpp-daily-item-title">
+                            {getBatchLabel(log.batch_id)}
+                          </span>
+                          <span className="jpp-daily-item-sub">{subLabel}</span>
+                        </div>
+                        <div className="jpp-daily-item-meta">
+                          <span className="jpp-daily-item-value">{spendLabel}</span>
+                          <span
+                            className={`jpp-daily-item-meta-line${
+                              deathsToday ? " is-alert" : ""
+                            }`}
+                          >
+                            {deathsLabel}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="jpp-daily-item-actions">
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => handleDailyEdit(log)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button jpp-danger"
+                          onClick={() => handleDailyDelete(log.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <button
+              type="button"
+              className="jpp-daily-fab"
+              onClick={handleDailyMobileCta}
+              aria-label={hasBatches ? "Add daily log" : "Add a batch"}
+            >
+              <Icon name="plus" size={20} />
+            </button>
+          </div>
           {hasBatches ? (
-            <div className="admin-card">
-              <h3>{editingDailyId ? "Edit Daily Log" : "Add Daily Log"}</h3>
+            <div
+              className={`admin-card jpp-daily-form-card ${showDailyFormMobile ? "is-open" : ""}`}
+              ref={dailyFormRef}
+            >
+              <div className="section-header jpp-daily-form-header">
+                <h3>{editingDailyId ? "Edit Daily Log" : "Add Daily Log"}</h3>
+                <button
+                  type="button"
+                  className="jpp-daily-form-toggle"
+                  onClick={showDailyFormMobile ? closeDailyFormMobile : openDailyFormMobile}
+                >
+                  {showDailyFormMobile ? "Hide form" : "Add log"}
+                </button>
+              </div>
               <form className="admin-form" onSubmit={handleDailySubmit}>
                 <div className="admin-form-grid">
                   <div className="admin-form-field">
@@ -2222,7 +2441,11 @@ export default function JppProjectPage({ user }) {
               </form>
             </div>
           ) : (
-            <div className="admin-card jpp-empty-card">
+            <div
+              className={`admin-card jpp-empty-card jpp-daily-form-card ${
+                showDailyFormMobile ? "is-open" : ""
+              }`}
+            >
               <h3>No batch found</h3>
               <p className="admin-help">Add a batch first so you can record a daily log.</p>
               <button className="btn-primary" type="button" onClick={() => setActiveTab("batches")}>
@@ -2231,7 +2454,7 @@ export default function JppProjectPage({ user }) {
             </div>
           )}
 
-          <div className="admin-card">
+          <div className="admin-card jpp-daily-history-card">
             <div className="section-header">
               <h3>
                 <Icon name="check-circle" size={18} /> Daily Log History
