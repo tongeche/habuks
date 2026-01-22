@@ -978,6 +978,62 @@ export async function getProjectExpenses(projectRef) {
 }
 
 /**
+ * Get project expenses for multiple projects (by ids)
+ */
+export async function getProjectExpensesForProjects(projectIds) {
+  if (!projectIds || projectIds.length === 0) {
+    return [];
+  }
+
+  const mockExpenses = [
+    {
+      id: "mock-expense-1",
+      project_id: projectIds[0],
+      batch_id: null,
+      expense_date: "2026-03-01",
+      category: "Feed",
+      amount: 12500,
+      vendor: "Kosele Feeds",
+      description: "Starter feed",
+      receipt: true,
+    },
+    {
+      id: "mock-expense-2",
+      project_id: projectIds[1] || projectIds[0],
+      batch_id: null,
+      expense_date: "2026-03-02",
+      category: "Utilities",
+      amount: 2500,
+      vendor: "PowerCo",
+      description: "Brooder electricity",
+      receipt: false,
+    },
+  ];
+
+  if (!isSupabaseConfigured || !supabase) {
+    return mockExpenses;
+  }
+
+  const safeIds = projectIds.filter(Boolean);
+  if (safeIds.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("project_expenses")
+    .select("*")
+    .in("project_id", safeIds)
+    .order("expense_date", { ascending: false });
+
+  if (error) {
+    console.error("Error fetching project expenses:", error);
+    throw error;
+  }
+
+  return data || [];
+}
+
+/**
  * Get recent expenses across multiple projects
  */
 export async function getRecentProjectExpenses(projectIds = [], limit = 3) {
@@ -1068,6 +1124,53 @@ export async function getProjectSales(projectRef) {
     .from("project_sales")
     .select("*")
     .eq("project_id", projectId)
+    .order("sale_date", { ascending: false });
+
+  if (error) {
+    console.error("Error fetching project sales:", error);
+    throw error;
+  }
+
+  return data || [];
+}
+
+/**
+ * Get project sales for multiple projects (by ids)
+ */
+export async function getProjectSalesForProjects(projectIds) {
+  if (!projectIds || projectIds.length === 0) {
+    return [];
+  }
+
+  const mockSales = [
+    {
+      id: "mock-sale-1",
+      project_id: projectIds[0],
+      batch_id: null,
+      sale_date: "2026-01-12",
+      product_type: "peanut_butter",
+      quantity_units: 20,
+      unit_price: 350,
+      total_amount: 7000,
+      customer_name: "Kosele Market",
+      customer_type: "retail",
+      payment_status: "paid",
+    },
+  ];
+
+  if (!isSupabaseConfigured || !supabase) {
+    return mockSales;
+  }
+
+  const safeIds = projectIds.filter(Boolean);
+  if (safeIds.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("project_sales")
+    .select("*")
+    .in("project_id", safeIds)
     .order("sale_date", { ascending: false });
 
   if (error) {

@@ -6057,30 +6057,42 @@ img {
 
 .expense-mobile-title-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
 }
 
+.expense-mobile-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
 .expense-mobile-title-row h2 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.4rem;
   font-family: var(--font-display);
-  color: var(--navy-900);
+  color: #1f2937;
+}
+
+.expense-mobile-title p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #6b7280;
 }
 
 .expense-filter-btn {
   width: 36px;
   height: 36px;
   border-radius: 12px;
-  border: 1px solid #e2e8f0;
-  background: #fff;
-  color: #2f5b34;
+  border: 1px solid #e5e7eb;
+  background: #f6f7f2;
+  color: #3a6d47;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 6px 12px rgba(15, 23, 42, 0.08);
 }
 
 .expense-mobile-project-card {
@@ -6124,20 +6136,20 @@ img {
   overflow: hidden;
   border-radius: 20px;
   padding: 1rem 1.1rem;
-  background: linear-gradient(135deg, #e7f5e9, #f3f8f1);
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 18px 30px rgba(47, 91, 52, 0.12);
+  background: linear-gradient(135deg, #edf3e7, #f7faf5);
+  border: 1px solid #e4eadf;
+  box-shadow: 0 12px 24px rgba(46, 83, 55, 0.12);
 }
 
 .expense-mobile-summary-card::before {
   content: "";
   position: absolute;
-  right: -40px;
-  top: -20px;
-  width: 140px;
-  height: 140px;
+  right: -32px;
+  top: -28px;
+  width: 120px;
+  height: 120px;
   border-radius: 50%;
-  background: rgba(47, 91, 52, 0.1);
+  background: rgba(60, 109, 71, 0.12);
 }
 
 .expense-mobile-summary-header {
@@ -6150,18 +6162,18 @@ img {
 .expense-mobile-summary-label {
   display: block;
   font-weight: 600;
-  color: #1f2a52;
+  color: #1f2937;
 }
 
 .expense-mobile-summary-sub {
   display: block;
-  font-size: 0.75rem;
-  color: #64748b;
+  font-size: 0.78rem;
+  color: #6b7280;
 }
 
 .expense-mobile-summary-pill {
-  background: rgba(47, 91, 52, 0.12);
-  color: #2f5b34;
+  background: rgba(60, 109, 71, 0.15);
+  color: #3a6d47;
   font-size: 0.7rem;
   font-weight: 600;
   padding: 0.2rem 0.6rem;
@@ -6178,18 +6190,18 @@ img {
 
 .expense-mobile-summary-divider {
   width: 1px;
-  background: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.35);
   align-self: stretch;
 }
 
 .expense-mobile-summary-value {
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   font-weight: 700;
-  color: #1f2a52;
+  color: #1f2937;
 }
 
 .expense-mobile-summary-value.is-negative {
-  color: #7f1d1d;
+  color: #8f2b2b;
 }
 
 .expense-mobile-summary-meta {
@@ -6197,40 +6209,40 @@ img {
   align-items: center;
   gap: 0.35rem;
   margin-top: 0.35rem;
-  font-size: 0.75rem;
-  color: #64748b;
+  font-size: 0.74rem;
+  color: #6b7280;
 }
 
 .expense-mobile-summary-change {
   margin-top: 0.35rem;
   font-weight: 700;
-  font-size: 0.9rem;
-  color: #16a34a;
+  font-size: 0.88rem;
+  color: #2f6b41;
 }
 
 .expense-mobile-summary-change.is-positive {
-  color: #16a34a;
+  color: #2f6b41;
 }
 
 .expense-mobile-summary-change.is-negative {
-  color: #dc2626;
+  color: #b42323;
 }
 
 .expense-mobile-range-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  background: #f5f6ef;
+  background: #eef1ea;
   border-radius: 999px;
   padding: 0.35rem;
-  border: 1px solid #e2e8f0;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+  border: 1px solid #e4eadf;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
   gap: 0.35rem;
 }
 
 .expense-mobile-range {
   border: none;
   background: transparent;
-  color: #64748b;
+  color: #6b7280;
   font-weight: 600;
   font-size: 0.75rem;
   padding: 0.4rem 0.6rem;
@@ -6239,19 +6251,19 @@ img {
 }
 
 .expense-mobile-range.is-active {
-  background: linear-gradient(135deg, #2f5b34, #4c7a3f);
+  background: linear-gradient(135deg, #3d6a3f, #567f44);
   color: #fff;
-  box-shadow: 0 10px 18px rgba(47, 91, 52, 0.25);
+  box-shadow: 0 10px 18px rgba(61, 106, 63, 0.28);
 }
 
 .expense-mobile-chart-card,
 .expense-mobile-breakdown-card,
 .expense-mobile-history-card {
   background: #fff;
-  border-radius: 18px;
+  border-radius: 20px;
   padding: 0.95rem 1rem;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 12px 22px rgba(15, 23, 42, 0.06);
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.06);
 }
 
 .expense-mobile-chart-header {
@@ -6264,12 +6276,12 @@ img {
 .expense-mobile-chart-header h4 {
   margin: 0;
   font-size: 1rem;
-  color: var(--navy-900);
+  color: #1f2937;
 }
 
 .expense-mobile-chart-header span {
   font-size: 0.75rem;
-  color: #64748b;
+  color: #6b7280;
 }
 
 .expense-mobile-chart-legend {
@@ -6277,7 +6289,7 @@ img {
   flex-direction: column;
   gap: 0.35rem;
   font-size: 0.75rem;
-  color: #64748b;
+  color: #6b7280;
 }
 
 .expense-mobile-chart-legend .legend-item {
@@ -6288,16 +6300,16 @@ img {
 
 .expense-mobile-chart-legend .legend-item::before {
   content: "";
-  width: 10px;
+  width: 12px;
   height: 3px;
   border-radius: 999px;
-  background: #a3b2c4;
+  background: #b5c1d0;
   display: inline-block;
   margin-right: 0.35rem;
 }
 
 .expense-mobile-chart-legend .legend-item.expenses::before {
-  background: #2f5b34;
+  background: #3a6d47;
 }
 
 .expense-mobile-chart {
@@ -6314,7 +6326,7 @@ img {
   height: 140px;
   border-radius: 14px;
   background-image: linear-gradient(rgba(226, 232, 240, 0.7) 1px, transparent 1px);
-  background-size: 100% 25%;
+  background-size: 100% 33%;
   pointer-events: none;
 }
 
@@ -6329,7 +6341,7 @@ img {
   display: flex;
   justify-content: space-between;
   font-size: 0.7rem;
-  color: #94a3b8;
+  color: #9ca3af;
   margin-top: 0.35rem;
 }
 
@@ -6344,12 +6356,12 @@ img {
 .expense-mobile-breakdown-header h4 {
   margin: 0;
   font-size: 1rem;
-  color: var(--navy-900);
+  color: #1f2937;
 }
 
 .expense-mobile-breakdown-header span {
   font-weight: 600;
-  color: #1f2a52;
+  color: #1f2937;
 }
 
 .expense-mobile-breakdown-list {
@@ -6376,18 +6388,18 @@ img {
   justify-content: space-between;
   gap: 0.6rem;
   font-size: 0.82rem;
-  color: #475569;
+  color: #4b5563;
 }
 
 .expense-breakdown-title strong {
-  color: #1f2a52;
+  color: #1f2937;
   font-weight: 700;
 }
 
 .expense-breakdown-bar {
   height: 8px;
   border-radius: 999px;
-  background: #f1f5f9;
+  background: #eef2e7;
   overflow: hidden;
 }
 
@@ -6395,12 +6407,11 @@ img {
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #2f5b34, #7ac27a);
 }
 
 .expense-breakdown-percent {
   font-size: 0.72rem;
-  color: #64748b;
+  color: #6b7280;
   font-weight: 600;
 }
 
@@ -6415,12 +6426,12 @@ img {
 .expense-mobile-history-header h4 {
   margin: 0;
   font-size: 1rem;
-  color: var(--navy-900);
+  color: #1f2937;
 }
 
 .expense-mobile-history-header span {
   font-size: 0.75rem;
-  color: #94a3b8;
+  color: #9ca3af;
 }
 
 .expense-mobile-history-list {
@@ -6435,8 +6446,8 @@ img {
   gap: 0.7rem;
   padding: 0.65rem 0.75rem;
   border-radius: 14px;
-  border: 1px solid #eef2f7;
-  background: #f8fafc;
+  border: 1px solid #eef2e7;
+  background: #fafcf8;
 }
 
 .expense-history-info {
@@ -6450,12 +6461,12 @@ img {
 .expense-history-title {
   font-weight: 600;
   font-size: 0.9rem;
-  color: var(--navy-900);
+  color: #1f2937;
 }
 
 .expense-history-sub {
   font-size: 0.72rem;
-  color: #64748b;
+  color: #6b7280;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6463,12 +6474,12 @@ img {
 
 .expense-history-amount {
   font-weight: 700;
-  color: #7f1d1d;
+  color: #8f2b2b;
 }
 
 .expense-mobile-empty {
   font-size: 0.85rem;
-  color: #94a3b8;
+  color: #9ca3af;
 }
 
 .expense-mobile-fab {
@@ -6479,12 +6490,12 @@ img {
   height: 54px;
   border-radius: 50%;
   border: none;
-  background: #2f5b34;
+  background: #3a6d47;
   color: #fff;
   display: none;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 16px 28px rgba(47, 91, 52, 0.35);
+  box-shadow: 0 16px 28px rgba(58, 109, 71, 0.35);
   cursor: pointer;
   z-index: 120;
 }
@@ -6760,35 +6771,35 @@ img {
 }
 
 .expense-tone-emerald {
-  background: #22c55e;
+  background: #4f8f54;
 }
 
 .expense-tone-blue {
-  background: #3b82f6;
+  background: #6aa8e8;
 }
 
 .expense-tone-amber {
-  background: #f59e0b;
+  background: #f4c04d;
 }
 
 .expense-tone-orange {
-  background: #f97316;
+  background: #f39b47;
 }
 
 .expense-tone-rose {
-  background: #f43f5e;
+  background: #f079a5;
 }
 
 .expense-tone-teal {
-  background: #14b8a6;
+  background: #44b8a6;
 }
 
 .expense-tone-cyan {
-  background: #06b6d4;
+  background: #4fb3d1;
 }
 
 .expense-tone-slate {
-  background: #64748b;
+  background: #94a3b8;
 }
 
 .expense-mobile-body {

@@ -1,46 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../icons.jsx";
-function ExpenseSummaryCard({ user, project, balance = 0 }) {
-  return (
-    <div
-      style={{
-        background: "#111",
-        borderRadius: 24,
-        color: "#fff",
-        padding: "32px 24px",
-        maxWidth: 400,
-        margin: "32px auto 24px auto",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
-        fontFamily: "Inter, sans-serif",
-      }}
-    >
-      <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
-        Hello {user?.name || "User"}
-      </div>
-      <div style={{ fontSize: 14, color: "#bbb", marginBottom: 4 }}>
-        Project
-      </div>
-      <div style={{ fontSize: 18, fontWeight: 500, marginBottom: 16 }}>
-        {project?.name || "No Project"}
-      </div>
-      <div style={{ fontSize: 14, color: "#bbb", marginBottom: 4 }}>
-        Available balance
-      </div>
-      <div style={{ fontSize: 32, fontWeight: 700 }}>
-        Ksh. {balance?.toLocaleString("en-KE")}
-      </div>
-    </div>
-  );
-}
 import {
   createProjectExpense,
   deleteProjectExpense,
   getJgfBatches,
   getJppBatches,
   getProjectExpenseCategories,
-  getProjectExpenses,
-  getProjectSales,
-  getRecentProjectExpenses,
+  getProjectExpensesForProjects,
+  getProjectSalesForProjects,
   getProjectsWithMembership,
   updateProjectExpense,
 } from "../../lib/dataService.js";
@@ -65,6 +32,7 @@ export default function ExpensesPage({ user }) {
   const today = new Date().toISOString().slice(0, 10);
 
   const initialExpenseForm = {
+    project_id: "",
     batch_id: "",
     expense_date: today,
     category: "",
@@ -75,21 +43,18 @@ export default function ExpensesPage({ user }) {
   };
 
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [batches, setBatches] = useState([]);
+  const [batchesByProject, setBatchesByProject] = useState({});
   const [expenses, setExpenses] = useState([]);
   const [sales, setSales] = useState([]);
   const [expenseCategories, setExpenseCategories] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [expensesLoading, setExpensesLoading] = useState(false);
-  const [salesLoading, setSalesLoading] = useState(false);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
+  const [batchesLoading, setBatchesLoading] = useState(false);
   const [expenseForm, setExpenseForm] = useState(initialExpenseForm);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
   const [expandedExpenseId, setExpandedExpenseId] = useState(null);
-  const [recentExpenses, setRecentExpenses] = useState([]);
-  const [recentExpensesLoading, setRecentExpensesLoading] = useState(false);
   const [mobileRangeDays, setMobileRangeDays] = useState(7);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -101,10 +66,9 @@ export default function ExpensesPage({ user }) {
     setErrorMessage("");
   };
 
-  const loadExpenseData = async (projectId, showLoading = true, config) => {
-    if (!projectId) {
+  const loadExpenseData = async (projectIds, showLoading = true) => {
+    if (!projectIds.length) {
       setExpenses([]);
-      setBatches([]);
       return;
     }
     if (showLoading) {
@@ -112,28 +76,12 @@ export default function ExpensesPage({ user }) {
     }
     try {
       resetMessages();
-      const batchPromise = config?.getBatches ? config.getBatches() : Promise.resolve([]);
-      const [batchRes, expenseRes] = await Promise.allSettled([
-        batchPromise,
-        getProjectExpenses(projectId),
-      ]);
-
-      const safeBatches = batchRes.status === "fulfilled" ? batchRes.value || [] : [];
-      const safeExpenses = expenseRes.status === "fulfilled" ? expenseRes.value || [] : [];
-
-      setBatches(safeBatches);
-      setExpenses(safeExpenses);
-
-      const errors = [batchRes, expenseRes]
-        .filter((res) => res.status === "rejected")
-        .map((res) => res.reason?.message || "Failed to load expense data.");
-
-      if (errors.length > 0) {
-        setErrorMessage(errors.join(" "));
-      }
+      const data = await getProjectExpensesForProjects(projectIds);
+      setExpenses(data || []);
     } catch (error) {
       console.error("Error loading expense data:", error);
       setErrorMessage("Failed to load expense data.");
+      setExpenses([]);
     } finally {
       if (showLoading) {
         setExpensesLoading(false);
@@ -141,20 +89,80 @@ export default function ExpensesPage({ user }) {
     }
   };
 
-  const loadSalesData = async (projectId) => {
-    if (!projectId) {
+  const loadSalesData = async (projectIds) => {
+    if (!projectIds.length) {
       setSales([]);
       return;
     }
-    setSalesLoading(true);
     try {
-      const data = await getProjectSales(projectId);
+      const data = await getProjectSalesForProjects(projectIds);
       setSales(data || []);
     } catch (error) {
       console.error("Error loading project sales:", error);
       setSales([]);
+    }
+  };
+
+  const loadBatchesForProjects = async (projectList) => {
+    if (!projectList.length) {
+      setBatchesByProject({});
+      return;
+    }
+    const baseMap = {};
+    projectList.forEach((project) => {
+      if (project?.id) {
+        baseMap[String(project.id)] = [];
+      }
+    });
+
+    const codeGroups = new Map();
+    projectList.forEach((project) => {
+      const code = project?.code ? String(project.code).trim().toUpperCase() : "";
+      const config = EXPENSE_CONFIGS[code];
+      if (!config?.getBatches || !project?.id) {
+        return;
+      }
+      if (!codeGroups.has(code)) {
+        codeGroups.set(code, { projectIds: [], getBatches: config.getBatches });
+      }
+      codeGroups.get(code).projectIds.push(String(project.id));
+    });
+
+    if (codeGroups.size === 0) {
+      setBatchesByProject(baseMap);
+      return;
+    }
+
+    setBatchesLoading(true);
+    try {
+      const entries = Array.from(codeGroups.entries());
+      const results = await Promise.allSettled(
+        entries.map(([, group]) => group.getBatches())
+      );
+      const nextMap = { ...baseMap };
+      const errors = [];
+
+      entries.forEach(([, group], index) => {
+        const result = results[index];
+        const list = result.status === "fulfilled" ? result.value || [] : [];
+        if (result.status === "rejected") {
+          errors.push(result.reason?.message || "Failed to load batch data.");
+        }
+        group.projectIds.forEach((projectId) => {
+          nextMap[String(projectId)] = list;
+        });
+      });
+
+      setBatchesByProject(nextMap);
+      if (errors.length > 0) {
+        setErrorMessage(errors.join(" "));
+      }
+    } catch (error) {
+      console.error("Error loading batches:", error);
+      setErrorMessage("Failed to load batch data.");
+      setBatchesByProject(baseMap);
     } finally {
-      setSalesLoading(false);
+      setBatchesLoading(false);
     }
   };
 
@@ -181,24 +189,6 @@ export default function ExpensesPage({ user }) {
     }
   };
 
-  const loadRecentExpenses = async (projectIds) => {
-    if (!projectIds.length) {
-      setRecentExpenses([]);
-      setRecentExpensesLoading(false);
-      return;
-    }
-    setRecentExpensesLoading(true);
-    try {
-      const data = await getRecentProjectExpenses(projectIds, 3);
-      setRecentExpenses(data || []);
-    } catch (error) {
-      console.error("Error loading recent expenses:", error);
-      setRecentExpenses([]);
-    } finally {
-      setRecentExpensesLoading(false);
-    }
-  };
-
   useEffect(() => {
     loadProjects();
   }, [user]);
@@ -210,58 +200,69 @@ export default function ExpensesPage({ user }) {
   const accessibleProjectIds = useMemo(() => {
     return projects.map((project) => project.id).filter(Boolean);
   }, [projects]);
+  const defaultProjectId = useMemo(() => {
+    return accessibleProjectIds.length ? String(accessibleProjectIds[0]) : "";
+  }, [accessibleProjectIds]);
 
   useEffect(() => {
     if (projectsLoading) {
       return;
     }
-    loadRecentExpenses(accessibleProjectIds);
-  }, [accessibleProjectIds, projectsLoading]);
-
-  useEffect(() => {
-    if (selectedProjectId && !projectLookup.has(selectedProjectId)) {
-      setSelectedProjectId("");
-      setShowExpenseForm(false);
-      setEditingExpenseId(null);
-      setExpenseForm(initialExpenseForm);
-    }
-  }, [projectLookup, selectedProjectId]);
-
-  const selectedProject = useMemo(() => {
-    if (!selectedProjectId) return null;
-    return projectLookup.get(selectedProjectId) || null;
-  }, [projectLookup, selectedProjectId]);
-
-  const selectedProjectCode = selectedProject?.code
-    ? String(selectedProject.code).trim().toUpperCase()
-    : "";
-  const expenseConfig = useMemo(() => {
-    return EXPENSE_CONFIGS[selectedProjectCode] || null;
-  }, [selectedProjectCode]);
-
-
-  useEffect(() => {
-    if (!selectedProjectId) {
+    if (accessibleProjectIds.length === 0) {
       setExpenses([]);
-      setBatches([]);
-      setExpenseCategories([]);
-      setExpensesLoading(false);
       setSales([]);
+      setExpenseCategories([]);
+      setBatchesByProject({});
+      setExpensesLoading(false);
       setSalesLoading(false);
       return;
     }
-    loadExpenseData(selectedProjectId, true, expenseConfig);
-    loadSalesData(selectedProjectId);
-  }, [selectedProjectId, expenseConfig]);
+    loadExpenseData(accessibleProjectIds);
+    loadSalesData(accessibleProjectIds);
+    loadBatchesForProjects(projects);
+  }, [accessibleProjectIds, projects, projectsLoading]);
 
-  const loadExpenseCategories = async (projectCode) => {
-    if (!projectCode) {
+  useEffect(() => {
+    if (projectsLoading) {
+      return;
+    }
+    if (accessibleProjectIds.length === 0) {
+      setExpenseForm(initialExpenseForm);
+      setEditingExpenseId(null);
+      setShowExpenseForm(false);
+      return;
+    }
+    setExpenseForm((prev) => {
+      const currentId = prev.project_id ? String(prev.project_id) : "";
+      if (currentId && projectLookup.has(currentId)) {
+        return prev;
+      }
+      return { ...prev, project_id: String(accessibleProjectIds[0]) };
+    });
+  }, [accessibleProjectIds, projectLookup, projectsLoading]);
+
+  const formProjectId = expenseForm.project_id ? String(expenseForm.project_id) : "";
+  const formProject = useMemo(() => {
+    if (!formProjectId) return null;
+    return projectLookup.get(formProjectId) || null;
+  }, [formProjectId, projectLookup]);
+  const formProjectCode = formProject?.code
+    ? String(formProject.code).trim().toUpperCase()
+    : "";
+  const categoryProjectRef = formProjectCode || formProjectId;
+  const formBatches = useMemo(() => {
+    if (!formProjectId) return [];
+    return batchesByProject[formProjectId] || [];
+  }, [batchesByProject, formProjectId]);
+
+  const loadExpenseCategories = async (projectRef) => {
+    if (!projectRef) {
       setExpenseCategories([]);
       return;
     }
     setCategoriesLoading(true);
     try {
-      const categories = await getProjectExpenseCategories(projectCode);
+      const categories = await getProjectExpenseCategories(projectRef);
       setExpenseCategories(categories);
     } catch (error) {
       console.error("Error loading expense categories:", error);
@@ -273,13 +274,13 @@ export default function ExpensesPage({ user }) {
   };
 
   useEffect(() => {
-    if (!selectedProjectId) {
+    if (!formProjectId) {
       setExpenseCategories([]);
       setCategoriesLoading(false);
       return;
     }
-    loadExpenseCategories(selectedProjectCode);
-  }, [selectedProjectId, selectedProjectCode]);
+    loadExpenseCategories(categoryProjectRef);
+  }, [categoryProjectRef, formProjectId]);
 
   useEffect(() => {
     if (!expenseForm.category && expenseCategories.length > 0) {
@@ -287,19 +288,42 @@ export default function ExpensesPage({ user }) {
     }
   }, [expenseCategories, expenseForm.category]);
 
-  const batchLookup = useMemo(() => {
-    return new Map(batches.map((batch) => [String(batch.id), batch]));
-  }, [batches]);
+  const batchLookupByProject = useMemo(() => {
+    const lookup = new Map();
+    Object.entries(batchesByProject).forEach(([projectId, list]) => {
+      const map = new Map((list || []).map((batch) => [String(batch.id), batch]));
+      lookup.set(String(projectId), map);
+    });
+    return lookup;
+  }, [batchesByProject]);
 
-  const getBatchLabel = (batchId) => {
+  const getBatchLabel = (batchId, projectId) => {
     if (!batchId) return "Unassigned";
-    const batch = batchLookup.get(String(batchId));
-    if (!batch) return "Unknown";
-    return batch.batch_code || batch.batch_name || "Batch";
+    const projectKey = projectId ? String(projectId) : "";
+    const projectMap = projectKey ? batchLookupByProject.get(projectKey) : null;
+    if (projectMap?.has(String(batchId))) {
+      const batch = projectMap.get(String(batchId));
+      return batch?.batch_code || batch?.batch_name || "Batch";
+    }
+    if (!projectKey) {
+      for (const map of batchLookupByProject.values()) {
+        if (map.has(String(batchId))) {
+          const batch = map.get(String(batchId));
+          return batch?.batch_code || batch?.batch_name || "Batch";
+        }
+      }
+    }
+    return "Unknown";
+  };
+
+  const getProjectLabel = (projectId) => {
+    if (!projectId) return "";
+    const project = projectLookup.get(String(projectId));
+    return project?.code || project?.name || "";
   };
 
   const getMobileSubLabel = (expense) => {
-    const batchLabel = getBatchLabel(expense.batch_id);
+    const batchLabel = getBatchLabel(expense.batch_id, expense.project_id);
     if (batchLabel === "Unassigned" && expense.vendor) {
       return expense.vendor;
     }
@@ -355,7 +379,7 @@ export default function ExpensesPage({ user }) {
     if (!numeric) {
       return formatCurrency(0);
     }
-    return `-${formatCurrency(numeric)}`;
+    return `- ${formatCurrency(numeric)}`;
   };
 
   const toDateKey = (value) => {
@@ -404,6 +428,14 @@ export default function ExpensesPage({ user }) {
   ];
   const getCategoryTone = (category) => {
     if (!category) return "slate";
+    const normalized = String(category).toLowerCase();
+    if (normalized.includes("feed")) return "emerald";
+    if (normalized.includes("med")) return "amber";
+    if (normalized.includes("transport")) return "orange";
+    if (normalized.includes("utilit")) return "orange";
+    if (normalized.includes("packag")) return "blue";
+    if (normalized.includes("labour")) return "teal";
+    if (normalized.includes("marketing")) return "rose";
     let hash = 0;
     for (let i = 0; i < category.length; i += 1) {
       hash = (hash * 31 + category.charCodeAt(i)) % 2147483647;
@@ -415,6 +447,17 @@ export default function ExpensesPage({ user }) {
     const trimmed = category.trim();
     return trimmed ? trimmed[0].toUpperCase() : "?";
   };
+  const toneColors = {
+    emerald: "#4f8f54",
+    blue: "#60a5fa",
+    amber: "#fbbf24",
+    orange: "#fb923c",
+    rose: "#f472b6",
+    teal: "#2dd4bf",
+    cyan: "#38bdf8",
+    slate: "#94a3b8",
+  };
+  const getToneColor = (tone) => toneColors[tone] || toneColors.slate;
 
   const groupedExpenses = useMemo(() => {
     if (!expenses.length) {
@@ -440,14 +483,7 @@ export default function ExpensesPage({ user }) {
     });
   }, [expenses]);
 
-  const recentTotal = useMemo(() => {
-    return recentExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
-  }, [recentExpenses]);
-
   const activeRangeDays = mobileRangeDays || 30;
-  const activeRangeLabel =
-    EXPENSE_RANGE_OPTIONS.find((option) => option.days === mobileRangeDays)?.label ||
-    `${activeRangeDays} days`;
 
   const rangedExpenses = useMemo(() => {
     return filterByRange(expenses, activeRangeDays, "expense_date");
@@ -541,103 +577,86 @@ export default function ExpensesPage({ user }) {
     ...chartSeries.salesSeries
   );
 
-  const buildLinePath = (series, width, height, padding = 12) => {
-    if (!series.length) return "";
+  const buildSeriesPoints = (series, width, height, padding = 12) => {
+    if (!series.length) return [];
     if (series.length === 1) {
       const x = width / 2;
       const y =
         height -
         padding -
         (series[0] / chartMax) * (height - padding * 2);
-      return `M ${x} ${y}`;
+      return [{ x, y }];
     }
-    return series
-      .map((value, index) => {
-        const x = padding + (index * (width - padding * 2)) / (series.length - 1);
-        const y =
-          height - padding - (value / chartMax) * (height - padding * 2);
-        return `${index === 0 ? "M" : "L"} ${x} ${y}`;
-      })
-      .join(" ");
-  };
-
-  const getSeriesPoint = (value, index, total, width, height, padding = 12) => {
-    if (total <= 1) {
-      const x = width / 2;
+    return series.map((value, index) => {
+      const x = padding + (index * (width - padding * 2)) / (series.length - 1);
       const y =
-        height -
-        padding -
-        (value / chartMax) * (height - padding * 2);
+        height - padding - (value / chartMax) * (height - padding * 2);
       return { x, y };
-    }
-    const x = padding + (index * (width - padding * 2)) / (total - 1);
-    const y =
-      height - padding - (value / chartMax) * (height - padding * 2);
-    return { x, y };
+    });
   };
 
-  const buildAreaPath = (series, width, height, padding = 12) => {
-    if (!series.length) return "";
-    const linePath = buildLinePath(series, width, height, padding);
-    const lastX = width - padding;
+  const buildSmoothPath = (points) => {
+    if (!points.length) return "";
+    if (points.length === 1) {
+      return `M ${points[0].x} ${points[0].y}`;
+    }
+    let path = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const p0 = points[i - 1] || points[i];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[i + 2] || p2;
+      const cp1x = p1.x + (p2.x - p0.x) / 6;
+      const cp1y = p1.y + (p2.y - p0.y) / 6;
+      const cp2x = p2.x - (p3.x - p1.x) / 6;
+      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+    }
+    return path;
+  };
+
+  const buildAreaPath = (points, width, height, padding = 12) => {
+    if (!points.length) return "";
+    const linePath = buildSmoothPath(points);
+    const lastPoint = points[points.length - 1];
     const baseY = height - padding;
-    return `${linePath} L ${lastX} ${baseY} L ${padding} ${baseY} Z`;
+    return `${linePath} L ${lastPoint.x} ${baseY} L ${points[0].x} ${baseY} Z`;
   };
 
   const chartWidth = 320;
   const chartHeight = 140;
-  const expenseLinePath = buildLinePath(
+  const expensePoints = buildSeriesPoints(
     chartSeries.expenseSeries,
     chartWidth,
     chartHeight
   );
-  const salesLinePath = buildLinePath(
+  const salesPoints = buildSeriesPoints(
     chartSeries.salesSeries,
     chartWidth,
     chartHeight
   );
-  const expenseAreaPath = buildAreaPath(
-    chartSeries.expenseSeries,
-    chartWidth,
-    chartHeight
-  );
+  const expenseLinePath = buildSmoothPath(expensePoints);
+  const salesLinePath = buildSmoothPath(salesPoints);
+  const expenseAreaPath = buildAreaPath(expensePoints, chartWidth, chartHeight);
 
-  const lastExpensePoint = chartSeries.expenseSeries.length
-    ? getSeriesPoint(
-        chartSeries.expenseSeries[chartSeries.expenseSeries.length - 1],
-        chartSeries.expenseSeries.length - 1,
-        chartSeries.expenseSeries.length,
-        chartWidth,
-        chartHeight
-      )
+  const lastExpensePoint = expensePoints.length
+    ? expensePoints[expensePoints.length - 1]
     : null;
-
-  const lastSalesPoint = chartSeries.salesSeries.length
-    ? getSeriesPoint(
-        chartSeries.salesSeries[chartSeries.salesSeries.length - 1],
-        chartSeries.salesSeries.length - 1,
-        chartSeries.salesSeries.length,
-        chartWidth,
-        chartHeight
-      )
+  const lastSalesPoint = salesPoints.length
+    ? salesPoints[salesPoints.length - 1]
     : null;
-
-  const handleProjectSelect = (event) => {
-    const value = event.target.value;
-    setSelectedProjectId(value);
-    setShowExpenseForm(false);
-    setEditingExpenseId(null);
-    setExpandedExpenseId(null);
-    setExpenseForm({
-      ...initialExpenseForm,
-      category: "",
-    });
-    resetMessages();
-  };
 
   const handleExpenseChange = (event) => {
     const { name, value, type, checked } = event.target;
-    setExpenseForm((prev) => ({ ...prev, [name]: type === "checkbox" ? checked : value }));
+    setExpenseForm((prev) => {
+      const nextValue = type === "checkbox" ? checked : value;
+      const nextState = { ...prev, [name]: nextValue };
+      if (name === "project_id") {
+        nextState.batch_id = "";
+        nextState.category = "";
+      }
+      return nextState;
+    });
     resetMessages();
   };
 
@@ -645,8 +664,12 @@ export default function ExpensesPage({ user }) {
     event.preventDefault();
     resetMessages();
 
-    if (!selectedProjectId) {
-      setErrorMessage("Select a project first.");
+    const activeProjectId = expenseForm.project_id
+      ? String(expenseForm.project_id)
+      : "";
+
+    if (!activeProjectId || !projectLookup.has(activeProjectId)) {
+      setErrorMessage("Select a valid project.");
       return;
     }
 
@@ -686,14 +709,16 @@ export default function ExpensesPage({ user }) {
         await updateProjectExpense(editingExpenseId, payload);
         setStatusMessage("Expense updated.");
       } else {
-        await createProjectExpense(selectedProjectId, payload);
+        await createProjectExpense(activeProjectId, payload);
         setStatusMessage("Expense logged.");
       }
-      setExpenseForm(initialExpenseForm);
+      setExpenseForm({
+        ...initialExpenseForm,
+        project_id: activeProjectId,
+      });
       setEditingExpenseId(null);
       setShowExpenseForm(false);
-      await loadExpenseData(selectedProjectId, false, expenseConfig);
-      await loadRecentExpenses(accessibleProjectIds);
+      await loadExpenseData(accessibleProjectIds, false);
     } catch (error) {
       setErrorMessage(error.message || "Failed to save expense.");
     }
@@ -703,13 +728,14 @@ export default function ExpensesPage({ user }) {
     setExpenseForm({
       ...initialExpenseForm,
       ...expense,
+      project_id: expense.project_id ? String(expense.project_id) : "",
       batch_id: expense.batch_id ? String(expense.batch_id) : "",
       expense_date: expense.expense_date || today,
       amount: expense.amount ?? "",
       vendor: expense.vendor ?? "",
       description: expense.description ?? "",
       receipt: Boolean(expense.receipt),
-      category: expense.category || expenseCategories[0] || "",
+      category: expense.category || "",
     });
     setEditingExpenseId(expense.id);
     setShowExpenseForm(true);
@@ -726,15 +752,17 @@ export default function ExpensesPage({ user }) {
       await deleteProjectExpense(expenseId);
       setStatusMessage("Expense deleted.");
       setExpandedExpenseId(null);
-      await loadExpenseData(selectedProjectId, false, expenseConfig);
-      await loadRecentExpenses(accessibleProjectIds);
+      await loadExpenseData(accessibleProjectIds, false);
     } catch (error) {
       setErrorMessage(error.message || "Failed to delete expense.");
     }
   };
 
   const handleExpenseCancel = () => {
-    setExpenseForm(initialExpenseForm);
+    setExpenseForm({
+      ...initialExpenseForm,
+      project_id: defaultProjectId,
+    });
     setEditingExpenseId(null);
     setShowExpenseForm(false);
     setExpandedExpenseId(null);
@@ -742,15 +770,16 @@ export default function ExpensesPage({ user }) {
   };
 
   const handleNewExpense = () => {
-    if (!selectedProjectId) {
-      setErrorMessage("Select a project first.");
+    if (!defaultProjectId) {
+      setErrorMessage("No accessible projects.");
       return;
     }
     resetMessages();
     setExpandedExpenseId(null);
     setExpenseForm({
       ...initialExpenseForm,
-      category: expenseCategories[0] || "",
+      project_id: defaultProjectId,
+      category: "",
     });
     setEditingExpenseId(null);
     setShowExpenseForm(true);
@@ -762,17 +791,10 @@ export default function ExpensesPage({ user }) {
 
   if (projectsLoading) {
     return (
-      <>
-        <ExpenseSummaryCard
-          user={user}
-          project={selectedProject}
-          balance={recentTotal || 0}
-        />
-        <div className="dashboard-loading">
-          <div className="loading-spinner"></div>
-          <p>Loading projects...</p>
-        </div>
-      </>
+      <div className="dashboard-loading">
+        <div className="loading-spinner"></div>
+        <p>Loading projects...</p>
+      </div>
     );
   }
 
@@ -780,7 +802,7 @@ export default function ExpensesPage({ user }) {
     <div className="jpp-page">
       <div className="page-header">
         <div className="page-header-text">
-          <h1>Expense</h1>
+          <h1>Expenses</h1>
         </div>
       </div>
 
@@ -793,21 +815,13 @@ export default function ExpensesPage({ user }) {
       {projects.length > 0 && (
         <div className="expense-mobile-header">
           <div className="expense-mobile-title-row">
-            <h2>Expenses</h2>
+            <div className="expense-mobile-title">
+              <h2>Expenses</h2>
+              <p>All projects</p>
+            </div>
             <button className="expense-filter-btn" type="button" aria-label="Filter expenses">
               <Icon name="filter" size={18} />
             </button>
-          </div>
-          <div className="expense-mobile-project-card">
-            <label>Project</label>
-            <select value={selectedProjectId} onChange={handleProjectSelect}>
-              <option value="">Select project</option>
-              {projects.map((project) => (
-                <option key={`mobile-${project.id}`} value={String(project.id)}>
-                  {project.name} ({project.code})
-                </option>
-              ))}
-            </select>
           </div>
         </div>
       )}
@@ -817,48 +831,7 @@ export default function ExpensesPage({ user }) {
           <h3>No accessible projects</h3>
           <p className="admin-help">You do not have access to any projects yet.</p>
         </div>
-      ) : (
-        <div className="admin-card expense-project-card">
-          <div className="section-header">
-            <h3>
-              <Icon name="briefcase" size={18} /> Project
-            </h3>
-          </div>
-          <div className="admin-form-field">
-            <label>Select Project</label>
-            <select value={selectedProjectId} onChange={handleProjectSelect}>
-              <option value="">Select project</option>
-              {projects.map((project) => (
-                <option key={project.id} value={String(project.id)}>
-                  {project.name} ({project.code})
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      )}
-
-      <div className="expense-mobile-tabs" role="tablist" aria-label="Expense views">
-        <button
-          type="button"
-          role="tab"
-          className={`expense-mobile-tab${showExpenseForm ? " is-active" : ""}`}
-          onClick={handleNewExpense}
-          disabled={!selectedProjectId}
-          aria-selected={showExpenseForm}
-        >
-          Expense
-        </button>
-        <button
-          type="button"
-          role="tab"
-          className={`expense-mobile-tab${!showExpenseForm ? " is-active" : ""}`}
-          onClick={handleExpenseCancel}
-          aria-selected={!showExpenseForm}
-        >
-          History
-        </button>
-      </div>
+      ) : null}
 
       <div className={`jpp-tab-grid expense-grid${showExpenseForm ? "" : " is-collapsed"}`}>
         {showExpenseForm && (
@@ -867,19 +840,42 @@ export default function ExpensesPage({ user }) {
             <form className="admin-form" onSubmit={handleExpenseSubmit}>
               <div className="admin-form-grid">
                 <div className="admin-form-field">
+                  <label>Project *</label>
+                  <select
+                    name="project_id"
+                    value={expenseForm.project_id}
+                    onChange={handleExpenseChange}
+                    disabled={Boolean(editingExpenseId)}
+                  >
+                    <option value="">Select project</option>
+                    {projects.map((project) => (
+                      <option key={project.id} value={String(project.id)}>
+                        {project.name} ({project.code})
+                      </option>
+                    ))}
+                  </select>
+                  {editingExpenseId && (
+                    <p className="admin-help">Project cannot be changed.</p>
+                  )}
+                </div>
+                <div className="admin-form-field">
                   <label>Batch</label>
                   <select
                     name="batch_id"
                     value={expenseForm.batch_id}
                     onChange={handleExpenseChange}
+                    disabled={batchesLoading || formBatches.length === 0}
                   >
                     <option value="">Unassigned</option>
-                    {batches.map((batch) => (
+                    {formBatches.map((batch) => (
                       <option key={batch.id} value={String(batch.id)}>
                         {batch.batch_code || batch.batch_name}
                       </option>
                     ))}
                   </select>
+                  {formBatches.length === 0 && !batchesLoading && (
+                    <p className="admin-help">No batches available for this project.</p>
+                  )}
                 </div>
                 <div className="admin-form-field">
                   <label>Expense Date *</label>
@@ -978,27 +974,25 @@ export default function ExpensesPage({ user }) {
                 className="btn-secondary"
                 type="button"
                 onClick={handleNewExpense}
-                disabled={!selectedProjectId}
+                disabled={!defaultProjectId}
               >
                 <Icon name="plus" size={16} />
                 New Expense
               </button>
             </div>
           </div>
-          {selectedProjectId && (
+          {projects.length > 0 && (
             <div className="expense-mobile-dashboard">
               <div className="expense-mobile-summary-card">
                 <div className="expense-mobile-summary-header">
                   <div>
-                    <span className="expense-mobile-summary-label">
-                      Total spend
-                    </span>
+                    <span className="expense-mobile-summary-label">Total spend</span>
                     <span className="expense-mobile-summary-sub">
-                      {activeRangeLabel}
+                      Last {activeRangeDays} days
                     </span>
                   </div>
                   <span className="expense-mobile-summary-pill">
-                    {selectedProject?.code || "Project"}
+                    All projects
                   </span>
                 </div>
                 <div className="expense-mobile-summary-grid">
@@ -1076,14 +1070,14 @@ export default function ExpensesPage({ user }) {
                   >
                     <defs>
                       <linearGradient id="expenseFill" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stopColor="#86efac" stopOpacity="0.6" />
-                        <stop offset="100%" stopColor="#86efac" stopOpacity="0" />
+                        <stop offset="0%" stopColor="#8fbc8f" stopOpacity="0.45" />
+                        <stop offset="100%" stopColor="#8fbc8f" stopOpacity="0" />
                       </linearGradient>
                     </defs>
                     <path d={expenseAreaPath} fill="url(#expenseFill)" />
                     <path
                       d={salesLinePath}
-                      stroke="#a3b2c4"
+                      stroke="#b5c1d0"
                       strokeWidth="2"
                       fill="none"
                       strokeLinecap="round"
@@ -1091,7 +1085,7 @@ export default function ExpensesPage({ user }) {
                     />
                     <path
                       d={expenseLinePath}
-                      stroke="#2f5b34"
+                      stroke="#3a6d47"
                       strokeWidth="2.5"
                       fill="none"
                       strokeLinecap="round"
@@ -1102,8 +1096,8 @@ export default function ExpensesPage({ user }) {
                         cx={lastExpensePoint.x}
                         cy={lastExpensePoint.y}
                         r="4"
-                        fill="#2f5b34"
-                        stroke="#e7f5e9"
+                        fill="#3a6d47"
+                        stroke="#f0f5ed"
                         strokeWidth="2"
                       />
                     )}
@@ -1112,7 +1106,7 @@ export default function ExpensesPage({ user }) {
                         cx={lastSalesPoint.x}
                         cy={lastSalesPoint.y}
                         r="3"
-                        fill="#a3b2c4"
+                        fill="#b5c1d0"
                         stroke="#f8fafc"
                         strokeWidth="2"
                       />
@@ -1146,7 +1140,12 @@ export default function ExpensesPage({ user }) {
                             <strong>{formatCurrency(item.total)}</strong>
                           </div>
                           <div className="expense-breakdown-bar">
-                            <span style={{ width: `${item.percent}%` }}></span>
+                            <span
+                              style={{
+                                width: `${item.percent}%`,
+                                background: getToneColor(item.tone),
+                              }}
+                            ></span>
                           </div>
                         </div>
                         <span className="expense-breakdown-percent">
@@ -1172,9 +1171,14 @@ export default function ExpensesPage({ user }) {
                     {sortedRangedExpenses.map((expense) => {
                       const categoryLabel = expense.category || "Other";
                       const tone = getCategoryTone(categoryLabel);
+                      const batchLabel = getBatchLabel(
+                        expense.batch_id,
+                        expense.project_id
+                      );
                       const meta = [
+                        getProjectLabel(expense.project_id),
                         formatDate(expense.expense_date),
-                        getBatchLabel(expense.batch_id),
+                        batchLabel !== "Unassigned" ? batchLabel : null,
                       ]
                         .filter(Boolean)
                         .join(" · ");
@@ -1198,7 +1202,7 @@ export default function ExpensesPage({ user }) {
               </div>
             </div>
           )}
-          {selectedProjectId && !showExpenseForm && (
+          {projects.length > 0 && !showExpenseForm && (
             <button
               type="button"
               className="expense-mobile-fab"
@@ -1208,53 +1212,11 @@ export default function ExpensesPage({ user }) {
               <Icon name="plus" size={22} />
             </button>
           )}
-          {projects.length > 0 && (
-            <div className="expense-mobile-summary">
-              <div className="expense-summary-card">
-                <div className="expense-summary-header">
-                  <span className="expense-summary-title">Expense Summary</span>
-                  <span className="expense-summary-tag">All Projects</span>
-                </div>
-                <div className="expense-summary-amount">{formatExpenseTotal(recentTotal)}</div>
-                <span className="expense-summary-sub">Last 3 expenses</span>
-              </div>
-              <div className="expense-summary-list">
-                {recentExpensesLoading ? (
-                  <div className="expense-summary-loading">Loading recent expenses...</div>
-                ) : recentExpenses.length === 0 ? (
-                  <div className="expense-summary-empty">No recent expenses yet.</div>
-                ) : (
-                  recentExpenses.slice(0, 3).map((expense) => {
-                    const categoryLabel = expense.category || "Other";
-                    const tone = getCategoryTone(categoryLabel);
-                    const project = projectLookup.get(String(expense.project_id));
-                    const meta = [project?.code || project?.name, formatDate(expense.expense_date)]
-                      .filter(Boolean)
-                      .join(" · ");
-                    return (
-                      <div className="expense-summary-item" key={`recent-${expense.id}`}>
-                        <div className={`expense-summary-icon expense-tone-${tone}`}>
-                          {getCategoryInitial(categoryLabel)}
-                        </div>
-                        <div className="expense-summary-info">
-                          <span className="expense-summary-name">{categoryLabel}</span>
-                          <span className="expense-summary-subtext">{meta || "Unassigned"}</span>
-                        </div>
-                        <span className="expense-summary-value">
-                          {formatExpenseTotal(expense.amount)}
-                        </span>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          )}
-          {!selectedProjectId ? (
+          {projects.length === 0 ? (
             <div className="empty-state">
               <Icon name="briefcase" size={40} />
-              <h3>Select a project</h3>
-              <p>Choose a project to view its expenses.</p>
+              <h3>No accessible projects</h3>
+              <p>Request access to a project to view expenses.</p>
             </div>
           ) : expensesLoading ? (
             <div className="loading-state">
@@ -1274,6 +1236,7 @@ export default function ExpensesPage({ user }) {
                   <thead>
                     <tr>
                       <th>Date</th>
+                      <th>Project</th>
                       <th>Batch</th>
                       <th>Category</th>
                       <th>Amount</th>
@@ -1286,7 +1249,8 @@ export default function ExpensesPage({ user }) {
                     {expenses.map((expense) => (
                       <tr key={expense.id}>
                         <td>{formatDate(expense.expense_date)}</td>
-                        <td>{getBatchLabel(expense.batch_id)}</td>
+                        <td>{getProjectLabel(expense.project_id) || "-"}</td>
+                        <td>{getBatchLabel(expense.batch_id, expense.project_id)}</td>
                         <td>{expense.category}</td>
                         <td>{formatCurrency(expense.amount)}</td>
                         <td>{expense.vendor || "-"}</td>
