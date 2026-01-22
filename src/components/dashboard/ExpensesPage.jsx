@@ -279,6 +279,7 @@ export default function ExpensesPage({ user }) {
       setCategoriesLoading(false);
       return;
     }
+    setExpenseCategories([]);
     loadExpenseCategories(categoryProjectRef);
   }, [categoryProjectRef, formProjectId]);
 
@@ -803,6 +804,7 @@ export default function ExpensesPage({ user }) {
       <div className="page-header">
         <div className="page-header-text">
           <h1>Expenses</h1>
+          <p>All projects</p>
         </div>
       </div>
 

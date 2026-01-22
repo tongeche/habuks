@@ -188,6 +188,8 @@ export default function JppProjectPage({ user }) {
   const [showDailyFormMobile, setShowDailyFormMobile] = useState(false);
   const [showBirdFormMobile, setShowBirdFormMobile] = useState(false);
   const [showWeeklyFormMobile, setShowWeeklyFormMobile] = useState(false);
+  const [batchSearchTerm, setBatchSearchTerm] = useState("");
+  const [batchFilter, setBatchFilter] = useState("active");
   const batchFormRef = useRef(null);
   const dailyFormRef = useRef(null);
   const birdFormRef = useRef(null);
@@ -404,6 +406,19 @@ export default function JppProjectPage({ user }) {
     return batch.batch_code || batch.batch_name || "Batch";
   };
 
+  const getBatchStatus = (batch) => {
+    const raw = String(
+      batch?.status || batch?.batch_status || batch?.state || ""
+    ).toLowerCase();
+    if (["closed", "complete", "completed", "inactive", "ended", "archived"].includes(raw)) {
+      return "closed";
+    }
+    if (["active", "open", "in_progress", "running"].includes(raw)) {
+      return "active";
+    }
+    return "active";
+  };
+
   const getBirdProductLabel = (productId) => {
     if (!productId) return "Unknown";
     const product = birdProductLookup.get(productId);
@@ -577,14 +592,79 @@ export default function JppProjectPage({ user }) {
     if (!latest) return batch.start_date;
     return new Date(batch.start_date) > new Date(latest) ? batch.start_date : latest;
   }, null);
-  const batchTotals = batches.reduce(
-    (acc, batch) => {
-      acc.starting += toNumber(batch.starting_count);
-      acc.feed += toNumber(batch.feed_on_hand_kg);
-      return acc;
-    },
-    { starting: 0, feed: 0 }
-  );
+  const filteredBatches = useMemo(() => {
+    const term = batchSearchTerm.trim().toLowerCase();
+    return batches.filter((batch) => {
+      const status = getBatchStatus(batch);
+      if (batchFilter !== "all" && status !== batchFilter) {
+        return false;
+      }
+      if (!term) {
+        return true;
+      }
+      const haystack = [
+        batch.batch_code,
+        batch.batch_name,
+        batch.bird_type,
+        batch.breed,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [batches, batchFilter, batchSearchTerm]);
+
+  const batchSummaryKpis = useMemo(() => {
+    if (!filteredBatches.length) {
+      return [];
+    }
+    const codes = new Set(
+      filteredBatches
+        .map((batch) => String(batch.batch_code || batch.batch_name || ""))
+        .filter(Boolean)
+    );
+    if (codes.size === 0) {
+      return [];
+    }
+    return kpis.filter((row) => codes.has(String(row.batch_code || row.batch_name || "")));
+  }, [filteredBatches, kpis]);
+
+  const batchSummaryTotals = useMemo(() => {
+    if (!filteredBatches.length) {
+      return { starting: 0, deaths: 0, alive: 0, feed: 0, spend: 0 };
+    }
+    const source = batchSummaryKpis.length ? batchSummaryKpis : kpis;
+    return source.reduce(
+      (acc, row) => {
+        acc.starting += toNumber(row.starting_count);
+        acc.deaths += toNumber(row.total_deaths);
+        acc.alive += toNumber(row.estimated_alive_now);
+        acc.feed += toNumber(row.total_feed_kg);
+        acc.spend += toNumber(row.total_spend);
+        return acc;
+      },
+      { starting: 0, deaths: 0, alive: 0, feed: 0, spend: 0 }
+    );
+  }, [batchSummaryKpis, filteredBatches, kpis]);
+
+  const batchSummaryMortality = batchSummaryTotals.starting
+    ? (batchSummaryTotals.deaths / batchSummaryTotals.starting) * 100
+    : 0;
+
+  const batchFilterLabel =
+    batchFilter === "active" ? "Active" : batchFilter === "closed" ? "Closed" : "All";
+
+  const kpiLookup = useMemo(() => {
+    const map = new Map();
+    kpis.forEach((row) => {
+      const key = String(row.batch_code || row.batch_name || "");
+      if (key) {
+        map.set(key, row);
+      }
+    });
+    return map;
+  }, [kpis]);
 
   const handleBatchChange = (event) => {
     const { name, value } = event.target;
@@ -1986,116 +2066,178 @@ export default function JppProjectPage({ user }) {
             ) : (
               <>
                 <div className="jpp-batches-mobile">
+                  <div className="jpp-batch-controls">
+                    <div className="jpp-batch-search">
+                      <Icon name="search" size={18} />
+                      <input
+                        type="search"
+                        placeholder="Search batch code/name"
+                        value={batchSearchTerm}
+                        onChange={(event) => setBatchSearchTerm(event.target.value)}
+                      />
+                      <span className="jpp-batch-search-divider" aria-hidden="true" />
+                      <button
+                        type="button"
+                        className="jpp-batch-search-filter"
+                        aria-label="Filter batches"
+                      >
+                        <Icon name="filter" size={18} />
+                      </button>
+                    </div>
+                    <div className="jpp-batch-filter-row">
+                      <div className="jpp-batch-filter-tabs" role="tablist" aria-label="Batch status">
+                        <button
+                          type="button"
+                          className={`jpp-batch-filter${batchFilter === "active" ? " is-active" : ""}`}
+                          onClick={() => setBatchFilter("active")}
+                          role="tab"
+                          aria-selected={batchFilter === "active"}
+                        >
+                          <Icon name="user" size={14} />
+                          Active
+                        </button>
+                        <button
+                          type="button"
+                          className={`jpp-batch-filter${batchFilter === "closed" ? " is-active" : ""}`}
+                          onClick={() => setBatchFilter("closed")}
+                          role="tab"
+                          aria-selected={batchFilter === "closed"}
+                        >
+                          <Icon name="check-circle" size={14} />
+                          Closed
+                        </button>
+                        <button
+                          type="button"
+                          className={`jpp-batch-filter${batchFilter === "all" ? " is-active" : ""}`}
+                          onClick={() => setBatchFilter("all")}
+                          role="tab"
+                          aria-selected={batchFilter === "all"}
+                        >
+                          All
+                        </button>
+                      </div>
+                      <button type="button" className="jpp-batch-new-btn" onClick={openBatchFormMobile}>
+                        <Icon name="plus" size={16} />
+                        New batch
+                      </button>
+                    </div>
+                  </div>
                   <div className="jpp-batch-summary">
                     <div className="jpp-batch-summary-header">
-                      <div>
-                        <span className="jpp-batch-summary-title">Batch overview</span>
-                        <span className="jpp-batch-summary-sub">
-                          Latest start {latestStartDate ? formatDate(latestStartDate) : "N/A"}
-                        </span>
-                      </div>
-                      <span className="jpp-batch-summary-pill">
-                        <Icon name="calendar" size={14} />
-                        {formatDate(today)}
-                      </span>
+                      <h4>{batchFilterLabel} Batches</h4>
+                      <button
+                        type="button"
+                        className="jpp-batch-more-btn"
+                        aria-label="Batch summary options"
+                      >
+                        <Icon name="more-horizontal" size={18} />
+                      </button>
                     </div>
                     <div className="jpp-batch-summary-grid">
-                      <div className="jpp-batch-summary-item">
-                        <span className="jpp-batch-summary-icon tone-blue">
-                          <Icon name="folder" size={16} />
+                      <div className="jpp-batch-summary-item tone-emerald">
+                        <span className="jpp-batch-summary-icon">
+                          <Icon name="feather" size={16} />
                         </span>
                         <div>
                           <span className="jpp-batch-summary-value">
-                            {formatNumber(batches.length)}
+                            {formatNumber(batchSummaryTotals.alive)}
                           </span>
-                          <span className="jpp-batch-summary-label">Batches</span>
+                          <span className="jpp-batch-summary-label">Birds</span>
                         </div>
                       </div>
-                      <div className="jpp-batch-summary-item">
-                        <span className="jpp-batch-summary-icon tone-emerald">
-                          <Icon name="users" size={16} />
-                        </span>
-                        <div>
-                          <span className="jpp-batch-summary-value">
-                            {formatNumber(batchTotals.starting)}
-                          </span>
-                          <span className="jpp-batch-summary-label">Birds started</span>
-                        </div>
-                      </div>
-                      <div className="jpp-batch-summary-item is-wide">
-                        <span className="jpp-batch-summary-icon tone-amber">
+                      <div className="jpp-batch-summary-item tone-amber">
+                        <span className="jpp-batch-summary-icon">
                           <Icon name="receipt" size={16} />
                         </span>
                         <div>
                           <span className="jpp-batch-summary-value">
-                            {formatKg(batchTotals.feed)}
+                            {formatKg(batchSummaryTotals.feed)}
                           </span>
-                          <span className="jpp-batch-summary-label">Feed on hand</span>
+                          <span className="jpp-batch-summary-label">Feed Used</span>
+                        </div>
+                      </div>
+                      <div className="jpp-batch-summary-item tone-rose">
+                        <span className="jpp-batch-summary-icon">
+                          <Icon name="heart" size={16} />
+                        </span>
+                        <div>
+                          <span className="jpp-batch-summary-value">
+                            {`${toNumber(batchSummaryMortality).toFixed(0)}%`}
+                          </span>
+                          <span className="jpp-batch-summary-label">Mortality</span>
                         </div>
                       </div>
                     </div>
                   </div>
                   <div className="jpp-batch-card-grid">
-                    {batches.map((batch) => {
+                    {filteredBatches.length === 0 ? (
+                      <div className="jpp-batch-empty">
+                        <h4>No batches found</h4>
+                        <p>Try adjusting the search or filter.</p>
+                      </div>
+                    ) : (
+                      filteredBatches.map((batch) => {
                       const birdType = [batch.bird_type, batch.breed].filter(Boolean).join(" · ");
+                      const status = getBatchStatus(batch);
+                      const displayName = batch.batch_name || batch.batch_code || "Batch";
+                      const displayCode =
+                        batch.batch_name && batch.batch_code ? batch.batch_code : "";
+                      const kpi = kpiLookup.get(
+                        String(batch.batch_code || batch.batch_name || "")
+                      );
+                      const aliveCount =
+                        kpi?.estimated_alive_now ?? toNumber(batch.starting_count);
+                      const feedUsed = kpi?.total_feed_kg ?? toNumber(batch.feed_on_hand_kg);
                       const batchCost =
                         toNumber(batch.cost_birds) +
                         toNumber(batch.cost_transport) +
                         toNumber(batch.cost_initial_meds);
+                      const totalSpend = kpi?.total_spend ?? batchCost;
 
                       return (
                         <article className="jpp-batch-card" key={batch.id || batch.batch_code}>
-                          <div className="jpp-batch-card-header">
-                            <div className="jpp-batch-card-title">
-                              <span className="jpp-batch-card-code">
-                                {batch.batch_code || "Batch"}
-                              </span>
-                              <span className="jpp-batch-card-name">
-                                {batch.batch_name || "Unnamed batch"}
-                              </span>
+                          <div className="jpp-batch-card-top">
+                            <div className="jpp-batch-card-heading">
+                              <h4>{displayName}</h4>
+                              {displayCode ? (
+                                <span className="jpp-batch-card-code">{displayCode}</span>
+                              ) : null}
                             </div>
-                            <span className="jpp-batch-card-pill">
-                              <Icon name="calendar" size={14} />
-                              {formatDate(batch.start_date)}
-                            </span>
+                            <div className="jpp-batch-card-status">
+                              <span className={`jpp-batch-status-pill is-${status}`}>
+                                {status === "closed" ? "Closed" : "Active"}
+                              </span>
+                              <button
+                                type="button"
+                                className="jpp-batch-more-btn"
+                                aria-label="Batch options"
+                              >
+                                <Icon name="more-horizontal" size={18} />
+                              </button>
+                            </div>
                           </div>
-                          <div className="jpp-batch-card-meta">
-                            <span className="jpp-batch-meta-item">
+                          <div className="jpp-batch-card-subrow">
+                            <span>{birdType || "Bird type N/A"}</span>
+                            <span>Started {formatDate(batch.start_date)}</span>
+                          </div>
+                          <div className="jpp-batch-card-chips">
+                            <span className="jpp-batch-chip tone-emerald">
                               <Icon name="feather" size={14} />
-                              {birdType || "Bird type N/A"}
+                              {formatNumber(aliveCount)} Alive
                             </span>
-                            <span className="jpp-batch-meta-item">
-                              <Icon name="users" size={14} />
-                              {formatNumber(batch.starting_count)} birds
-                            </span>
-                            <span className="jpp-batch-meta-item">
+                            <span className="jpp-batch-chip tone-amber">
                               <Icon name="receipt" size={14} />
-                              {formatKg(batch.feed_on_hand_kg)} feed
+                              {formatKg(feedUsed)} Feed used
                             </span>
-                            <span className="jpp-batch-meta-item">
+                            <span className="jpp-batch-chip tone-slate">
                               <Icon name="coins" size={14} />
-                              {formatCurrency(batchCost)} total cost
+                              {formatCurrency(totalSpend)}
                             </span>
-                          </div>
-                          <div className="jpp-batch-card-actions">
-                            <button
-                              type="button"
-                              className="jpp-batch-action"
-                              onClick={() => handleBatchEdit(batch)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="jpp-batch-action is-danger"
-                              onClick={() => handleBatchDelete(batch.id)}
-                            >
-                              Delete
-                            </button>
                           </div>
                         </article>
                       );
-                    })}
+                    })
+                    )}
                   </div>
                 </div>
                 <div className="jpp-batches-table">
