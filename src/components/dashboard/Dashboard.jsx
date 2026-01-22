@@ -8,6 +8,7 @@ import ProjectsPage from "./ProjectsPage.jsx";
 import JppProjectPage from "./JppProjectPage.jsx";
 import JgfProjectPage from "./JgfProjectPage.jsx";
 import ExpensesPage from "./ExpensesPage.jsx";
+import ReportsPage from "./ReportsPage.jsx";
 import NewsPage from "./NewsPage.jsx";
 import DocumentsPage from "./DocumentsPage.jsx";
 import MeetingsPage from "./MeetingsPage.jsx";
@@ -78,6 +79,8 @@ export default function Dashboard() {
         return <JgfProjectPage user={user} />;
       case "expenses":
         return <ExpensesPage user={user} />;
+      case "reports":
+        return <ReportsPage user={user} setActivePage={setActivePage} />;
       case "news":
         return <NewsPage user={user} />;
       case "documents":

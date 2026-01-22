@@ -27,6 +27,7 @@ const baseMenuItems = [
     ],
   },
   { key: "expenses", label: "Expense", icon: "receipt" },
+  { key: "reports", label: "Reports", icon: "trending-up" },
   { key: "news", label: "News & Updates", icon: "newspaper" },
   // { key: "meetings", label: "Meetings", icon: "users" },
   { key: "profile", label: "My Profile", icon: "user" },

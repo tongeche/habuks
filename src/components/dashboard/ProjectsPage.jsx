@@ -78,6 +78,37 @@ export default function ProjectsPage({ user, setActivePage }) {
     }
   };
 
+  const getProjectImage = (project) => {
+    const code = project?.code ? String(project.code).trim().toUpperCase() : "";
+    if (code === "JPP") return "/assets/jpp_farm-bg.png";
+    if (code === "JGF") return "/assets/hero-2.webp";
+    return "/assets/hero-1.png";
+  };
+
+  const getProjectBadgeIcon = (project) => {
+    const code = project?.code ? String(project.code).trim().toUpperCase() : "";
+    if (code === "JPP") return "feather";
+    if (code === "JGF") return "coins";
+    return "briefcase";
+  };
+
+  const getProjectLead = (project) => {
+    const base =
+      project?.short_description ||
+      project?.lead_description ||
+      project?.description ||
+      "";
+    if (base) {
+      const trimmed = String(base).trim();
+      if (trimmed.length <= 90) return trimmed;
+      return `${trimmed.slice(0, 87)}...`;
+    }
+    const code = project?.code ? String(project.code).trim().toUpperCase() : "";
+    if (code === "JPP") return "Reducing poultry losses and improving member incomes.";
+    if (code === "JGF") return "Adding value to groundnuts for reliable household earnings.";
+    return "Supporting member-led income activities in the community.";
+  };
+
   const handleManageProject = (project) => {
     const code = project?.code ? String(project.code).trim().toUpperCase() : "";
     const target = projectPageMap[code];
@@ -139,12 +170,24 @@ export default function ProjectsPage({ user, setActivePage }) {
 
             return (
               <div className="project-card-modern" key={project.id}>
+                <div className="project-card-media">
+                  <img src={getProjectImage(project)} alt={`${project.name} cover`} loading="lazy" />
+                  <span className="project-card-badge">
+                    <Icon name={getProjectBadgeIcon(project)} size={16} />
+                  </span>
+                </div>
                 <div className="project-card-main">
                   <div className="project-icon">
                     <Icon name="star" size={24} />
                   </div>
                   <div className="project-info">
-                    <h3>{project.name}</h3>
+                    <div className="project-title-row">
+                      <h3>{project.name}</h3>
+                      {project.code && (
+                        <span className="project-code-pill">{project.code}</span>
+                      )}
+                    </div>
+                    <p className="project-lead">{getProjectLead(project)}</p>
                     <p className="project-desc">{project.description}</p>
                   </div>
                   <div className="project-progress">
@@ -186,6 +229,59 @@ export default function ProjectsPage({ user, setActivePage }) {
                       <Icon name="arrow-right" size={18} />
                     </a>
                   </div>
+                </div>
+
+                <div className="project-card-mobile-meta">
+                  <span>
+                    <Icon name="calendar" size={14} />
+                    {formatDate(project.start_date)}
+                  </span>
+                  <span>
+                    <Icon name="member" size={14} />
+                    {project.member_count || 0} members
+                  </span>
+                  <span>
+                    <Icon name="check-circle" size={14} />
+                    {project.status || "Active"}
+                  </span>
+                </div>
+                <div className="project-card-mobile-actions">
+                  {isProjectManager && (
+                    <button
+                      type="button"
+                      className="btn-manage-project is-compact"
+                      aria-label={`Manage ${project.name}`}
+                      onClick={() => handleManageProject(project)}
+                      disabled={!projectPageMap[String(project.code || "").trim().toUpperCase()]}
+                    >
+                      <Icon name="briefcase" size={16} />
+                      Manage
+                    </button>
+                  )}
+                  {project.membership ? (
+                    <button
+                      className="btn-leave is-compact"
+                      onClick={() => handleLeave(project.id)}
+                      disabled={joiningId === project.id}
+                    >
+                      {joiningId === project.id ? "..." : "Leave"}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn-join is-compact"
+                      onClick={() => handleJoin(project.id)}
+                      disabled={joiningId === project.id}
+                    >
+                      {joiningId === project.id ? "Joining..." : "Join"}
+                    </button>
+                  )}
+                  <a
+                    href={`/projects/${project.code || project.id}`}
+                    className="btn-view-project is-compact"
+                    title="View project details"
+                  >
+                    <Icon name="arrow-right" size={16} />
+                  </a>
                 </div>
 
                 <div className="project-card-details">
@@ -241,6 +337,25 @@ export default function ProjectsPage({ user, setActivePage }) {
           })}
         </div>
       )}
+
+      <div className="projects-mobile-nav">
+        <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("overview")}>
+          <Icon name="home" size={20} />
+          <span>Home</span>
+        </button>
+        <button type="button" className="projects-mobile-nav-btn active">
+          <Icon name="briefcase" size={20} />
+          <span>Projects</span>
+        </button>
+        <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("reports")}>
+          <Icon name="trending-up" size={20} />
+          <span>Reports</span>
+        </button>
+        <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("profile")}>
+          <Icon name="user" size={20} />
+          <span>Settings</span>
+        </button>
+      </div>
     </div>
   );
 }
