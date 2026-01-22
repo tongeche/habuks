@@ -39,6 +39,7 @@ import {
   getJppBatches,
   getProjectExpenseCategories,
   getProjectExpenses,
+  getProjectSales,
   getRecentProjectExpenses,
   getProjectsWithMembership,
   updateProjectExpense,
@@ -52,6 +53,13 @@ const EXPENSE_CONFIGS = {
     getBatches: getJgfBatches,
   },
 };
+
+const EXPENSE_RANGE_OPTIONS = [
+  { label: "Today", days: 1 },
+  { label: "7 days", days: 7 },
+  { label: "30 days", days: 30 },
+  { label: "Custom", days: 0 },
+];
 
 export default function ExpensesPage({ user }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -70,9 +78,11 @@ export default function ExpensesPage({ user }) {
   const [selectedProjectId, setSelectedProjectId] = useState("");
   const [batches, setBatches] = useState([]);
   const [expenses, setExpenses] = useState([]);
+  const [sales, setSales] = useState([]);
   const [expenseCategories, setExpenseCategories] = useState([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [expensesLoading, setExpensesLoading] = useState(false);
+  const [salesLoading, setSalesLoading] = useState(false);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [expenseForm, setExpenseForm] = useState(initialExpenseForm);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
@@ -80,6 +90,7 @@ export default function ExpensesPage({ user }) {
   const [expandedExpenseId, setExpandedExpenseId] = useState(null);
   const [recentExpenses, setRecentExpenses] = useState([]);
   const [recentExpensesLoading, setRecentExpensesLoading] = useState(false);
+  const [mobileRangeDays, setMobileRangeDays] = useState(7);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -127,6 +138,23 @@ export default function ExpensesPage({ user }) {
       if (showLoading) {
         setExpensesLoading(false);
       }
+    }
+  };
+
+  const loadSalesData = async (projectId) => {
+    if (!projectId) {
+      setSales([]);
+      return;
+    }
+    setSalesLoading(true);
+    try {
+      const data = await getProjectSales(projectId);
+      setSales(data || []);
+    } catch (error) {
+      console.error("Error loading project sales:", error);
+      setSales([]);
+    } finally {
+      setSalesLoading(false);
     }
   };
 
@@ -211,15 +239,19 @@ export default function ExpensesPage({ user }) {
     return EXPENSE_CONFIGS[selectedProjectCode] || null;
   }, [selectedProjectCode]);
 
+
   useEffect(() => {
     if (!selectedProjectId) {
       setExpenses([]);
       setBatches([]);
       setExpenseCategories([]);
       setExpensesLoading(false);
+      setSales([]);
+      setSalesLoading(false);
       return;
     }
     loadExpenseData(selectedProjectId, true, expenseConfig);
+    loadSalesData(selectedProjectId);
   }, [selectedProjectId, expenseConfig]);
 
   const loadExpenseCategories = async (projectCode) => {
@@ -326,6 +358,40 @@ export default function ExpensesPage({ user }) {
     return `-${formatCurrency(numeric)}`;
   };
 
+  const toDateKey = (value) => {
+    if (!value) return "";
+    if (value instanceof Date) {
+      return value.toISOString().slice(0, 10);
+    }
+    return String(value).slice(0, 10);
+  };
+
+  const filterByRange = (items, days, dateKey) => {
+    if (!days) return items;
+    const todayDate = new Date();
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(todayDate.getDate() - (days - 1));
+    return items.filter((item) => {
+      const value = item?.[dateKey];
+      if (!value) return false;
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return false;
+      return date >= start && date <= todayDate;
+    });
+  };
+
+  const getSalesTotal = (sale) => {
+    if (!sale) return 0;
+    if (sale.total_amount !== undefined && sale.total_amount !== null) {
+      return toNumber(sale.total_amount);
+    }
+    const units = toNumber(sale.quantity_units);
+    const unitPrice = toNumber(sale.unit_price);
+    const kg = toNumber(sale.quantity_kg);
+    return units * unitPrice || kg * unitPrice;
+  };
+
   const categoryTones = [
     "emerald",
     "blue",
@@ -377,6 +443,184 @@ export default function ExpensesPage({ user }) {
   const recentTotal = useMemo(() => {
     return recentExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
   }, [recentExpenses]);
+
+  const activeRangeDays = mobileRangeDays || 30;
+  const activeRangeLabel =
+    EXPENSE_RANGE_OPTIONS.find((option) => option.days === mobileRangeDays)?.label ||
+    `${activeRangeDays} days`;
+
+  const rangedExpenses = useMemo(() => {
+    return filterByRange(expenses, activeRangeDays, "expense_date");
+  }, [expenses, activeRangeDays]);
+
+  const rangedSales = useMemo(() => {
+    return filterByRange(sales, activeRangeDays, "sale_date");
+  }, [sales, activeRangeDays]);
+
+  const rangeTotals = useMemo(() => {
+    const spendTotal = rangedExpenses.reduce((sum, expense) => sum + toNumber(expense.amount), 0);
+    const salesTotal = rangedSales.reduce((sum, sale) => sum + getSalesTotal(sale), 0);
+    const avgPerDay = activeRangeDays ? spendTotal / activeRangeDays : spendTotal;
+    const profit = salesTotal - spendTotal;
+    return {
+      spendTotal,
+      salesTotal,
+      avgPerDay,
+      profit,
+    };
+  }, [rangedExpenses, rangedSales, activeRangeDays]);
+
+  const profitPercent = rangeTotals.spendTotal
+    ? (rangeTotals.profit / rangeTotals.spendTotal) * 100
+    : 0;
+
+  const breakdown = useMemo(() => {
+    const totals = new Map();
+    rangedExpenses.forEach((expense) => {
+      const category = expense.category || "Other";
+      totals.set(category, (totals.get(category) || 0) + toNumber(expense.amount));
+    });
+    const grandTotal = Array.from(totals.values()).reduce((sum, value) => sum + value, 0);
+    const items = Array.from(totals.entries())
+      .map(([category, total]) => ({
+        category,
+        total,
+        percent: grandTotal ? (total / grandTotal) * 100 : 0,
+        tone: getCategoryTone(category),
+      }))
+      .sort((a, b) => b.total - a.total);
+    return { items, grandTotal };
+  }, [rangedExpenses]);
+
+  const highestCategory = breakdown.items[0];
+
+  const sortedRangedExpenses = useMemo(() => {
+    return [...rangedExpenses].sort((a, b) => {
+      const aTime = new Date(a.expense_date || 0).getTime();
+      const bTime = new Date(b.expense_date || 0).getTime();
+      return bTime - aTime;
+    });
+  }, [rangedExpenses]);
+
+  const chartDays = useMemo(() => {
+    const days = activeRangeDays;
+    const result = [];
+    const base = new Date();
+    base.setHours(0, 0, 0, 0);
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const date = new Date(base);
+      date.setDate(base.getDate() - i);
+      result.push(toDateKey(date));
+    }
+    return result;
+  }, [activeRangeDays]);
+
+  const chartSeries = useMemo(() => {
+    const expenseSeries = chartDays.map((day) => {
+      return rangedExpenses
+        .filter((expense) => toDateKey(expense.expense_date) === day)
+        .reduce((sum, expense) => sum + toNumber(expense.amount), 0);
+    });
+    const salesSeries = chartDays.map((day) => {
+      return rangedSales
+        .filter((sale) => toDateKey(sale.sale_date) === day)
+        .reduce((sum, sale) => sum + getSalesTotal(sale), 0);
+    });
+    return { expenseSeries, salesSeries };
+  }, [chartDays, rangedExpenses, rangedSales]);
+
+  const chartTicks = useMemo(() => {
+    if (chartDays.length <= 1) return chartDays;
+    const step = Math.max(1, Math.floor((chartDays.length - 1) / 4));
+    return chartDays.filter((_, index) => index % step === 0 || index === chartDays.length - 1);
+  }, [chartDays]);
+
+  const chartMax = Math.max(
+    1,
+    ...chartSeries.expenseSeries,
+    ...chartSeries.salesSeries
+  );
+
+  const buildLinePath = (series, width, height, padding = 12) => {
+    if (!series.length) return "";
+    if (series.length === 1) {
+      const x = width / 2;
+      const y =
+        height -
+        padding -
+        (series[0] / chartMax) * (height - padding * 2);
+      return `M ${x} ${y}`;
+    }
+    return series
+      .map((value, index) => {
+        const x = padding + (index * (width - padding * 2)) / (series.length - 1);
+        const y =
+          height - padding - (value / chartMax) * (height - padding * 2);
+        return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+      })
+      .join(" ");
+  };
+
+  const getSeriesPoint = (value, index, total, width, height, padding = 12) => {
+    if (total <= 1) {
+      const x = width / 2;
+      const y =
+        height -
+        padding -
+        (value / chartMax) * (height - padding * 2);
+      return { x, y };
+    }
+    const x = padding + (index * (width - padding * 2)) / (total - 1);
+    const y =
+      height - padding - (value / chartMax) * (height - padding * 2);
+    return { x, y };
+  };
+
+  const buildAreaPath = (series, width, height, padding = 12) => {
+    if (!series.length) return "";
+    const linePath = buildLinePath(series, width, height, padding);
+    const lastX = width - padding;
+    const baseY = height - padding;
+    return `${linePath} L ${lastX} ${baseY} L ${padding} ${baseY} Z`;
+  };
+
+  const chartWidth = 320;
+  const chartHeight = 140;
+  const expenseLinePath = buildLinePath(
+    chartSeries.expenseSeries,
+    chartWidth,
+    chartHeight
+  );
+  const salesLinePath = buildLinePath(
+    chartSeries.salesSeries,
+    chartWidth,
+    chartHeight
+  );
+  const expenseAreaPath = buildAreaPath(
+    chartSeries.expenseSeries,
+    chartWidth,
+    chartHeight
+  );
+
+  const lastExpensePoint = chartSeries.expenseSeries.length
+    ? getSeriesPoint(
+        chartSeries.expenseSeries[chartSeries.expenseSeries.length - 1],
+        chartSeries.expenseSeries.length - 1,
+        chartSeries.expenseSeries.length,
+        chartWidth,
+        chartHeight
+      )
+    : null;
+
+  const lastSalesPoint = chartSeries.salesSeries.length
+    ? getSeriesPoint(
+        chartSeries.salesSeries[chartSeries.salesSeries.length - 1],
+        chartSeries.salesSeries.length - 1,
+        chartSeries.salesSeries.length,
+        chartWidth,
+        chartHeight
+      )
+    : null;
 
   const handleProjectSelect = (event) => {
     const value = event.target.value;
@@ -543,6 +787,28 @@ export default function ExpensesPage({ user }) {
       {(statusMessage || errorMessage) && (
         <div className={`admin-alert ${errorMessage ? "is-error" : "is-success"}`}>
           <span>{errorMessage || statusMessage}</span>
+        </div>
+      )}
+
+      {projects.length > 0 && (
+        <div className="expense-mobile-header">
+          <div className="expense-mobile-title-row">
+            <h2>Expenses</h2>
+            <button className="expense-filter-btn" type="button" aria-label="Filter expenses">
+              <Icon name="filter" size={18} />
+            </button>
+          </div>
+          <div className="expense-mobile-project-card">
+            <label>Project</label>
+            <select value={selectedProjectId} onChange={handleProjectSelect}>
+              <option value="">Select project</option>
+              {projects.map((project) => (
+                <option key={`mobile-${project.id}`} value={String(project.id)}>
+                  {project.name} ({project.code})
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 
@@ -719,6 +985,229 @@ export default function ExpensesPage({ user }) {
               </button>
             </div>
           </div>
+          {selectedProjectId && (
+            <div className="expense-mobile-dashboard">
+              <div className="expense-mobile-summary-card">
+                <div className="expense-mobile-summary-header">
+                  <div>
+                    <span className="expense-mobile-summary-label">
+                      Total spend
+                    </span>
+                    <span className="expense-mobile-summary-sub">
+                      {activeRangeLabel}
+                    </span>
+                  </div>
+                  <span className="expense-mobile-summary-pill">
+                    {selectedProject?.code || "Project"}
+                  </span>
+                </div>
+                <div className="expense-mobile-summary-grid">
+                  <div>
+                    <div className="expense-mobile-summary-value is-negative">
+                      {formatExpenseTotal(rangeTotals.spendTotal)}
+                    </div>
+                    <div className="expense-mobile-summary-meta">
+                      <span>Avg / day</span>
+                      <strong>{formatCurrency(rangeTotals.avgPerDay)}</strong>
+                    </div>
+                    <div className="expense-mobile-summary-meta">
+                      <span>Highest category</span>
+                      <strong>
+                        {highestCategory
+                          ? `${highestCategory.category} (${highestCategory.percent.toFixed(0)}%)`
+                          : "N/A"}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="expense-mobile-summary-divider" aria-hidden="true"></div>
+                  <div>
+                    <div className="expense-mobile-summary-value">
+                      {formatCurrency(rangeTotals.salesTotal)}
+                    </div>
+                    <div
+                      className={`expense-mobile-summary-change${
+                        rangeTotals.profit >= 0 ? " is-positive" : " is-negative"
+                      }`}
+                    >
+                      {rangeTotals.profit >= 0 ? "+" : "-"}
+                      {Math.abs(profitPercent).toFixed(0)}%
+                    </div>
+                    <div className="expense-mobile-summary-meta">
+                      <span>Profit</span>
+                      <strong>{formatCurrency(rangeTotals.profit)}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="expense-mobile-range-tabs" role="tablist">
+                {EXPENSE_RANGE_OPTIONS.map((option) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    className={`expense-mobile-range${
+                      mobileRangeDays === option.days ? " is-active" : ""
+                    }`}
+                    onClick={() => setMobileRangeDays(option.days)}
+                    role="tab"
+                    aria-selected={mobileRangeDays === option.days}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="expense-mobile-chart-card">
+                <div className="expense-mobile-chart-header">
+                  <div>
+                    <h4>Expense vs. Sales</h4>
+                    <span>Last {activeRangeDays} days</span>
+                  </div>
+                  <div className="expense-mobile-chart-legend">
+                    <span className="legend-item sales">Sales</span>
+                    <span className="legend-item expenses">Expenses</span>
+                  </div>
+                </div>
+                <div className="expense-mobile-chart">
+                  <svg
+                    viewBox={`0 0 ${chartWidth} ${chartHeight}`}
+                    aria-hidden="true"
+                    preserveAspectRatio="none"
+                  >
+                    <defs>
+                      <linearGradient id="expenseFill" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" stopColor="#86efac" stopOpacity="0.6" />
+                        <stop offset="100%" stopColor="#86efac" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                    <path d={expenseAreaPath} fill="url(#expenseFill)" />
+                    <path
+                      d={salesLinePath}
+                      stroke="#a3b2c4"
+                      strokeWidth="2"
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d={expenseLinePath}
+                      stroke="#2f5b34"
+                      strokeWidth="2.5"
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    {lastExpensePoint && (
+                      <circle
+                        cx={lastExpensePoint.x}
+                        cy={lastExpensePoint.y}
+                        r="4"
+                        fill="#2f5b34"
+                        stroke="#e7f5e9"
+                        strokeWidth="2"
+                      />
+                    )}
+                    {lastSalesPoint && (
+                      <circle
+                        cx={lastSalesPoint.x}
+                        cy={lastSalesPoint.y}
+                        r="3"
+                        fill="#a3b2c4"
+                        stroke="#f8fafc"
+                        strokeWidth="2"
+                      />
+                    )}
+                  </svg>
+                  <div className="expense-mobile-chart-axis">
+                    {chartTicks.map((tick) => (
+                      <span key={tick}>{new Date(tick).getDate()}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="expense-mobile-breakdown-card">
+                <div className="expense-mobile-breakdown-header">
+                  <h4>Expenses Breakdown</h4>
+                  <span>{formatCurrency(breakdown.grandTotal)}</span>
+                </div>
+                {breakdown.items.length === 0 ? (
+                  <p className="expense-mobile-empty">No expenses recorded in this range.</p>
+                ) : (
+                  <div className="expense-mobile-breakdown-list">
+                    {breakdown.items.map((item) => (
+                      <div className="expense-breakdown-row" key={item.category}>
+                        <div className={`expense-category-icon expense-tone-${item.tone}`}>
+                          {getCategoryInitial(item.category)}
+                        </div>
+                        <div className="expense-breakdown-info">
+                          <div className="expense-breakdown-title">
+                            <span>{item.category}</span>
+                            <strong>{formatCurrency(item.total)}</strong>
+                          </div>
+                          <div className="expense-breakdown-bar">
+                            <span style={{ width: `${item.percent}%` }}></span>
+                          </div>
+                        </div>
+                        <span className="expense-breakdown-percent">
+                          {item.percent.toFixed(0)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="expense-mobile-history-card">
+                <div className="expense-mobile-history-header">
+                  <h4>Expense History</h4>
+                  <span>{sortedRangedExpenses.length} items</span>
+                </div>
+                {expensesLoading ? (
+                  <p className="expense-mobile-empty">Loading expenses...</p>
+                ) : sortedRangedExpenses.length === 0 ? (
+                  <p className="expense-mobile-empty">No expenses logged yet.</p>
+                ) : (
+                  <div className="expense-mobile-history-list">
+                    {sortedRangedExpenses.map((expense) => {
+                      const categoryLabel = expense.category || "Other";
+                      const tone = getCategoryTone(categoryLabel);
+                      const meta = [
+                        formatDate(expense.expense_date),
+                        getBatchLabel(expense.batch_id),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ");
+                      return (
+                        <div className="expense-history-item" key={`mobile-${expense.id}`}>
+                          <div className={`expense-category-icon expense-tone-${tone}`}>
+                            {getCategoryInitial(categoryLabel)}
+                          </div>
+                          <div className="expense-history-info">
+                            <span className="expense-history-title">{categoryLabel}</span>
+                            <span className="expense-history-sub">{meta || "Unassigned"}</span>
+                          </div>
+                          <span className="expense-history-amount">
+                            {formatExpenseTotal(expense.amount)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {selectedProjectId && !showExpenseForm && (
+            <button
+              type="button"
+              className="expense-mobile-fab"
+              onClick={handleNewExpense}
+              aria-label="Add expense"
+            >
+              <Icon name="plus" size={22} />
+            </button>
+          )}
           {projects.length > 0 && (
             <div className="expense-mobile-summary">
               <div className="expense-summary-card">

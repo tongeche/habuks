@@ -2804,6 +2804,181 @@ export async function revokeMemberInvite(inviteId) {
   return data;
 }
 
+export async function getWelfareAccounts() {
+  const mockAccounts = [
+    { id: 1, name: "Main Welfare Fund", description: "Group welfare savings" },
+  ];
+
+  if (!isSupabaseConfigured || !supabase) {
+    return mockAccounts;
+  }
+
+  const { data, error } = await supabase
+    .from("welfare_accounts")
+    .select("id, name, description")
+    .order("name", { ascending: true });
+
+  if (error) {
+    console.error("Error fetching welfare accounts:", error);
+    return mockAccounts;
+  }
+
+  return data || mockAccounts;
+}
+
+export async function getWelfareCycles() {
+  const mockCycles = [
+    { id: 1, cycle_number: 1, start_date: "2025-12-15", end_date: "2025-12-29" },
+    { id: 2, cycle_number: 2, start_date: "2025-12-30", end_date: "2026-01-14" },
+  ];
+
+  if (!isSupabaseConfigured || !supabase) {
+    return mockCycles;
+  }
+
+  const { data, error } = await supabase
+    .from("welfare_cycles")
+    .select("id, cycle_number, start_date, end_date")
+    .order("cycle_number", { ascending: true });
+
+  if (error) {
+    console.error("Error fetching welfare cycles:", error);
+    return mockCycles;
+  }
+
+  return data || mockCycles;
+}
+
+export async function getWelfareTransactionsAdmin() {
+  const mockTransactions = [
+    {
+      id: 1,
+      welfare_account_id: 1,
+      cycle_id: 1,
+      member_id: 1,
+      member: { name: "Orpah Achieng" },
+      amount: 1000,
+      transaction_type: "contribution",
+      date: "2025-12-15",
+      description: "Cycle 1 welfare contribution",
+      status: "Completed",
+    },
+    {
+      id: 2,
+      welfare_account_id: 1,
+      cycle_id: 2,
+      member_id: null,
+      member: null,
+      amount: 1000,
+      transaction_type: "contribution",
+      date: "2025-12-30",
+      description: "Cycle 2 welfare contribution",
+      status: "Completed",
+    },
+  ];
+
+  if (!isSupabaseConfigured || !supabase) {
+    return mockTransactions;
+  }
+
+  const { data, error } = await supabase
+    .from("welfare_transactions")
+    .select(
+      "id, welfare_account_id, cycle_id, member_id, amount, transaction_type, date, description, status, member:members(name)"
+    )
+    .order("date", { ascending: false });
+
+  if (error) {
+    console.error("Error fetching welfare transactions:", error);
+    return mockTransactions;
+  }
+
+  return data || [];
+}
+
+export async function createWelfareTransaction(payload) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const insertPayload = {
+    welfare_account_id: normalizeOptional(payload.welfare_account_id),
+    cycle_id: normalizeOptional(payload.cycle_id),
+    member_id: normalizeOptional(payload.member_id),
+    amount: payload.amount,
+    transaction_type: normalizeOptional(payload.transaction_type),
+    date: payload.date,
+    description: normalizeOptional(payload.description),
+    status: normalizeOptional(payload.status) || "Completed",
+  };
+
+  const { data, error } = await supabase
+    .from("welfare_transactions")
+    .insert(insertPayload)
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Error creating welfare transaction:", error);
+    throw new Error("Failed to create welfare transaction");
+  }
+
+  return data;
+}
+
+export async function updateWelfareTransaction(transactionId, payload) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const updatePayload = {};
+
+  if ("welfare_account_id" in payload)
+    updatePayload.welfare_account_id = normalizeOptional(payload.welfare_account_id);
+  if ("cycle_id" in payload) updatePayload.cycle_id = normalizeOptional(payload.cycle_id);
+  if ("member_id" in payload) updatePayload.member_id = normalizeOptional(payload.member_id);
+  if ("amount" in payload) updatePayload.amount = payload.amount;
+  if ("transaction_type" in payload)
+    updatePayload.transaction_type = normalizeOptional(payload.transaction_type);
+  if ("date" in payload) updatePayload.date = payload.date;
+  if ("description" in payload)
+    updatePayload.description = normalizeOptional(payload.description);
+  if ("status" in payload) updatePayload.status = normalizeOptional(payload.status);
+
+  if (Object.keys(updatePayload).length === 0) {
+    throw new Error("No fields to update");
+  }
+
+  const { data, error } = await supabase
+    .from("welfare_transactions")
+    .update(updatePayload)
+    .eq("id", transactionId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Error updating welfare transaction:", error);
+    throw new Error("Failed to update welfare transaction");
+  }
+
+  return data;
+}
+
+export async function deleteWelfareTransaction(transactionId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const { error } = await supabase.from("welfare_transactions").delete().eq("id", transactionId);
+
+  if (error) {
+    console.error("Error deleting welfare transaction:", error);
+    throw new Error("Failed to delete welfare transaction");
+  }
+
+  return true;
+}
+
 /**
  * Sign out the current user
  */

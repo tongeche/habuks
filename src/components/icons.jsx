@@ -196,6 +196,12 @@ export const Icon = ({ name, size = 18, className = "" }) => {
           <line x1="20" y1="20" x2="16.5" y2="16.5" />
         </svg>
       );
+    case "filter":
+      return (
+        <svg {...common} aria-hidden="true">
+          <path d="M3 5h18l-7 8v5l-4 2v-7z" />
+        </svg>
+      );
     case "arrow-left":
       return (
         <svg {...common} aria-hidden="true">

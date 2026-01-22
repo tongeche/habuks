@@ -187,9 +187,11 @@ export default function JppProjectPage({ user }) {
   const [showBatchFormMobile, setShowBatchFormMobile] = useState(false);
   const [showDailyFormMobile, setShowDailyFormMobile] = useState(false);
   const [showBirdFormMobile, setShowBirdFormMobile] = useState(false);
+  const [showWeeklyFormMobile, setShowWeeklyFormMobile] = useState(false);
   const batchFormRef = useRef(null);
   const dailyFormRef = useRef(null);
   const birdFormRef = useRef(null);
+  const weeklyFormRef = useRef(null);
 
   const [editingBatchId, setEditingBatchId] = useState(null);
   const [editingDailyId, setEditingDailyId] = useState(null);
@@ -484,6 +486,46 @@ export default function JppProjectPage({ user }) {
     return formatter(value);
   };
 
+  const formatLabel = (value) => {
+    if (!value) {
+      return "N/A";
+    }
+    const text = String(value).replace(/_/g, " ");
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  };
+
+  const getAgeDays = (dateStr) => {
+    if (!dateStr) return null;
+    const start = new Date(dateStr);
+    if (Number.isNaN(start.getTime())) {
+      return null;
+    }
+    const diff = Math.floor((new Date() - start) / (24 * 60 * 60 * 1000));
+    return Math.max(diff, 0);
+  };
+
+  const getHealthStatus = (bird) => {
+    const status = (bird.status || "").toLowerCase();
+    if (["dead", "missing"].includes(status)) {
+      return { label: "Needs attention", tone: "alert" };
+    }
+    if (status === "culled") {
+      return { label: "Monitor health", tone: "warn" };
+    }
+    return { label: "Excellent health", tone: "good" };
+  };
+
+  const getMortalityRisk = (bird) => {
+    const status = (bird.status || "").toLowerCase();
+    if (["dead", "missing"].includes(status)) {
+      return { label: "High", tone: "high" };
+    }
+    if (toNumber(bird.birds_culled_per_bird) > 0) {
+      return { label: "Medium", tone: "medium" };
+    }
+    return { label: "Low", tone: "low" };
+  };
+
   const totals = kpis.reduce(
     (acc, row) => {
       acc.starting += toNumber(row.starting_count);
@@ -610,6 +652,19 @@ export default function JppProjectPage({ user }) {
 
   const closeDailyFormMobile = () => {
     setShowDailyFormMobile(false);
+  };
+
+  const openWeeklyFormMobile = () => {
+    setShowWeeklyFormMobile(true);
+    if (typeof window !== "undefined") {
+      setTimeout(() => {
+        weeklyFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    }
+  };
+
+  const closeWeeklyFormMobile = () => {
+    setShowWeeklyFormMobile(false);
   };
 
   const handleDailyMobileCta = () => {
@@ -896,6 +951,7 @@ export default function JppProjectPage({ user }) {
       }
       setWeeklyForm(initialWeeklyForm);
       setEditingWeeklyId(null);
+      setShowWeeklyFormMobile(false);
       await loadJppData(false);
     } catch (error) {
       setErrorMessage(error.message || "Failed to save weekly growth.");
@@ -1033,6 +1089,7 @@ export default function JppProjectPage({ user }) {
     setEditingWeeklyId(entry.id);
     setActiveTab("weekly");
     resetMessages();
+    openWeeklyFormMobile();
   };
 
   const handleBatchDelete = async (batchId) => {
@@ -2522,8 +2579,20 @@ export default function JppProjectPage({ user }) {
       {activeTab === "weekly" && (
         <div className="jpp-tab-grid">
           {hasBatches ? (
-            <div className="admin-card">
-              <h3>{editingWeeklyId ? "Edit Weekly Growth" : "Add Weekly Growth"}</h3>
+            <div
+              className={`admin-card jpp-weekly-form-card ${showWeeklyFormMobile ? "is-open" : ""}`}
+              ref={weeklyFormRef}
+            >
+              <div className="section-header jpp-weekly-form-header">
+                <h3>{editingWeeklyId ? "Edit Weekly Growth" : "Add Weekly Growth"}</h3>
+                <button
+                  type="button"
+                  className="jpp-weekly-form-toggle"
+                  onClick={showWeeklyFormMobile ? closeWeeklyFormMobile : openWeeklyFormMobile}
+                >
+                  {showWeeklyFormMobile ? "Hide form" : "Add weekly"}
+                </button>
+              </div>
               <form className="admin-form" onSubmit={handleWeeklySubmit}>
                 <div className="admin-form-grid">
                   <div className="admin-form-field">
@@ -2673,10 +2742,16 @@ export default function JppProjectPage({ user }) {
           )}
 
           <div className="admin-card">
-            <div className="section-header">
+            <div className="section-header jpp-weekly-list-header">
               <h3>
                 <Icon name="calendar" size={18} /> Weekly Growth History
               </h3>
+              {hasBatches && (
+                <button type="button" className="jpp-weekly-add-btn" onClick={openWeeklyFormMobile}>
+                  <Icon name="plus" size={16} />
+                  Add weekly
+                </button>
+              )}
             </div>
             {weeklyGrowth.length === 0 ? (
               <div className="empty-state">
@@ -2685,56 +2760,133 @@ export default function JppProjectPage({ user }) {
                 <p>Capture weekly growth stats for each batch.</p>
               </div>
             ) : (
-              <div className="jpp-table-wrap">
-                <table className="jpp-table">
-                  <thead>
-                    <tr>
-                      <th>Week Ending</th>
-                      <th>Batch</th>
-                      <th>Avg Wt</th>
-                      <th>Min / Max</th>
-                      <th>Score</th>
-                      <th>Feed</th>
-                      <th>Sold</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {weeklyGrowth.map((entry) => (
-                      <tr key={entry.id}>
-                        <td>{formatDate(entry.week_ending)}</td>
-                        <td>{getBatchLabel(entry.batch_id)}</td>
-                        <td>{formatOptional(entry.avg_weight_kg, formatKg)}</td>
-                        <td>
-                          {formatOptional(entry.min_weight_kg, formatKg)} /{" "}
-                          {formatOptional(entry.max_weight_kg, formatKg)}
-                        </td>
-                        <td>{formatOptional(entry.body_score_avg, formatNumber)}</td>
-                        <td>{formatKg(entry.feed_used_week_kg)}</td>
-                        <td>{formatNumber(entry.birds_sold)}</td>
-                        <td>
-                          <div className="jpp-table-actions">
-                            <button
-                              type="button"
-                              className="link-button"
-                              onClick={() => handleWeeklyEdit(entry)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="link-button jpp-danger"
-                              onClick={() => handleWeeklyDelete(entry.id)}
-                            >
-                              Delete
-                            </button>
+              <>
+                <div className="jpp-weekly-mobile-list">
+                  {weeklyGrowth.map((entry) => {
+                    const sampleLabel = formatOptional(entry.sample_size, formatNumber);
+                    const scoreLabel = formatOptional(entry.body_score_avg, formatNumber);
+                    const chipLabel =
+                      sampleLabel !== "-"
+                        ? `Sample ${sampleLabel}`
+                        : scoreLabel !== "-"
+                        ? `Score ${scoreLabel}`
+                        : "Weekly log";
+                    return (
+                      <article className="jpp-weekly-card" key={entry.id}>
+                        <div className="jpp-weekly-card-header">
+                          <div>
+                            <span className="jpp-weekly-card-title">
+                              {getBatchLabel(entry.batch_id)}
+                            </span>
+                            <span className="jpp-weekly-card-date">
+                              Week ending {formatDate(entry.week_ending)}
+                            </span>
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                          <span className="jpp-weekly-card-chip">
+                            <Icon name="calendar" size={12} />
+                            {chipLabel}
+                          </span>
+                        </div>
+                      <div className="jpp-weekly-metric-grid">
+                        <div className="jpp-weekly-metric">
+                          <span className="jpp-weekly-metric-label">Avg Weight</span>
+                          <span className="jpp-weekly-metric-value">
+                            {formatOptional(entry.avg_weight_kg, formatKg)}
+                          </span>
+                        </div>
+                        <div className="jpp-weekly-metric">
+                          <span className="jpp-weekly-metric-label">Min / Max</span>
+                          <span className="jpp-weekly-metric-value">
+                            {formatOptional(entry.min_weight_kg, formatKg)} /{" "}
+                            {formatOptional(entry.max_weight_kg, formatKg)}
+                          </span>
+                        </div>
+                        <div className="jpp-weekly-metric">
+                          <span className="jpp-weekly-metric-label">Feed Used</span>
+                          <span className="jpp-weekly-metric-value">
+                            {formatKg(entry.feed_used_week_kg)}
+                          </span>
+                        </div>
+                        <div className="jpp-weekly-metric">
+                          <span className="jpp-weekly-metric-label">Birds Sold</span>
+                          <span className="jpp-weekly-metric-value">
+                            {formatNumber(entry.birds_sold)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="jpp-weekly-card-actions">
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => handleWeeklyEdit(entry)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button jpp-danger"
+                          onClick={() => handleWeeklyDelete(entry.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      </article>
+                    );
+                  })}
+                </div>
+                <div className="jpp-weekly-table">
+                  <div className="jpp-table-wrap">
+                    <table className="jpp-table">
+                      <thead>
+                        <tr>
+                          <th>Week Ending</th>
+                          <th>Batch</th>
+                          <th>Avg Wt</th>
+                          <th>Min / Max</th>
+                          <th>Score</th>
+                          <th>Feed</th>
+                          <th>Sold</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {weeklyGrowth.map((entry) => (
+                          <tr key={entry.id}>
+                            <td>{formatDate(entry.week_ending)}</td>
+                            <td>{getBatchLabel(entry.batch_id)}</td>
+                            <td>{formatOptional(entry.avg_weight_kg, formatKg)}</td>
+                            <td>
+                              {formatOptional(entry.min_weight_kg, formatKg)} /{" "}
+                              {formatOptional(entry.max_weight_kg, formatKg)}
+                            </td>
+                            <td>{formatOptional(entry.body_score_avg, formatNumber)}</td>
+                            <td>{formatKg(entry.feed_used_week_kg)}</td>
+                            <td>{formatNumber(entry.birds_sold)}</td>
+                            <td>
+                              <div className="jpp-table-actions">
+                                <button
+                                  type="button"
+                                  className="link-button"
+                                  onClick={() => handleWeeklyEdit(entry)}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="link-button jpp-danger"
+                                  onClick={() => handleWeeklyDelete(entry.id)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -2998,6 +3150,24 @@ export default function JppProjectPage({ user }) {
                         .join(" / ");
                       const categoryPrimary = ageStageLabel || bird.breed_label || "General";
                       const categorySecondary = colorPattern || bird.acquired_source || "Standard";
+                      const heroTitle = bird.tag_id || birdTitle;
+                      const heroMeta = [bird.breed_label, bird.pattern_label, ageStageLabel]
+                        .filter(Boolean)
+                        .map(formatLabel)
+                        .join(" • ");
+                      const healthStatus = getHealthStatus(bird);
+                      const statusLabel = formatLabel(bird.status || "unknown");
+                      const sexLabel = formatLabel(bird.sex || "unknown");
+                      const lastChecked =
+                        bird.last_log_date || bird.status_date || bird.acquired_date || "";
+                      const ageDays = getAgeDays(bird.hatch_date || bird.acquired_date);
+                      const ageLabel =
+                        ageDays === null ? "Age N/A" : `~${ageDays} day${ageDays === 1 ? "" : "s"} old`;
+                      const issuesLabel =
+                        bird.status && bird.status !== "alive"
+                          ? formatLabel(bird.status)
+                          : "None";
+                      const mortalityRisk = getMortalityRisk(bird);
                       const detailItems = [
                         { label: "Tag", value: displayTag, icon: "tag", tone: "teal" },
                         {
@@ -3061,10 +3231,13 @@ export default function JppProjectPage({ user }) {
                             )}
                             <div className="jpp-bird-hero-badges">
                               <span className={`jpp-bird-chip status-${bird.status || "unknown"}`}>
-                                {bird.status || "unknown"}
+                                {statusLabel}
                               </span>
                               <span className="jpp-bird-chip chip-light">
-                                {bird.sex || "unknown"}
+                                {sexLabel}
+                              </span>
+                              <span className={`jpp-bird-chip chip-health tone-${healthStatus.tone}`}>
+                                {healthStatus.label}
                               </span>
                             </div>
                             <button
@@ -3075,8 +3248,111 @@ export default function JppProjectPage({ user }) {
                             >
                               <Icon name="plus" size={16} />
                             </button>
+                            <div className="jpp-bird-hero-caption">
+                              <span className="jpp-bird-hero-title">{heroTitle}</span>
+                              <span className="jpp-bird-hero-sub">
+                                {heroMeta || formatLabel(productLabel)}
+                              </span>
+                            </div>
                           </div>
                           <div className="jpp-bird-card-body">
+                            <div className="jpp-bird-profile-mobile">
+                              <div className={`jpp-bird-health-card tone-${healthStatus.tone}`}>
+                                <div className="jpp-bird-health-icon">
+                                  <Icon name="check-circle" size={18} />
+                                </div>
+                                <div>
+                                  <span className="jpp-bird-health-title">{healthStatus.label}</span>
+                                  <span className="jpp-bird-health-sub">
+                                    Last checked {lastChecked ? formatDate(lastChecked) : "N/A"}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="jpp-bird-quick-grid">
+                                <div className="jpp-bird-quick-item">
+                                  <span className="jpp-bird-quick-icon tone-amber">
+                                    <Icon name="calendar" size={14} />
+                                  </span>
+                                  <div>
+                                    <span className="jpp-bird-quick-value">{ageLabel}</span>
+                                    <span className="jpp-bird-quick-label">Age</span>
+                                  </div>
+                                </div>
+                                <div className="jpp-bird-quick-item">
+                                  <span className="jpp-bird-quick-icon tone-green">
+                                    <Icon name="feather" size={14} />
+                                  </span>
+                                  <div>
+                                    <span className="jpp-bird-quick-value">
+                                      {formatLabel(productLabel)}
+                                    </span>
+                                    <span className="jpp-bird-quick-label">Category</span>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="jpp-bird-panel-grid">
+                                <div className="jpp-bird-panel">
+                                  <h5>Key attributes</h5>
+                                  <div className="jpp-bird-panel-list">
+                                    <div className="jpp-bird-panel-row">
+                                      <span>Age stage</span>
+                                      <strong>{formatLabel(ageStageLabel)}</strong>
+                                    </div>
+                                    <div className="jpp-bird-panel-row">
+                                      <span>Breed</span>
+                                      <strong>{formatLabel(bird.breed_label)}</strong>
+                                    </div>
+                                    <div className="jpp-bird-panel-row">
+                                      <span>Tag ID</span>
+                                      <strong>{displayTag}</strong>
+                                    </div>
+                                    <div className="jpp-bird-panel-row">
+                                      <span>Batch</span>
+                                      <strong>{batchLabel}</strong>
+                                    </div>
+                                    <div className="jpp-bird-panel-row">
+                                      <span>Acquired</span>
+                                      <strong>{formatDate(bird.acquired_date)}</strong>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="jpp-bird-panel">
+                                  <h5>Last 7 days</h5>
+                                  <div className="jpp-bird-panel-list">
+                                    <div className="jpp-bird-panel-row">
+                                      <span>Feed</span>
+                                      <strong>
+                                        {formatOptional(bird.feed_per_bird_week_kg, formatKg)}
+                                      </strong>
+                                    </div>
+                                    <div className="jpp-bird-panel-row">
+                                      <span>Eggs</span>
+                                      <strong>{formatOptional(bird.eggs_per_bird, formatNumber)}</strong>
+                                    </div>
+                                    <div className="jpp-bird-panel-row">
+                                      <span>Issues</span>
+                                      <strong>{issuesLabel}</strong>
+                                    </div>
+                                    <div className="jpp-bird-panel-row">
+                                      <span>Mortality risk</span>
+                                      <span className={`jpp-bird-risk-badge tone-${mortalityRisk.tone}`}>
+                                        {mortalityRisk.label}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="jpp-bird-action-bar">
+                                <button type="button" className="jpp-bird-action-icon">
+                                  <Icon name="heart" size={16} />
+                                  Vaccination
+                                </button>
+                                <button type="button" className="jpp-bird-action-icon">
+                                  <Icon name="truck" size={16} />
+                                  Transfer
+                                </button>
+                              </div>
+                            </div>
                             <div className="jpp-bird-header">
                               <h4>{birdTitle}</h4>
                               <p className="jpp-bird-meta">

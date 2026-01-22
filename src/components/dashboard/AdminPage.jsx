@@ -6,6 +6,12 @@ import {
   getMemberInvites,
   createMemberInvite,
   revokeMemberInvite,
+  getWelfareAccounts,
+  getWelfareCycles,
+  getWelfareTransactionsAdmin,
+  createWelfareTransaction,
+  updateWelfareTransaction,
+  deleteWelfareTransaction,
   isAdminUser,
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
@@ -35,6 +41,17 @@ const initialInviteForm = {
   role: "member",
   expires_in_days: "30",
   notes: "",
+};
+
+const initialWelfareForm = {
+  member_id: "",
+  welfare_account_id: "",
+  cycle_id: "",
+  amount: "",
+  transaction_type: "contribution",
+  status: "Completed",
+  date: new Date().toISOString().slice(0, 10),
+  description: "",
 };
 
 const adminModules = [
@@ -73,6 +90,7 @@ const adminModules = [
     title: "Welfare Cycles",
     description: "Configure contributions, payouts, and balances.",
     icon: "wallet",
+    sections: ["welfare-form", "welfare-list"],
     tone: "teal",
   },
   {
@@ -117,15 +135,22 @@ export default function AdminPage({ user }) {
   const [invites, setInvites] = useState([]);
   const [memberForm, setMemberForm] = useState(initialMemberForm);
   const [inviteForm, setInviteForm] = useState(initialInviteForm);
+  const [welfareForm, setWelfareForm] = useState(initialWelfareForm);
   const [selectedMemberId, setSelectedMemberId] = useState(null);
+  const [selectedWelfareId, setSelectedWelfareId] = useState(null);
   const [generatedInvite, setGeneratedInvite] = useState(null);
   const [search, setSearch] = useState("");
+  const [welfareSearch, setWelfareSearch] = useState("");
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [loadingInvites, setLoadingInvites] = useState(false);
+  const [loadingWelfare, setLoadingWelfare] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [activeModule, setActiveModule] = useState(null);
   const [showMemberForm, setShowMemberForm] = useState(false);
+  const [welfareTransactions, setWelfareTransactions] = useState([]);
+  const [welfareAccounts, setWelfareAccounts] = useState([]);
+  const [welfareCycles, setWelfareCycles] = useState([]);
 
   const isAdmin = isAdminUser(user);
 
@@ -143,12 +168,39 @@ export default function AdminPage({ user }) {
     });
   }, [members, search]);
 
+  const filteredWelfareTransactions = useMemo(() => {
+    if (!welfareSearch.trim()) {
+      return welfareTransactions;
+    }
+    const query = welfareSearch.toLowerCase();
+    return welfareTransactions.filter((txn) => {
+      const memberName = txn.member?.name || "";
+      const description = txn.description || "";
+      const type = txn.transaction_type || "";
+      return (
+        memberName.toLowerCase().includes(query) ||
+        description.toLowerCase().includes(query) ||
+        type.toLowerCase().includes(query)
+      );
+    });
+  }, [welfareTransactions, welfareSearch]);
+
+  const welfareAccountMap = useMemo(() => {
+    return new Map(welfareAccounts.map((account) => [account.id, account]));
+  }, [welfareAccounts]);
+
+  const welfareCycleMap = useMemo(() => {
+    return new Map(welfareCycles.map((cycle) => [cycle.id, cycle]));
+  }, [welfareCycles]);
+
   useEffect(() => {
     if (!isAdmin) {
       return;
     }
     loadMembers();
     loadInvites();
+    loadWelfareMeta();
+    loadWelfareTransactions();
   }, [isAdmin]);
 
   useEffect(() => {
@@ -157,7 +209,21 @@ export default function AdminPage({ user }) {
       setSelectedMemberId(null);
       setMemberForm(initialMemberForm);
     }
+    if (activeModule !== "welfare") {
+      setSelectedWelfareId(null);
+      setWelfareForm(initialWelfareForm);
+      setWelfareSearch("");
+    }
   }, [activeModule]);
+
+  useEffect(() => {
+    if (!selectedWelfareId && welfareAccounts.length && !welfareForm.welfare_account_id) {
+      setWelfareForm((prev) => ({
+        ...prev,
+        welfare_account_id: String(welfareAccounts[0].id),
+      }));
+    }
+  }, [welfareAccounts, welfareForm.welfare_account_id, selectedWelfareId]);
 
   const loadMembers = async () => {
     setLoadingMembers(true);
@@ -180,6 +246,28 @@ export default function AdminPage({ user }) {
       setErrorMessage(error.message || "Failed to load invites.");
     } finally {
       setLoadingInvites(false);
+    }
+  };
+
+  const loadWelfareMeta = async () => {
+    try {
+      const [accounts, cycles] = await Promise.all([getWelfareAccounts(), getWelfareCycles()]);
+      setWelfareAccounts(accounts);
+      setWelfareCycles(cycles);
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to load welfare metadata.");
+    }
+  };
+
+  const loadWelfareTransactions = async () => {
+    setLoadingWelfare(true);
+    try {
+      const data = await getWelfareTransactionsAdmin();
+      setWelfareTransactions(data);
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to load welfare transactions.");
+    } finally {
+      setLoadingWelfare(false);
     }
   };
 
@@ -207,6 +295,12 @@ export default function AdminPage({ user }) {
   const handleInviteChange = (e) => {
     const { name, value } = e.target;
     setInviteForm((prev) => ({ ...prev, [name]: value }));
+    resetMessages();
+  };
+
+  const handleWelfareChange = (e) => {
+    const { name, value } = e.target;
+    setWelfareForm((prev) => ({ ...prev, [name]: value }));
     resetMessages();
   };
 
@@ -323,6 +417,125 @@ export default function AdminPage({ user }) {
     }
   };
 
+  const handleWelfareSubmit = async (e) => {
+    e.preventDefault();
+    resetMessages();
+
+    const amountValue = Number.parseFloat(welfareForm.amount);
+    if (!Number.isFinite(amountValue)) {
+      setErrorMessage("Amount is required.");
+      return;
+    }
+
+    if (!welfareForm.date) {
+      setErrorMessage("Transaction date is required.");
+      return;
+    }
+
+    const payload = {
+      welfare_account_id: welfareForm.welfare_account_id
+        ? Number.parseInt(welfareForm.welfare_account_id, 10)
+        : null,
+      cycle_id: welfareForm.cycle_id ? Number.parseInt(welfareForm.cycle_id, 10) : null,
+      member_id: welfareForm.member_id ? Number.parseInt(welfareForm.member_id, 10) : null,
+      amount: amountValue,
+      transaction_type: welfareForm.transaction_type,
+      status: welfareForm.status,
+      date: welfareForm.date,
+      description: welfareForm.description,
+    };
+
+    try {
+      if (selectedWelfareId) {
+        await updateWelfareTransaction(selectedWelfareId, payload);
+        setStatusMessage("Welfare transaction updated.");
+      } else {
+        await createWelfareTransaction(payload);
+        setStatusMessage("Welfare transaction recorded.");
+      }
+
+      setWelfareForm({
+        ...initialWelfareForm,
+        welfare_account_id:
+          welfareForm.welfare_account_id ||
+          (welfareAccounts[0] ? String(welfareAccounts[0].id) : ""),
+      });
+      setSelectedWelfareId(null);
+      await loadWelfareTransactions();
+      await loadMembers();
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to save welfare transaction.");
+    }
+  };
+
+  const handleEditWelfare = (transaction) => {
+    setWelfareForm({
+      member_id: transaction.member_id ? String(transaction.member_id) : "",
+      welfare_account_id: transaction.welfare_account_id
+        ? String(transaction.welfare_account_id)
+        : "",
+      cycle_id: transaction.cycle_id ? String(transaction.cycle_id) : "",
+      amount: transaction.amount ?? "",
+      transaction_type: transaction.transaction_type || "contribution",
+      status: transaction.status || "Completed",
+      date: transaction.date ? String(transaction.date).slice(0, 10) : initialWelfareForm.date,
+      description: transaction.description || "",
+    });
+    setSelectedWelfareId(transaction.id);
+    resetMessages();
+  };
+
+  const handleWelfareCancel = () => {
+    setWelfareForm({
+      ...initialWelfareForm,
+      welfare_account_id: welfareAccounts[0] ? String(welfareAccounts[0].id) : "",
+    });
+    setSelectedWelfareId(null);
+    resetMessages();
+  };
+
+  const handleDeleteWelfare = async (transactionId) => {
+    if (!transactionId) {
+      return;
+    }
+    if (!window.confirm("Delete this welfare transaction? This cannot be undone.")) {
+      return;
+    }
+    resetMessages();
+    try {
+      await deleteWelfareTransaction(transactionId);
+      setStatusMessage("Welfare transaction deleted.");
+      await loadWelfareTransactions();
+      await loadMembers();
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to delete welfare transaction.");
+    }
+  };
+
+  const formatWelfareAmount = (amount) => {
+    const numericAmount =
+      typeof amount === "string" ? Number.parseFloat(amount) : Number(amount);
+    if (!Number.isFinite(numericAmount)) {
+      return "-";
+    }
+    return numericAmount.toLocaleString("en-KE", {
+      style: "currency",
+      currency: "KES",
+      maximumFractionDigits: 0,
+    });
+  };
+
+  const formatWelfareDate = (date) => {
+    if (!date) {
+      return "-";
+    }
+    return new Date(date).toLocaleDateString("en-KE", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
   if (!isAdmin) {
     return (
       <div className="admin-panel">
@@ -401,7 +614,7 @@ export default function AdminPage({ user }) {
         </div>
       )}
 
-      {(showMemberForm || activeSections.has("invites-form")) && (
+      {(showMemberForm || activeSections.has("invites-form") || activeSections.has("welfare-form")) && (
         <div className="admin-grid">
           {showMemberForm && (
             <div className="admin-card" id="admin-members">
@@ -680,6 +893,133 @@ export default function AdminPage({ user }) {
               ) : null}
             </div>
           )}
+
+          {activeSections.has("welfare-form") && (
+            <div className="admin-card" id="admin-welfare">
+              <div className="admin-card-header">
+                <h3>{selectedWelfareId ? "Edit Welfare Transaction" : "Record Welfare Transaction"}</h3>
+                <button
+                  type="button"
+                  className="link-button admin-card-dismiss"
+                  onClick={() => setActiveModule(null)}
+                >
+                  Back to console
+                </button>
+              </div>
+              <p className="admin-help">
+                Log contributions, disbursements, or adjustments. Member totals update automatically
+                from recorded transactions.
+              </p>
+              <form className="admin-form" onSubmit={handleWelfareSubmit}>
+                <div className="admin-form-grid">
+                  <div className="admin-form-field">
+                    <label>Member</label>
+                    <select
+                      name="member_id"
+                      value={welfareForm.member_id}
+                      onChange={handleWelfareChange}
+                    >
+                      <option value="">Group Welfare (no member)</option>
+                      {members.map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.name || member.email || `Member #${member.id}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="admin-form-field">
+                    <label>Amount *</label>
+                    <input
+                      name="amount"
+                      type="number"
+                      step="0.01"
+                      value={welfareForm.amount}
+                      onChange={handleWelfareChange}
+                      placeholder="1000"
+                    />
+                  </div>
+                  <div className="admin-form-field">
+                    <label>Transaction Type</label>
+                    <select
+                      name="transaction_type"
+                      value={welfareForm.transaction_type}
+                      onChange={handleWelfareChange}
+                    >
+                      <option value="contribution">Contribution</option>
+                      <option value="disbursement">Disbursement</option>
+                      <option value="emergency">Emergency</option>
+                      <option value="support">Support</option>
+                      <option value="adjustment">Adjustment</option>
+                    </select>
+                  </div>
+                  <div className="admin-form-field">
+                    <label>Status</label>
+                    <select name="status" value={welfareForm.status} onChange={handleWelfareChange}>
+                      <option value="Pending">Pending</option>
+                      <option value="In Progress">In Progress</option>
+                      <option value="Completed">Completed</option>
+                      <option value="Cancelled">Cancelled</option>
+                    </select>
+                  </div>
+                  <div className="admin-form-field">
+                    <label>Date *</label>
+                    <input
+                      type="date"
+                      name="date"
+                      value={welfareForm.date}
+                      onChange={handleWelfareChange}
+                    />
+                  </div>
+                  <div className="admin-form-field">
+                    <label>Cycle</label>
+                    <select name="cycle_id" value={welfareForm.cycle_id} onChange={handleWelfareChange}>
+                      <option value="">Select cycle</option>
+                      {welfareCycles.map((cycle) => (
+                        <option key={cycle.id} value={cycle.id}>
+                          Cycle {cycle.cycle_number}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="admin-form-field">
+                    <label>Welfare Account</label>
+                    <select
+                      name="welfare_account_id"
+                      value={welfareForm.welfare_account_id}
+                      onChange={handleWelfareChange}
+                    >
+                      <option value="">Select account</option>
+                      {welfareAccounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="admin-form-field admin-form-field--full">
+                    <label>Description</label>
+                    <textarea
+                      name="description"
+                      value={welfareForm.description}
+                      onChange={handleWelfareChange}
+                      placeholder="Optional note about this welfare entry"
+                      rows={3}
+                    />
+                  </div>
+                </div>
+                <div className="admin-form-actions">
+                  <button className="btn-primary" type="submit">
+                    {selectedWelfareId ? "Save Changes" : "Record Transaction"}
+                  </button>
+                  {selectedWelfareId && (
+                    <button className="btn-secondary" type="button" onClick={handleWelfareCancel}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       )}
 
@@ -824,6 +1164,92 @@ export default function AdminPage({ user }) {
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeSections.has("welfare-list") && (
+        <div className="admin-card" id="admin-welfare-list">
+          <div className="admin-card-header">
+            <h3>Welfare Transactions</h3>
+            <button
+              type="button"
+              className="link-button admin-card-dismiss"
+              onClick={() => setActiveModule(null)}
+            >
+              Back to console
+            </button>
+          </div>
+          <div className="admin-list-header">
+            <div className="admin-search">
+              <Icon name="search" size={16} />
+              <input
+                value={welfareSearch}
+                onChange={(e) => setWelfareSearch(e.target.value)}
+                placeholder="Search welfare transactions"
+              />
+            </div>
+            <div className="admin-card-actions">
+              <button className="btn-secondary small" type="button" onClick={handleWelfareCancel}>
+                Clear Form
+              </button>
+            </div>
+          </div>
+          {loadingWelfare ? (
+            <p>Loading welfare transactions...</p>
+          ) : filteredWelfareTransactions.length === 0 ? (
+            <p className="admin-help">No welfare transactions found.</p>
+          ) : (
+            <div className="admin-table admin-table--welfare">
+              <div className="admin-table-row admin-table-head">
+                <span>Date</span>
+                <span>Member</span>
+                <span>Type</span>
+                <span>Amount</span>
+                <span>Status</span>
+                <span>Actions</span>
+              </div>
+              {filteredWelfareTransactions.map((transaction) => {
+                const cycle = welfareCycleMap.get(transaction.cycle_id);
+                const account = welfareAccountMap.get(transaction.welfare_account_id);
+                return (
+                  <div className="admin-table-row" key={transaction.id}>
+                    <span>{formatWelfareDate(transaction.date)}</span>
+                    <span>{transaction.member?.name || "Group Welfare"}</span>
+                    <span>
+                      {(transaction.transaction_type || "contribution").replace(/_/g, " ")}
+                      {(transaction.description || cycle || account) && (
+                        <span className="admin-table-subtext">
+                          {transaction.description
+                            ? transaction.description
+                            : cycle
+                            ? `Cycle ${cycle.cycle_number}`
+                            : account?.name}
+                        </span>
+                      )}
+                    </span>
+                    <span>{formatWelfareAmount(transaction.amount)}</span>
+                    <span>{transaction.status || "Completed"}</span>
+                    <span className="admin-table-actions">
+                      <button
+                        type="button"
+                        className="link-button"
+                        onClick={() => handleEditWelfare(transaction)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="link-button is-danger"
+                        onClick={() => handleDeleteWelfare(transaction.id)}
+                      >
+                        Delete
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
