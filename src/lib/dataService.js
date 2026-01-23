@@ -159,6 +159,26 @@ export async function getMemberContributions(memberId) {
 }
 
 /**
+ * Get contribution split transactions for a specific member
+ */
+export async function getContributionSplits(memberId) {
+  if (!isSupabaseConfigured || !supabase) return [];
+
+  const { data, error } = await supabase
+    .from("contribution_splits")
+    .select("*")
+    .eq("member_id", memberId)
+    .order("date", { ascending: false });
+
+  if (error) {
+    console.error("Error fetching contribution splits:", error);
+    return [];
+  }
+
+  return data || [];
+}
+
+/**
  * Get payout schedule with member names
  */
 export async function getPayoutSchedule() {

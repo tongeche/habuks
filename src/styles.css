@@ -3356,6 +3356,34 @@ img {
   text-decoration: underline;
 }
 
+.transaction-toggle {
+  display: inline-flex;
+  gap: 0.25rem;
+  padding: 0.2rem;
+  border-radius: 999px;
+  background: #f3f4f6;
+  align-self: flex-start;
+  margin-bottom: 0.9rem;
+}
+
+.transaction-toggle .toggle-btn {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.transaction-toggle .toggle-btn.is-active {
+  background: #ffffff;
+  color: var(--navy-900);
+  box-shadow: 0 3px 10px rgba(31, 42, 82, 0.12);
+}
+
 .transactions-list {
   display: flex;
   flex-direction: column;
@@ -3390,6 +3418,16 @@ img {
 .transaction-icon--contribution {
   background: linear-gradient(135deg, #d1fae5, #a7f3d0);
   color: #047857;
+}
+
+.transaction-icon--welfare {
+  background: linear-gradient(135deg, #ffe4e6, #fecdd3);
+  color: #be123c;
+}
+
+.transaction-icon--lending {
+  background: linear-gradient(135deg, #dbeafe, #bfdbfe);
+  color: #1d4ed8;
 }
 
 .transaction-details {

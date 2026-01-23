@@ -1,5 +1,11 @@
-import { useState, useEffect } from "react";
-import { getDashboardStats, getMemberContributions, getPayoutSchedule, getProjects } from "../../lib/dataService.js";
+import { useState, useEffect, useMemo } from "react";
+import {
+  getDashboardStats,
+  getMemberContributions,
+  getContributionSplits,
+  getPayoutSchedule,
+  getProjects
+} from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 
 export default function DashboardOverview({ user }) {
@@ -14,9 +20,40 @@ export default function DashboardOverview({ user }) {
     nextPayoutDate: null,
   });
   const [recentContributions, setRecentContributions] = useState([]);
+  const [contributionSplits, setContributionSplits] = useState([]);
   const [upcomingPayouts, setUpcomingPayouts] = useState([]);
+  const [payoutSchedule, setPayoutSchedule] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [transactionView, setTransactionView] = useState("summary");
   const [loading, setLoading] = useState(true);
+
+  const buildContributionSplits = (contributions) => {
+    if (!Array.isArray(contributions)) return [];
+    return contributions.flatMap((contribution) => {
+      const total = Number(contribution.amount || 0);
+      if (!total) return [];
+      const welfareAmount = Number((total / 6).toFixed(2));
+      const lendingAmount = Number((total - welfareAmount).toFixed(2));
+      const cycle = contribution.cycle_number ?? "—";
+      const date = contribution.date;
+      return [
+        {
+          id: `${contribution.id}-lending`,
+          split_type: "lending_contribution",
+          amount: lendingAmount,
+          date,
+          cycle_number: String(cycle),
+        },
+        {
+          id: `${contribution.id}-welfare`,
+          split_type: "welfare_savings",
+          amount: welfareAmount,
+          date,
+          cycle_number: String(cycle),
+        },
+      ];
+    });
+  };
 
   useEffect(() => {
     async function loadData() {
@@ -27,20 +64,27 @@ export default function DashboardOverview({ user }) {
           return;
         }
         
-        const [statsData, contributions, payouts, projectsData] = await Promise.all([
+        const [statsData, contributions, splits, payouts, projectsData] = await Promise.all([
           getDashboardStats(memberId),
           getMemberContributions(memberId),
+          getContributionSplits(memberId),
           getPayoutSchedule(),
           getProjects(),
         ]);
         
         setStats(statsData);
         setRecentContributions(contributions.slice(0, 5));
+        setContributionSplits(
+          splits && splits.length > 0
+            ? splits
+            : buildContributionSplits(contributions)
+        );
         
         // Get upcoming payouts (not yet received)
         const today = new Date();
         const upcoming = payouts.filter(p => new Date(p.date) >= today).slice(0, 4);
         setUpcomingPayouts(upcoming);
+        setPayoutSchedule(payouts);
         setProjects(projectsData);
       } catch (error) {
         console.error("Error loading dashboard data:", error);
@@ -75,6 +119,47 @@ export default function DashboardOverview({ user }) {
     const year = date.getFullYear();
     return `${month} ${year}`;
   };
+
+  const formatCurrency = (value) => {
+    const amount = Number(value || 0);
+    const hasDecimals = Math.abs(amount % 1) > 0.001;
+    return amount.toLocaleString("en-KE", {
+      minimumFractionDigits: hasDecimals ? 2 : 0,
+      maximumFractionDigits: 2,
+    });
+  };
+
+  const payoutNameByCycle = useMemo(() => {
+    const map = new Map();
+    payoutSchedule.forEach((p) => {
+      if (p?.cycle_number == null) return;
+      map.set(String(p.cycle_number), p.members?.name || "Member");
+    });
+    return map;
+  }, [payoutSchedule]);
+
+  const displayTransactions = useMemo(() => {
+    if (transactionView === "split") {
+      return contributionSplits.map((split) => ({
+        id: split.id || `${split.contribution_id}-${split.split_type}`,
+        title:
+          split.split_type === "lending_contribution"
+            ? `Payment to ${payoutNameByCycle.get(String(split.cycle_number || "")) || "member"}`
+            : `Welfare savings · Cycle ${split.cycle_number || "—"}`,
+        date: split.date,
+        amount: split.amount,
+        kind: split.split_type,
+      }));
+    }
+
+    return recentContributions.map((c) => ({
+      id: c.id,
+      title: `Contribution - Cycle ${c.cycle_number}`,
+      date: c.date,
+      amount: c.amount,
+      kind: "summary",
+    }));
+  }, [transactionView, contributionSplits, recentContributions, payoutNameByCycle]);
 
   // Calculate days until next group payout
   const getDaysUntilNextPayout = () => {
@@ -162,19 +247,52 @@ export default function DashboardOverview({ user }) {
             <h3><Icon name="receipt" size={20} /> Transaction History</h3>
             <a href="#" className="view-all-link">View All</a>
           </div>
+          <div className="transaction-toggle">
+            <button
+              type="button"
+              className={`toggle-btn ${transactionView === "summary" ? "is-active" : ""}`}
+              onClick={() => setTransactionView("summary")}
+            >
+              Summary
+            </button>
+            <button
+              type="button"
+              className={`toggle-btn ${transactionView === "split" ? "is-active" : ""}`}
+              onClick={() => setTransactionView("split")}
+            >
+              Split
+            </button>
+          </div>
           <div className="transactions-list">
-            {recentContributions.length > 0 ? (
-              recentContributions.map((c) => (
-                <div className="transaction-item" key={c.id}>
-                  <div className="transaction-icon transaction-icon--contribution">
-                    <Icon name="trending-up" size={18} />
+            {displayTransactions.length > 0 ? (
+              displayTransactions.map((transaction) => (
+                <div className="transaction-item" key={transaction.id}>
+                  <div
+                    className={`transaction-icon ${
+                      transaction.kind === "lending_contribution"
+                        ? "transaction-icon--lending"
+                        : transaction.kind === "welfare_savings"
+                        ? "transaction-icon--welfare"
+                        : "transaction-icon--contribution"
+                    }`}
+                  >
+                    <Icon
+                      name={
+                        transaction.kind === "lending_contribution"
+                          ? "coins"
+                          : transaction.kind === "welfare_savings"
+                          ? "heart"
+                          : "trending-up"
+                      }
+                      size={18}
+                    />
                   </div>
                   <div className="transaction-details">
-                    <span className="transaction-title">Contribution - Cycle {c.cycle_number}</span>
-                    <span className="transaction-date">{formatDate(c.date)}</span>
+                    <span className="transaction-title">{transaction.title}</span>
+                    <span className="transaction-date">{formatDate(transaction.date)}</span>
                   </div>
                   <div className="transaction-amount transaction-amount--positive">
-                    +Ksh. {c.amount}
+                    +Ksh. {formatCurrency(transaction.amount)}
                   </div>
                 </div>
               ))
