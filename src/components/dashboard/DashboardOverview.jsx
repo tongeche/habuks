@@ -21,7 +21,11 @@ export default function DashboardOverview({ user }) {
   useEffect(() => {
     async function loadData() {
       try {
-        const memberId = user?.id || 8; // Default to Timothy's ID for dev
+        const memberId = user?.id;
+        if (!memberId) {
+          setLoading(false);
+          return;
+        }
         
         const [statsData, contributions, payouts, projectsData] = await Promise.all([
           getDashboardStats(memberId),
@@ -37,7 +41,7 @@ export default function DashboardOverview({ user }) {
         const today = new Date();
         const upcoming = payouts.filter(p => new Date(p.date) >= today).slice(0, 4);
         setUpcomingPayouts(upcoming);
-        setProjects(projectsData.slice(0, 2));
+        setProjects(projectsData);
       } catch (error) {
         console.error("Error loading dashboard data:", error);
       } finally {

@@ -13783,6 +13783,562 @@ img {
   grid-template-columns: 1.1fr 1.2fr 1.4fr 0.9fr 0.9fr 0.8fr;
 }
 
+.admin-table--projects .admin-table-row {
+  grid-template-columns: 1.4fr 1fr 1fr 1fr 0.8fr;
+}
+
+.admin-table--finance .admin-table-row {
+  grid-template-columns: 1.4fr 1.2fr 1fr 0.9fr 1fr;
+}
+
+.admin-role-cell select {
+  width: 100%;
+  min-width: 120px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.85rem;
+  background: #fff;
+  color: #1f2937;
+}
+
+.admin-table-actions .link-button {
+  white-space: nowrap;
+}
+
+.admin-project-members-list {
+  display: none;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.admin-project-member-card {
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 0.9rem;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-project-member-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.admin-project-member-header strong {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--navy-900);
+}
+
+.admin-project-member-header span {
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.admin-project-member-date {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.admin-project-member-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.admin-project-member-row label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.admin-project-member-row select {
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  font-size: 0.9rem;
+  background: #fff;
+  color: #1f2937;
+}
+
+.admin-project-member-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.admin-project-member-actions .btn-secondary {
+  flex: 1;
+  justify-content: center;
+}
+
+.admin-project-member-actions .btn-secondary.is-danger {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.admin-finance-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.admin-finance-tabs {
+  display: flex;
+  gap: 0.4rem;
+  background: #f1f5f9;
+  padding: 0.3rem;
+  border-radius: 999px;
+}
+
+.admin-finance-tab {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.admin-finance-tab.is-active {
+  background: #fff;
+  color: #1f2937;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.12);
+}
+
+.admin-finance-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.admin-finance-select {
+  min-width: 220px;
+}
+
+.admin-finance-range {
+  display: flex;
+  gap: 0.35rem;
+  background: #f8fafc;
+  padding: 0.3rem;
+  border-radius: 999px;
+}
+
+.admin-finance-range-btn {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-weight: 600;
+  font-size: 0.75rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.admin-finance-range-btn.is-active {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.admin-finance-search {
+  min-width: 220px;
+}
+
+.admin-finance-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.admin-finance-card {
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 0.9rem 1rem;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
+}
+
+.admin-finance-card span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.admin-finance-card strong {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 1rem;
+  color: #1f2937;
+}
+
+.admin-finance-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.admin-finance-panel {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.admin-finance-panel h4 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--navy-900);
+}
+
+.admin-finance-cards {
+  display: none;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.admin-finance-item {
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 0.9rem;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-finance-item-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.admin-finance-item-top strong {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--navy-900);
+}
+
+.admin-finance-item-top span {
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.admin-finance-amount-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+
+.admin-finance-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.admin-finance-date::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #94a3b8;
+}
+
+.admin-finance-status {
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.admin-finance-status.is-pending {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.admin-finance-status.is-approved {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.admin-finance-amount {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.admin-finance-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.6rem;
+}
+
+.admin-finance-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.admin-finance-actions--cards .btn-primary {
+  border-radius: 999px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.85rem;
+  box-shadow: 0 10px 18px rgba(16, 185, 129, 0.25);
+}
+
+.admin-finance-actions--cards .btn-secondary {
+  justify-content: center;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.82rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+
+.admin-finance-actions--cards .btn-secondary.is-danger {
+  background: #fbecec;
+  border-color: #f3c7c7;
+  color: #b91c1c;
+}
+
+.admin-finance-actions .btn-secondary.is-danger {
+  border-color: #fecaca;
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.admin-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #475569;
+  font-weight: 600;
+}
+
+.admin-invite-list {
+  display: none;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.admin-invite-card {
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 0.9rem;
+  box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-invite-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.admin-invite-header strong {
+  display: block;
+  font-size: 0.95rem;
+  color: var(--navy-900);
+  word-break: break-word;
+}
+
+.admin-invite-role {
+  display: inline-flex;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+}
+
+.admin-invite-chip {
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.admin-invite-chip.status-pending {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.admin-invite-chip.status-used {
+  background: #e0e7ff;
+  color: #4338ca;
+}
+
+.admin-invite-chip.status-revoked {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.admin-invite-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  background: #f8fafc;
+  border-radius: 12px;
+  padding: 0.6rem 0.7rem;
+}
+
+.admin-invite-meta span {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.admin-invite-meta strong {
+  display: block;
+  font-size: 0.85rem;
+  color: #1f2937;
+  margin-top: 0.2rem;
+}
+
+.admin-projects-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.admin-projects-select {
+  min-width: 220px;
+  flex: 0 1 280px;
+}
+
+.admin-projects-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.admin-projects-code {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.admin-projects-start {
+  font-size: 0.8rem;
+  color: #64748b;
+}
+
+.admin-projects-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) 1fr;
+  gap: 1.5rem;
+  align-items: start;
+  margin-top: 1rem;
+}
+
+.admin-projects-panel {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.admin-projects-panel h4 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--navy-900);
+}
+
+.admin-projects-count {
+  font-size: 0.8rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.admin-inline-muted {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.admin-helper-inline {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.admin-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.admin-pill.is-completed {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.admin-pill.is-active {
+  background: #dcfce7;
+  color: #15803d;
+}
+
 .admin-table-actions {
   display: inline-flex;
   flex-wrap: wrap;
@@ -13836,6 +14392,14 @@ img {
 
   .admin-table-row span {
     font-size: 0.85rem;
+  }
+
+  .admin-projects-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-finance-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -13911,8 +14475,14 @@ img {
     background: #fff;
     border: 1px solid #e2e8f0;
   }
+  .admin-table--projects .admin-table-row {
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+  }
   .admin-table--welfare .admin-table-row {
     grid-template-columns: repeat(6, minmax(120px, 1fr));
+  }
+  .admin-table--finance .admin-table-row {
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
   }
   .admin-table-head {
     display: grid;
@@ -13923,6 +14493,12 @@ img {
     position: sticky;
     top: 0;
     z-index: 2;
+  }
+  .admin-table--projects .admin-table-head {
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+  }
+  .admin-table--finance .admin-table-head {
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
   }
   .admin-table-row span {
     font-size: 0.9rem;
@@ -13937,6 +14513,67 @@ img {
     flex-direction: column;
     align-items: stretch;
     text-align: center;
+  }
+
+  .admin-finance-toolbar {
+    align-items: stretch;
+  }
+
+  .admin-finance-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-finance-select,
+  .admin-finance-search {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .admin-finance-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-finance-cards.mobile-only {
+    display: flex !important;
+  }
+
+  .admin-finance-actions {
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  }
+
+  .admin-projects-toolbar {
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .admin-projects-select {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .admin-projects-meta {
+    gap: 0.5rem;
+  }
+
+  .admin-projects-grid {
+    gap: 1rem;
+  }
+
+  .admin-projects-panel {
+    padding: 0.9rem;
+  }
+
+  .admin-project-members-list.mobile-only {
+    display: flex !important;
+  }
+
+  .admin-project-member-actions {
+    flex-direction: column;
+  }
+
+  .admin-invite-list.mobile-only {
+    display: flex !important;
   }
 }
 
@@ -13974,6 +14611,10 @@ img {
   
   .admin-help {
     font-size: 0.85rem;
+  }
+
+  .admin-finance-summary {
+    grid-template-columns: 1fr;
   }
   
   .admin-form-field input,

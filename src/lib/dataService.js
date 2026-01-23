@@ -98,6 +98,33 @@ export async function getCurrentMember() {
     .single();
 
   if (insertError) {
+    if (insertError.code === "23505") {
+      const { data: existingMember, error: lookupError } = await supabase
+        .from("members")
+        .select("*")
+        .eq("email", payload.email)
+        .maybeSingle();
+
+      if (lookupError || !existingMember) {
+        console.error("Error creating member profile:", insertError);
+        return null;
+      }
+
+      const { data: updatedMember, error: updateError } = await supabase
+        .from("members")
+        .update({ auth_id: payload.auth_id })
+        .eq("id", existingMember.id)
+        .select("*")
+        .single();
+
+      if (updateError) {
+        console.error("Error linking existing member profile:", updateError);
+        return null;
+      }
+
+      return updatedMember;
+    }
+
     console.error("Error creating member profile:", insertError);
     return null;
   }
@@ -125,10 +152,10 @@ export async function getMemberContributions(memberId) {
 
   if (error) {
     console.error("Error fetching contributions:", error);
-    return mockContributions;
+    return [];
   }
 
-  return data && data.length > 0 ? data : mockContributions;
+  return data || [];
 }
 
 /**
@@ -163,10 +190,10 @@ export async function getPayoutSchedule() {
 
   if (error) {
     console.error("Error fetching payouts:", error);
-    return mockPayouts;
+    return [];
   }
 
-  return data && data.length > 0 ? data : mockPayouts;
+  return data || [];
 }
 
 /**
@@ -434,10 +461,10 @@ export async function getProjects() {
 
   if (error) {
     console.error("Error fetching projects:", error);
-    return mockProjects;
+    return [];
   }
 
-  return data && data.length > 0 ? data : mockProjects;
+  return data || [];
 }
 
 /**
@@ -1732,7 +1759,7 @@ export async function createProjectExpense(projectRef, payload) {
 
   if (error) {
     console.error("Error creating project expense:", error);
-    throw new Error("Failed to create expense");
+    throw error;
   }
 
   return data?.[0] || null;
@@ -1772,7 +1799,7 @@ export async function updateProjectExpense(expenseId, payload) {
 
   if (error) {
     console.error("Error updating project expense:", error);
-    throw new Error("Failed to update expense");
+    throw error;
   }
 
   return data?.[0] || null;
@@ -1790,7 +1817,7 @@ export async function deleteProjectExpense(expenseId) {
 
   if (error) {
     console.error("Error deleting project expense:", error);
-    throw new Error("Failed to delete expense");
+    throw error;
   }
 
   return true;
@@ -1828,7 +1855,7 @@ export async function createProjectSale(projectRef, payload) {
 
   if (error) {
     console.error("Error creating project sale:", error);
-    throw new Error("Failed to create sale");
+    throw error;
   }
 
   return data?.[0] || null;
@@ -1870,7 +1897,7 @@ export async function updateProjectSale(saleId, payload) {
 
   if (error) {
     console.error("Error updating project sale:", error);
-    throw new Error("Failed to update sale");
+    throw error;
   }
 
   return data?.[0] || null;
@@ -1888,7 +1915,7 @@ export async function deleteProjectSale(saleId) {
 
   if (error) {
     console.error("Error deleting project sale:", error);
-    throw new Error("Failed to delete sale");
+    throw error;
   }
 
   return true;
@@ -2629,9 +2656,7 @@ export async function getDashboardStats(memberId) {
     nextPayoutDate: '2026-01-15',
   };
 
-  if (!isSupabaseConfigured || !supabase) {
-    return mockStats;
-  }
+  if (!isSupabaseConfigured || !supabase) return mockStats;
 
   try {
     // Get member's total contributions
@@ -2640,7 +2665,7 @@ export async function getDashboardStats(memberId) {
       .select("amount")
       .eq("member_id", memberId);
 
-    const totalContributions = contributions?.reduce((sum, c) => sum + Number(c.amount), 0) || 0;
+    const totalContributions = contributions?.reduce((sum, c) => sum + Number(c.amount), 0) ?? 0;
 
     // Get member's payout info
     const { data: payout } = await supabase
@@ -2656,7 +2681,7 @@ export async function getDashboardStats(memberId) {
       .select("id")
       .lte("end_date", today);
 
-    const currentCycle = completedCycles?.length || 0;
+    const currentCycle = completedCycles?.length ?? 0;
 
     // Get welfare balance (total group welfare)
     const { data: welfareData } = await supabase
@@ -2666,7 +2691,7 @@ export async function getDashboardStats(memberId) {
       .limit(1)
       .maybeSingle();
 
-    const welfareBalance = welfareData?.balance || (currentCycle * 1000);
+    const welfareBalance = welfareData?.balance ?? (currentCycle * 1000);
 
     // Get next upcoming payout
     const { data: nextPayout } = await supabase
@@ -2687,18 +2712,27 @@ export async function getDashboardStats(memberId) {
       .eq("status", "active");
 
     return {
-      totalContributions: totalContributions || mockStats.totalContributions,
-      welfareBalance: welfareBalance || mockStats.welfareBalance,
-      payoutTurn: payout?.cycle_number || mockStats.payoutTurn,
-      payoutDate: payout?.date || mockStats.payoutDate,
-      currentCycle: currentCycle || mockStats.currentCycle,
-      totalMembers: totalMembers || mockStats.totalMembers,
-      nextRecipient: nextPayout?.members?.name || mockStats.nextRecipient,
-      nextPayoutDate: nextPayout?.date || mockStats.nextPayoutDate,
+      totalContributions: totalContributions ?? 0,
+      welfareBalance: welfareBalance ?? 0,
+      payoutTurn: payout?.cycle_number ?? null,
+      payoutDate: payout?.date ?? null,
+      currentCycle: currentCycle ?? 0,
+      totalMembers: totalMembers ?? 0,
+      nextRecipient: nextPayout?.members?.name ?? null,
+      nextPayoutDate: nextPayout?.date ?? null,
     };
   } catch (error) {
     console.error("Error fetching dashboard stats:", error);
-    return mockStats;
+    return {
+      totalContributions: 0,
+      welfareBalance: 0,
+      payoutTurn: null,
+      payoutDate: null,
+      currentCycle: 0,
+      totalMembers: 0,
+      nextRecipient: null,
+      nextPayoutDate: null,
+    };
   }
 }
 
@@ -2767,6 +2801,7 @@ export async function createMemberAdmin(payload) {
     throw new Error("Supabase not configured");
   }
 
+  const passwordHash = normalizeOptional(payload.password_hash);
   const insertPayload = {
     name: normalizeOptional(payload.name),
     email: normalizeOptional(payload.email),
@@ -2775,6 +2810,7 @@ export async function createMemberAdmin(payload) {
     status: normalizeOptional(payload.status) || "active",
     join_date: normalizeOptional(payload.join_date) || new Date().toISOString().slice(0, 10),
     auth_id: normalizeOptional(payload.auth_id),
+    password_hash: passwordHash || "admin_created",
     gender: normalizeOptional(payload.gender),
     national_id: normalizeOptional(payload.national_id),
     occupation: normalizeOptional(payload.occupation),
@@ -2837,6 +2873,168 @@ export async function updateMemberAdmin(memberId, payload) {
   return data;
 }
 
+export async function getProjectMembersAdmin(projectId) {
+  if (!projectId) {
+    return [];
+  }
+
+  const mockMembers = [
+    {
+      id: "mock-project-member-1",
+      project_id: projectId,
+      member_id: 1,
+      role: "Member",
+      term_start: "2026-01-05",
+      members: {
+        id: 1,
+        name: "Mary Achieng",
+        email: "mary@example.com",
+        phone_number: "+254 700 000 001",
+        role: "member",
+      },
+    },
+  ];
+
+  if (!isSupabaseConfigured || !supabase) {
+    return mockMembers;
+  }
+
+  const { data, error } = await supabase
+    .from("iga_committee_members")
+    .select("id, project_id, member_id, role, term_start, members (id, name, email, phone_number, role, status)")
+    .eq("project_id", projectId)
+    .order("term_start", { ascending: false });
+
+  if (!error) {
+    return data || [];
+  }
+
+  const { data: membership, error: membershipError } = await supabase
+    .from("iga_committee_members")
+    .select("id, project_id, member_id, role, term_start")
+    .eq("project_id", projectId);
+
+  if (membershipError) {
+    throw membershipError;
+  }
+
+  const memberIds = (membership || []).map((item) => item.member_id).filter(Boolean);
+  if (!memberIds.length) {
+    return membership || [];
+  }
+
+  const { data: memberData, error: memberError } = await supabase
+    .from("members")
+    .select("id, name, email, phone_number, role, status")
+    .in("id", memberIds);
+
+  if (memberError) {
+    return membership || [];
+  }
+
+  const memberMap = new Map((memberData || []).map((member) => [member.id, member]));
+  return (membership || []).map((item) => ({
+    ...item,
+    members: memberMap.get(item.member_id) || null,
+  }));
+}
+
+export async function addProjectMemberAdmin({ projectId, memberId, role, term_start }) {
+  if (!projectId || !memberId) {
+    throw new Error("Project and member are required.");
+  }
+
+  if (!isSupabaseConfigured || !supabase) {
+    return {
+      id: `mock-project-member-${Date.now()}`,
+      project_id: projectId,
+      member_id: memberId,
+      role: role || "Member",
+      term_start: term_start || new Date().toISOString().slice(0, 10),
+    };
+  }
+
+  const { data: existing } = await supabase
+    .from("iga_committee_members")
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("member_id", memberId)
+    .maybeSingle();
+
+  if (existing) {
+    throw new Error("Member is already assigned to this project.");
+  }
+
+  const { data, error } = await supabase
+    .from("iga_committee_members")
+    .insert({
+      project_id: projectId,
+      member_id: memberId,
+      role: role || "Member",
+      term_start: term_start || new Date().toISOString().slice(0, 10),
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+export async function removeProjectMemberAdmin(projectMemberId) {
+  if (!projectMemberId) {
+    return false;
+  }
+
+  if (!isSupabaseConfigured || !supabase) {
+    return true;
+  }
+
+  const { error } = await supabase
+    .from("iga_committee_members")
+    .delete()
+    .eq("id", projectMemberId);
+
+  if (error) {
+    throw error;
+  }
+
+  return true;
+}
+
+export async function updateProjectMemberAdmin(projectMemberId, payload) {
+  if (!projectMemberId) {
+    throw new Error("Project member id is required.");
+  }
+
+  if (!isSupabaseConfigured || !supabase) {
+    return {
+      id: projectMemberId,
+      ...payload,
+    };
+  }
+
+  const updatePayload = {
+    role: normalizeOptional(payload.role),
+    term_start: normalizeOptional(payload.term_start),
+  };
+
+  const { data, error } = await supabase
+    .from("iga_committee_members")
+    .update(updatePayload)
+    .eq("id", projectMemberId)
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
 export async function getMemberInvites() {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
@@ -2886,6 +3084,94 @@ export async function createMemberInvite(payload) {
   }
 
   return { invite: data, code };
+}
+
+export async function verifyMemberInvite(code) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const trimmed = String(code || "").trim();
+  if (!trimmed) {
+    throw new Error("Invite code is required.");
+  }
+
+  const normalized = trimmed.toUpperCase();
+  const compact = normalized.replace(/-/g, "");
+  const codeHash = await hashInviteCode(normalized);
+  let { data, error } = await supabase
+    .from("member_invites")
+    .select("*")
+    .eq("code_hash", codeHash)
+    .order("created_at", { ascending: false })
+    .limit(2);
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data?.length && compact.length >= 8) {
+    const prefix = compact.slice(0, 8);
+    const { data: candidates, error: prefixError } = await supabase
+      .from("member_invites")
+      .select("*")
+      .eq("code_prefix", prefix);
+    if (prefixError) {
+      throw prefixError;
+    }
+    if (Array.isArray(candidates)) {
+      data =
+        candidates.find((invite) => {
+          const stored = String(invite.code_hash || "");
+          return (
+            stored === codeHash ||
+            stored.toUpperCase() === normalized ||
+            stored.replace(/-/g, "").toUpperCase() === compact
+          );
+        }) || null;
+    }
+  }
+
+  const invite = Array.isArray(data) ? data[0] : data;
+  if (!invite) {
+    throw new Error("Invalid invite code.");
+  }
+
+  if (invite.status && String(invite.status).toLowerCase() !== "pending") {
+    throw new Error("This invite code is no longer active.");
+  }
+
+  if (invite.expires_at) {
+    const expiresAt = new Date(invite.expires_at);
+    if (!Number.isNaN(expiresAt.getTime()) && expiresAt < new Date()) {
+      throw new Error("This invite code has expired.");
+    }
+  }
+
+  return invite;
+}
+
+export async function markInviteUsed(inviteId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  if (!inviteId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("member_invites")
+    .update({ status: "used" })
+    .eq("id", inviteId)
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
 }
 
 export async function revokeMemberInvite(inviteId) {

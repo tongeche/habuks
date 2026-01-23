@@ -37,7 +37,7 @@ export default function ReportsPage({ user, setActivePage }) {
   const activeFilterLabel =
     FILTER_OPTIONS.find((option) => option.key === filterKey)?.label || "All";
 
-  const canViewAllProjects = ["admin", "superadmin", "project_manager"].includes(user?.role);
+  const canViewAllProjects = ["admin", "superadmin", "supervisor"].includes(user?.role);
 
   useEffect(() => {
     const loadProjects = async () => {

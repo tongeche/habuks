@@ -45,3 +45,6 @@ brand.txt
 about.txt
 poltry_brief.txt
 content.md
+
+# Local Netlify folder
+.netlify

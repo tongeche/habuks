@@ -59,7 +59,7 @@ export default function ExpensesPage({ user }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
 
-  const canViewAllProjects = ["admin", "superadmin", "project_manager"].includes(user?.role);
+  const canViewAllProjects = ["admin", "superadmin", "supervisor"].includes(user?.role);
 
   const resetMessages = () => {
     setStatusMessage("");

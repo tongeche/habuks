@@ -2,8 +2,6 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "../icons.jsx";
 import { signOut } from "../../lib/dataService.js";
-
-const adminRoles = ["admin", "superadmin"];
 const baseMenuItems = [
   { key: "overview", label: "Dashboard", icon: "home" },
   {
@@ -31,16 +29,27 @@ const baseMenuItems = [
   { key: "news", label: "News & Updates", icon: "newspaper" },
   // { key: "meetings", label: "Meetings", icon: "users" },
   { key: "profile", label: "My Profile", icon: "user" },
+  { key: "admin", label: "Admin Panel", icon: "users" },
 ];
 
-export default function DashboardLayout({ activePage, setActivePage, children, user }) {
+export default function DashboardLayout({ activePage, setActivePage, children, user, access }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openSections, setOpenSections] = useState(() => new Set());
   const [isCollapsed, setIsCollapsed] = useState(false);
   const navigate = useNavigate();
-  const menuItems = adminRoles.includes(user?.role)
-    ? [...baseMenuItems, { key: "admin", label: "Admin Panel", icon: "users" }]
-    : baseMenuItems;
+  const allowedPages = access?.allowedPages || new Set();
+  const menuItems = baseMenuItems
+    .map((item) => {
+      if (item.subItems?.length) {
+        const filteredSub = item.subItems.filter((sub) => allowedPages.has(sub.key));
+        if (!allowedPages.has(item.key) && filteredSub.length === 0) {
+          return null;
+        }
+        return { ...item, subItems: filteredSub };
+      }
+      return allowedPages.has(item.key) ? item : null;
+    })
+    .filter(Boolean);
 
   const flatMenuItems = menuItems.flatMap((item) =>
     item.subItems ? [item, ...item.subItems] : [item]
@@ -121,8 +130,12 @@ export default function DashboardLayout({ activePage, setActivePage, children, u
                       }
                       if (hasSubItems) {
                         toggleSection(item.key);
+                        if (allowedPages.has(item.key)) {
+                          setActivePage(item.key);
+                        }
+                      } else {
+                        setActivePage(item.key);
                       }
-                      setActivePage(item.key);
                       setSidebarOpen(false);
                     }}
                     title={isCollapsed ? item.label : undefined}

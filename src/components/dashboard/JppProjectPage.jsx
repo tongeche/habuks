@@ -83,7 +83,7 @@ const toDateKey = (value) => {
 
 export default function JppProjectPage({ user }) {
   const today = new Date().toISOString().slice(0, 10);
-  const canManage = ["admin", "superadmin", "project_manager", "member"].includes(user?.role);
+  const canManage = ["admin", "superadmin", "project_manager"].includes(user?.role);
 
   const initialBatchForm = {
     batch_code: "",

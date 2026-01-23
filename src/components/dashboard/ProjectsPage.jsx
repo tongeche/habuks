@@ -11,6 +11,9 @@ export default function ProjectsPage({ user, setActivePage }) {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [joiningId, setJoiningId] = useState(null);
+  const role = String(user?.role || "member").toLowerCase();
+  const isAdmin = ["admin", "superadmin"].includes(role);
+  const canSelfManageMembership = isAdmin;
 
   useEffect(() => {
     loadProjects();
@@ -30,6 +33,7 @@ export default function ProjectsPage({ user, setActivePage }) {
 
   const handleJoin = async (projectId) => {
     if (!user?.id) return;
+    if (!canSelfManageMembership) return;
     
     setJoiningId(projectId);
     try {
@@ -45,6 +49,7 @@ export default function ProjectsPage({ user, setActivePage }) {
 
   const handleLeave = async (projectId) => {
     if (!user?.id) return;
+    if (!canSelfManageMembership) return;
     
     if (!confirm("Are you sure you want to leave this project?")) return;
     
@@ -117,6 +122,10 @@ export default function ProjectsPage({ user, setActivePage }) {
     }
   };
 
+  const visibleProjects = isAdmin
+    ? projects
+    : projects.filter((project) => project.membership || project.project_leader === user?.id);
+
   if (loading) {
     return (
       <div className="projects-page-modern">
@@ -142,14 +151,14 @@ export default function ProjectsPage({ user, setActivePage }) {
 
       <div className="projects-tabs">
         <button className="project-tab active">
-          Active <span className="tab-count">{projects.filter(p => p.status?.toLowerCase() === 'active').length}</span>
+          Active <span className="tab-count">{visibleProjects.filter(p => p.status?.toLowerCase() === 'active').length}</span>
         </button>
         <button className="project-tab">
-          Completed <span className="tab-count">{projects.filter(p => p.status?.toLowerCase() === 'completed').length}</span>
+          Completed <span className="tab-count">{visibleProjects.filter(p => p.status?.toLowerCase() === 'completed').length}</span>
         </button>
       </div>
 
-      {projects.length === 0 ? (
+      {visibleProjects.length === 0 ? (
         <div className="empty-state">
           <Icon name="folder" size={48} />
           <h3>No projects yet</h3>
@@ -157,7 +166,7 @@ export default function ProjectsPage({ user, setActivePage }) {
         </div>
       ) : (
         <div className="projects-list-modern">
-          {projects.map((project) => {
+          {visibleProjects.map((project) => {
             const role = project.membership?.role || "";
             const isProjectManager = !!(
               user && (
@@ -258,7 +267,7 @@ export default function ProjectsPage({ user, setActivePage }) {
                       Manage
                     </button>
                   )}
-                  {project.membership ? (
+                  {project.membership && canSelfManageMembership ? (
                     <button
                       className="btn-leave is-compact"
                       onClick={() => handleLeave(project.id)}
@@ -266,7 +275,7 @@ export default function ProjectsPage({ user, setActivePage }) {
                     >
                       {joiningId === project.id ? "..." : "Leave"}
                     </button>
-                  ) : (
+                  ) : canSelfManageMembership ? (
                     <button
                       className="btn-join is-compact"
                       onClick={() => handleJoin(project.id)}
@@ -274,7 +283,7 @@ export default function ProjectsPage({ user, setActivePage }) {
                     >
                       {joiningId === project.id ? "Joining..." : "Join"}
                     </button>
-                  )}
+                  ) : null}
                   <a
                     href={`/projects/${project.code || project.id}`}
                     className="btn-view-project is-compact"
@@ -297,7 +306,7 @@ export default function ProjectsPage({ user, setActivePage }) {
                   </div>
 
                   <div className="project-membership">
-                    {project.membership ? (
+                    {project.membership && canSelfManageMembership ? (
                       <div className="membership-status">
                         <div className="member-badge">
                           <Icon name="check-circle" size={16} />
@@ -314,7 +323,7 @@ export default function ProjectsPage({ user, setActivePage }) {
                           {joiningId === project.id ? "..." : "Leave"}
                         </button>
                       </div>
-                    ) : (
+                    ) : canSelfManageMembership ? (
                       <button 
                         className="btn-join"
                         onClick={() => handleJoin(project.id)}
@@ -329,6 +338,13 @@ export default function ProjectsPage({ user, setActivePage }) {
                           </>
                         )}
                       </button>
+                    ) : (
+                      <div className="membership-status">
+                        <div className="member-badge">
+                          <Icon name="check-circle" size={16} />
+                          <span>Assigned member</span>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -347,10 +363,12 @@ export default function ProjectsPage({ user, setActivePage }) {
           <Icon name="briefcase" size={20} />
           <span>Projects</span>
         </button>
-        <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("reports")}>
-          <Icon name="trending-up" size={20} />
-          <span>Reports</span>
-        </button>
+        {isAdmin && (
+          <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("reports")}>
+            <Icon name="trending-up" size={20} />
+            <span>Reports</span>
+          </button>
+        )}
         <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("profile")}>
           <Icon name="user" size={20} />
           <span>Settings</span>

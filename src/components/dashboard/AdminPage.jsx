@@ -6,6 +6,19 @@ import {
   getMemberInvites,
   createMemberInvite,
   revokeMemberInvite,
+  getProjects,
+  getProjectExpensesForProjects,
+  getProjectSalesForProjects,
+  createProjectExpense,
+  updateProjectExpense,
+  deleteProjectExpense,
+  createProjectSale,
+  updateProjectSale,
+  deleteProjectSale,
+  getProjectMembersAdmin,
+  addProjectMemberAdmin,
+  removeProjectMemberAdmin,
+  updateProjectMemberAdmin,
   getWelfareAccounts,
   getWelfareCycles,
   getWelfareTransactionsAdmin,
@@ -54,6 +67,29 @@ const initialWelfareForm = {
   description: "",
 };
 
+const initialExpenseForm = {
+  project_id: "",
+  expense_date: new Date().toISOString().slice(0, 10),
+  category: "",
+  amount: "",
+  vendor: "",
+  description: "",
+  receipt: false,
+  approved: false,
+};
+
+const initialSaleForm = {
+  project_id: "",
+  sale_date: new Date().toISOString().slice(0, 10),
+  product_type: "",
+  quantity_units: "",
+  unit_price: "",
+  total_amount: "",
+  customer_name: "",
+  customer_type: "retail",
+  payment_status: "paid",
+};
+
 const adminModules = [
   {
     key: "members",
@@ -76,6 +112,7 @@ const adminModules = [
     title: "Projects",
     description: "Create, assign leaders, and manage project status.",
     icon: "briefcase",
+    sections: ["projects-manage"],
     tone: "violet",
   },
   {
@@ -83,6 +120,7 @@ const adminModules = [
     title: "Expenses & Sales",
     description: "Review project spend, sales, and approvals.",
     icon: "receipt",
+    sections: ["finance-dashboard"],
     tone: "amber",
   },
   {
@@ -136,21 +174,47 @@ export default function AdminPage({ user }) {
   const [memberForm, setMemberForm] = useState(initialMemberForm);
   const [inviteForm, setInviteForm] = useState(initialInviteForm);
   const [welfareForm, setWelfareForm] = useState(initialWelfareForm);
+  const [expenseForm, setExpenseForm] = useState(initialExpenseForm);
+  const [saleForm, setSaleForm] = useState(initialSaleForm);
   const [selectedMemberId, setSelectedMemberId] = useState(null);
   const [selectedWelfareId, setSelectedWelfareId] = useState(null);
+  const [selectedExpenseId, setSelectedExpenseId] = useState(null);
+  const [selectedSaleId, setSelectedSaleId] = useState(null);
   const [generatedInvite, setGeneratedInvite] = useState(null);
   const [search, setSearch] = useState("");
   const [welfareSearch, setWelfareSearch] = useState("");
+  const [financeSearch, setFinanceSearch] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [loadingInvites, setLoadingInvites] = useState(false);
   const [loadingWelfare, setLoadingWelfare] = useState(false);
+  const [loadingFinance, setLoadingFinance] = useState(false);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [loadingProjectMembers, setLoadingProjectMembers] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [activeModule, setActiveModule] = useState(null);
+  const [financeTab, setFinanceTab] = useState("expenses");
+  const [financeRangeDays, setFinanceRangeDays] = useState(30);
+  const [financeProjectId, setFinanceProjectId] = useState("");
   const [showMemberForm, setShowMemberForm] = useState(false);
   const [welfareTransactions, setWelfareTransactions] = useState([]);
   const [welfareAccounts, setWelfareAccounts] = useState([]);
   const [welfareCycles, setWelfareCycles] = useState([]);
+  const [financeExpenses, setFinanceExpenses] = useState([]);
+  const [financeSales, setFinanceSales] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectMembers, setProjectMembers] = useState([]);
+  const [addingProjectMember, setAddingProjectMember] = useState(false);
+  const [removingProjectMemberId, setRemovingProjectMemberId] = useState(null);
+  const [savingProjectMemberId, setSavingProjectMemberId] = useState(null);
+  const [projectMemberRoleEdits, setProjectMemberRoleEdits] = useState({});
+  const [projectMemberForm, setProjectMemberForm] = useState({
+    member_id: "",
+    role: "Member",
+    term_start: new Date().toISOString().slice(0, 10),
+  });
 
   const isAdmin = isAdminUser(user);
 
@@ -193,15 +257,109 @@ export default function AdminPage({ user }) {
     return new Map(welfareCycles.map((cycle) => [cycle.id, cycle]));
   }, [welfareCycles]);
 
+  const projectMap = useMemo(() => {
+    return new Map(projects.map((project) => [String(project.id), project]));
+  }, [projects]);
+
+  const selectedProject = useMemo(
+    () => projects.find((project) => String(project.id) === String(selectedProjectId)),
+    [projects, selectedProjectId]
+  );
+
+  const availableProjectMembers = useMemo(() => {
+    const assignedIds = new Set(projectMembers.map((item) => String(item.member_id)));
+    return members.filter((member) => !assignedIds.has(String(member.id)));
+  }, [members, projectMembers]);
+
+  const filteredProjectMembers = useMemo(() => {
+    if (!projectSearch.trim()) {
+      return projectMembers;
+    }
+    const query = projectSearch.toLowerCase();
+    return projectMembers.filter((member) => {
+      const person = member.members || {};
+      return (
+        String(person.name || "").toLowerCase().includes(query) ||
+        String(person.email || "").toLowerCase().includes(query) ||
+        String(person.phone_number || "").toLowerCase().includes(query)
+      );
+    });
+  }, [projectMembers, projectSearch]);
+
+  const filterByRange = (items, days, dateKey) => {
+    if (!days) return items;
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
+    const start = new Date(end);
+    start.setDate(end.getDate() - (days - 1));
+    start.setHours(0, 0, 0, 0);
+    return items.filter((item) => {
+      const raw = item?.[dateKey];
+      if (!raw) return false;
+      const date = new Date(raw);
+      if (Number.isNaN(date.getTime())) return false;
+      return date >= start && date <= end;
+    });
+  };
+
+  const filteredExpenses = useMemo(() => {
+    let items = financeExpenses;
+    if (financeProjectId) {
+      items = items.filter((expense) => String(expense.project_id) === String(financeProjectId));
+    }
+    items = filterByRange(items, financeRangeDays, "expense_date");
+    if (!financeSearch.trim()) {
+      return items;
+    }
+    const query = financeSearch.toLowerCase();
+    return items.filter((expense) => {
+      return (
+        String(expense.category || "").toLowerCase().includes(query) ||
+        String(expense.vendor || "").toLowerCase().includes(query) ||
+        String(expense.description || "").toLowerCase().includes(query)
+      );
+    });
+  }, [financeExpenses, financeProjectId, financeRangeDays, financeSearch]);
+
+  const filteredSales = useMemo(() => {
+    let items = financeSales;
+    if (financeProjectId) {
+      items = items.filter((sale) => String(sale.project_id) === String(financeProjectId));
+    }
+    items = filterByRange(items, financeRangeDays, "sale_date");
+    if (!financeSearch.trim()) {
+      return items;
+    }
+    const query = financeSearch.toLowerCase();
+    return items.filter((sale) => {
+      return (
+        String(sale.product_type || "").toLowerCase().includes(query) ||
+        String(sale.customer_name || "").toLowerCase().includes(query) ||
+        String(sale.customer_type || "").toLowerCase().includes(query)
+      );
+    });
+  }, [financeSales, financeProjectId, financeRangeDays, financeSearch]);
+
   useEffect(() => {
     if (!isAdmin) {
       return;
     }
     loadMembers();
     loadInvites();
+    loadProjects();
     loadWelfareMeta();
     loadWelfareTransactions();
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      return;
+    }
+    if (activeModule !== "finance") {
+      return;
+    }
+    loadFinanceData();
+  }, [activeModule, projects, isAdmin]);
 
   useEffect(() => {
     if (activeModule !== "members") {
@@ -214,7 +372,42 @@ export default function AdminPage({ user }) {
       setWelfareForm(initialWelfareForm);
       setWelfareSearch("");
     }
+    if (activeModule !== "projects") {
+      setProjectSearch("");
+      setAddingProjectMember(false);
+      setRemovingProjectMemberId(null);
+      setSavingProjectMemberId(null);
+      setProjectMemberRoleEdits({});
+      setProjectMemberForm({
+        member_id: "",
+        role: "Member",
+        term_start: new Date().toISOString().slice(0, 10),
+      });
+    }
+    if (activeModule !== "finance") {
+      setFinanceSearch("");
+      setFinanceProjectId("");
+      setFinanceRangeDays(30);
+      setFinanceTab("expenses");
+      setExpenseForm(initialExpenseForm);
+      setSaleForm(initialSaleForm);
+      setSelectedExpenseId(null);
+      setSelectedSaleId(null);
+    }
   }, [activeModule]);
+
+  useEffect(() => {
+    if (selectedProjectId) {
+      setProjectMemberForm((prev) => ({
+        ...prev,
+        member_id: "",
+        role: "Member",
+      }));
+      setProjectMemberRoleEdits({});
+      setSavingProjectMemberId(null);
+      loadProjectMembers(selectedProjectId);
+    }
+  }, [selectedProjectId]);
 
   useEffect(() => {
     if (!selectedWelfareId && welfareAccounts.length && !welfareForm.welfare_account_id) {
@@ -249,6 +442,38 @@ export default function AdminPage({ user }) {
     }
   };
 
+  const loadProjects = async () => {
+    setLoadingProjects(true);
+    try {
+      const data = await getProjects();
+      setProjects(data || []);
+      if (!selectedProjectId && data?.length) {
+        setSelectedProjectId(String(data[0].id));
+      }
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to load projects.");
+    } finally {
+      setLoadingProjects(false);
+    }
+  };
+
+  const loadProjectMembers = async (projectId) => {
+    if (!projectId) {
+      setProjectMembers([]);
+      return;
+    }
+    setLoadingProjectMembers(true);
+    try {
+      const data = await getProjectMembersAdmin(projectId);
+      setProjectMembers(data || []);
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to load project members.");
+      setProjectMembers([]);
+    } finally {
+      setLoadingProjectMembers(false);
+    }
+  };
+
   const loadWelfareMeta = async () => {
     try {
       const [accounts, cycles] = await Promise.all([getWelfareAccounts(), getWelfareCycles()]);
@@ -271,9 +496,52 @@ export default function AdminPage({ user }) {
     }
   };
 
+  const loadFinanceData = async () => {
+    if (!projects.length) {
+      setFinanceExpenses([]);
+      setFinanceSales([]);
+      return;
+    }
+    setLoadingFinance(true);
+    try {
+      const projectIds = projects.map((project) => project.id);
+      const [expenseData, saleData] = await Promise.all([
+        getProjectExpensesForProjects(projectIds),
+        getProjectSalesForProjects(projectIds),
+      ]);
+      setFinanceExpenses(expenseData || []);
+      setFinanceSales(saleData || []);
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to load finance data.");
+      setFinanceExpenses([]);
+      setFinanceSales([]);
+    } finally {
+      setLoadingFinance(false);
+    }
+  };
+
   const resetMessages = () => {
     setStatusMessage("");
     setErrorMessage("");
+  };
+
+  const formatProjectMembershipError = (error, fallback) => {
+    const message = String(error?.message || "");
+    if (message.toLowerCase().includes("row-level security")) {
+      return "Permission denied by database policy. Update the Supabase RLS policy on iga_committee_members to allow admins to manage project members.";
+    }
+    return fallback;
+  };
+
+  const formatFinanceError = (error, fallback) => {
+    const message = String(error?.message || "");
+    if (message.toLowerCase().includes("row-level security")) {
+      return "Permission denied by database policy. Update Supabase RLS policies for project_expenses and project_sales to allow admin edits.";
+    }
+    if (message.toLowerCase().includes("invalid input syntax")) {
+      return "Invalid data format. Check amount, dates, and IDs.";
+    }
+    return fallback;
   };
 
   const handleModuleClick = (module) => {
@@ -302,6 +570,316 @@ export default function AdminPage({ user }) {
     const { name, value } = e.target;
     setWelfareForm((prev) => ({ ...prev, [name]: value }));
     resetMessages();
+  };
+
+  const handleExpenseChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    const nextValue = type === "checkbox" ? checked : value;
+    setExpenseForm((prev) => ({ ...prev, [name]: nextValue }));
+    resetMessages();
+  };
+
+  const handleSaleChange = (e) => {
+    const { name, value } = e.target;
+    setSaleForm((prev) => ({ ...prev, [name]: value }));
+    resetMessages();
+  };
+
+  const handleProjectMemberRoleChange = (projectMemberId, value) => {
+    setProjectMemberRoleEdits((prev) => ({
+      ...prev,
+      [projectMemberId]: value,
+    }));
+    resetMessages();
+  };
+
+  const handleProjectMemberChange = (e) => {
+    const { name, value } = e.target;
+    setProjectMemberForm((prev) => ({ ...prev, [name]: value }));
+    resetMessages();
+  };
+
+  const handleProjectMemberSubmit = async (e) => {
+    e.preventDefault();
+    resetMessages();
+
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
+
+    if (!projectMemberForm.member_id) {
+      setErrorMessage("Select a member to add.");
+      return;
+    }
+
+    try {
+      setAddingProjectMember(true);
+      await addProjectMemberAdmin({
+        projectId: selectedProjectId,
+        memberId: projectMemberForm.member_id,
+        role: projectMemberForm.role,
+        term_start: projectMemberForm.term_start,
+      });
+      setStatusMessage("Member added to project.");
+      setProjectMemberForm((prev) => ({
+        ...prev,
+        member_id: "",
+        role: "Member",
+      }));
+      await loadProjectMembers(selectedProjectId);
+    } catch (error) {
+      setErrorMessage(formatProjectMembershipError(error, error.message || "Failed to add member to project."));
+    } finally {
+      setAddingProjectMember(false);
+    }
+  };
+
+  const handleExpenseSubmit = async (e) => {
+    e.preventDefault();
+    resetMessages();
+
+    if (!expenseForm.project_id) {
+      setErrorMessage("Select a project for this expense.");
+      return;
+    }
+    if (!expenseForm.category.trim()) {
+      setErrorMessage("Expense category is required.");
+      return;
+    }
+    const amountValue = Number.parseFloat(expenseForm.amount);
+    if (!Number.isFinite(amountValue)) {
+      setErrorMessage("Expense amount is required.");
+      return;
+    }
+
+    try {
+      const payload = {
+        project_id: expenseForm.project_id,
+        expense_date: expenseForm.expense_date,
+        category: expenseForm.category,
+        amount: amountValue,
+        vendor: expenseForm.vendor,
+        description: expenseForm.description,
+        receipt: expenseForm.receipt,
+        approved_by: expenseForm.approved ? user?.id || null : null,
+        created_by: user?.id || null,
+      };
+
+      if (selectedExpenseId) {
+        await updateProjectExpense(selectedExpenseId, payload);
+        setStatusMessage("Expense updated.");
+      } else {
+        await createProjectExpense(expenseForm.project_id, payload);
+        setStatusMessage("Expense created.");
+      }
+
+      setExpenseForm({
+        ...initialExpenseForm,
+        project_id: financeProjectId || expenseForm.project_id || "",
+      });
+      setSelectedExpenseId(null);
+      await loadFinanceData();
+    } catch (error) {
+      setErrorMessage(formatFinanceError(error, error.message || "Failed to save expense."));
+    }
+  };
+
+  const handleExpenseEdit = (expense) => {
+    setSelectedExpenseId(expense.id);
+    setExpenseForm({
+      project_id: String(expense.project_id || ""),
+      expense_date: expense.expense_date ? String(expense.expense_date).slice(0, 10) : "",
+      category: expense.category || "",
+      amount: expense.amount ?? "",
+      vendor: expense.vendor || "",
+      description: expense.description || "",
+      receipt: Boolean(expense.receipt),
+      approved: Boolean(expense.approved_by),
+    });
+    resetMessages();
+  };
+
+  const handleExpenseCancel = () => {
+    setSelectedExpenseId(null);
+    setExpenseForm({
+      ...initialExpenseForm,
+      project_id: financeProjectId || "",
+    });
+    resetMessages();
+  };
+
+  const handleExpenseDelete = async (expenseId) => {
+    if (!expenseId) return;
+    if (!window.confirm("Delete this expense? This cannot be undone.")) {
+      return;
+    }
+    resetMessages();
+    try {
+      await deleteProjectExpense(expenseId);
+      setStatusMessage("Expense deleted.");
+      await loadFinanceData();
+    } catch (error) {
+      setErrorMessage(formatFinanceError(error, error.message || "Failed to delete expense."));
+    }
+  };
+
+  const handleExpenseApprove = async (expenseId) => {
+    if (!expenseId) return;
+    resetMessages();
+    try {
+      await updateProjectExpense(expenseId, { approved_by: user?.id || null });
+      setStatusMessage("Expense approved.");
+      await loadFinanceData();
+    } catch (error) {
+      setErrorMessage(formatFinanceError(error, error.message || "Failed to approve expense."));
+    }
+  };
+
+  const handleSaleSubmit = async (e) => {
+    e.preventDefault();
+    resetMessages();
+
+    if (!saleForm.project_id) {
+      setErrorMessage("Select a project for this sale.");
+      return;
+    }
+    if (!saleForm.sale_date) {
+      setErrorMessage("Sale date is required.");
+      return;
+    }
+    const unitPrice = Number.parseFloat(saleForm.unit_price) || 0;
+    const quantityUnits = Number.parseFloat(saleForm.quantity_units) || 0;
+    const totalAmount =
+      saleForm.total_amount !== "" && saleForm.total_amount !== null
+        ? Number.parseFloat(saleForm.total_amount)
+        : unitPrice * quantityUnits;
+
+    try {
+      const payload = {
+        project_id: saleForm.project_id,
+        sale_date: saleForm.sale_date,
+        product_type: saleForm.product_type,
+        quantity_units: quantityUnits,
+        unit_price: unitPrice,
+        total_amount: Number.isFinite(totalAmount) ? totalAmount : 0,
+        customer_name: saleForm.customer_name,
+        customer_type: saleForm.customer_type,
+        payment_status: saleForm.payment_status,
+        created_by: user?.id || null,
+      };
+
+      if (selectedSaleId) {
+        await updateProjectSale(selectedSaleId, payload);
+        setStatusMessage("Sale updated.");
+      } else {
+        await createProjectSale(saleForm.project_id, payload);
+        setStatusMessage("Sale created.");
+      }
+
+      setSaleForm({
+        ...initialSaleForm,
+        project_id: financeProjectId || saleForm.project_id || "",
+      });
+      setSelectedSaleId(null);
+      await loadFinanceData();
+    } catch (error) {
+      setErrorMessage(formatFinanceError(error, error.message || "Failed to save sale."));
+    }
+  };
+
+  const handleSaleEdit = (sale) => {
+    setSelectedSaleId(sale.id);
+    setSaleForm({
+      project_id: String(sale.project_id || ""),
+      sale_date: sale.sale_date ? String(sale.sale_date).slice(0, 10) : "",
+      product_type: sale.product_type || "",
+      quantity_units: sale.quantity_units ?? "",
+      unit_price: sale.unit_price ?? "",
+      total_amount: sale.total_amount ?? "",
+      customer_name: sale.customer_name || "",
+      customer_type: sale.customer_type || "retail",
+      payment_status: sale.payment_status || "paid",
+    });
+    resetMessages();
+  };
+
+  const handleSaleCancel = () => {
+    setSelectedSaleId(null);
+    setSaleForm({
+      ...initialSaleForm,
+      project_id: financeProjectId || "",
+    });
+    resetMessages();
+  };
+
+  const handleSaleDelete = async (saleId) => {
+    if (!saleId) return;
+    if (!window.confirm("Delete this sale? This cannot be undone.")) {
+      return;
+    }
+    resetMessages();
+    try {
+      await deleteProjectSale(saleId);
+      setStatusMessage("Sale deleted.");
+      await loadFinanceData();
+    } catch (error) {
+      setErrorMessage(formatFinanceError(error, error.message || "Failed to delete sale."));
+    }
+  };
+
+  const handleRemoveProjectMember = async (projectMember) => {
+    if (!projectMember?.id) {
+      return;
+    }
+    if (!window.confirm("Remove this member from the project?")) {
+      return;
+    }
+    resetMessages();
+    try {
+      setRemovingProjectMemberId(projectMember.id);
+      await removeProjectMemberAdmin(projectMember.id);
+      setStatusMessage("Member removed from project.");
+      await loadProjectMembers(selectedProjectId);
+      setProjectMemberRoleEdits((prev) => {
+        const next = { ...prev };
+        delete next[projectMember.id];
+        return next;
+      });
+    } catch (error) {
+      setErrorMessage(formatProjectMembershipError(error, error.message || "Failed to remove member."));
+    } finally {
+      setRemovingProjectMemberId(null);
+    }
+  };
+
+  const handleSaveProjectMemberRole = async (projectMember) => {
+    if (!projectMember?.id) {
+      return;
+    }
+    const currentRole = projectMember.role || "Member";
+    const nextRole = projectMemberRoleEdits[projectMember.id] || currentRole;
+    if (nextRole === currentRole) {
+      return;
+    }
+    resetMessages();
+    try {
+      setSavingProjectMemberId(projectMember.id);
+      await updateProjectMemberAdmin(projectMember.id, { role: nextRole });
+      setStatusMessage("Project role updated.");
+      await loadProjectMembers(selectedProjectId);
+      setProjectMemberRoleEdits((prev) => {
+        const next = { ...prev };
+        delete next[projectMember.id];
+        return next;
+      });
+    } catch (error) {
+      setErrorMessage(
+        formatProjectMembershipError(error, error.message || "Failed to update project role.")
+      );
+    } finally {
+      setSavingProjectMemberId(null);
+    }
   };
 
   const handleMemberSubmit = async (e) => {
@@ -363,8 +941,8 @@ export default function AdminPage({ user }) {
     e.preventDefault();
     resetMessages();
 
-    if (!inviteForm.email.trim()) {
-      setErrorMessage("Invite email is required.");
+    if (!inviteForm.phone_number.trim()) {
+      setErrorMessage("Phone number is required for invites.");
       return;
     }
 
@@ -536,6 +1114,41 @@ export default function AdminPage({ user }) {
     });
   };
 
+  const formatCurrency = (value) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "KES 0";
+    }
+    return numeric.toLocaleString("en-KE", {
+      style: "currency",
+      currency: "KES",
+      maximumFractionDigits: 0,
+    });
+  };
+
+  const financeTotals = useMemo(() => {
+    const expenseTotal = filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+    const salesTotal = filteredSales.reduce((sum, sale) => sum + Number(sale.total_amount || 0), 0);
+    const pendingApprovals = filteredExpenses.filter((expense) => !expense.approved_by).length;
+    return {
+      expenseTotal,
+      salesTotal,
+      netTotal: salesTotal - expenseTotal,
+      pendingApprovals,
+    };
+  }, [filteredExpenses, filteredSales]);
+
+  const formatShortDate = (date) => {
+    if (!date) {
+      return "-";
+    }
+    return new Date(date).toLocaleDateString("en-KE", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
   if (!isAdmin) {
     return (
       <div className="admin-panel">
@@ -678,6 +1291,7 @@ export default function AdminPage({ user }) {
                       <option value="admin">Admin</option>
                       <option value="superadmin">Super Admin</option>
                       <option value="project_manager">Project Manager</option>
+                      <option value="supervisor">Supervisor</option>
                     </select>
                   </div>
                   <div className="admin-form-field">
@@ -826,7 +1440,7 @@ export default function AdminPage({ user }) {
               <form className="admin-form" onSubmit={handleInviteSubmit}>
                 <div className="admin-form-grid">
                   <div className="admin-form-field">
-                    <label>Email *</label>
+                    <label>Email (optional)</label>
                     <input
                       name="email"
                       type="email"
@@ -836,7 +1450,7 @@ export default function AdminPage({ user }) {
                     />
                   </div>
                   <div className="admin-form-field">
-                    <label>Phone</label>
+                    <label>Phone *</label>
                     <input
                       name="phone_number"
                       value={inviteForm.phone_number}
@@ -851,6 +1465,7 @@ export default function AdminPage({ user }) {
                       <option value="admin">Admin</option>
                       <option value="superadmin">Super Admin</option>
                       <option value="project_manager">Project Manager</option>
+                      <option value="supervisor">Supervisor</option>
                     </select>
                   </div>
                   <div className="admin-form-field">
@@ -1023,6 +1638,259 @@ export default function AdminPage({ user }) {
         </div>
       )}
 
+      {activeSections.has("projects-manage") && (
+        <div className="admin-card" id="admin-projects">
+          <div className="admin-card-header">
+            <h3>Project Memberships</h3>
+            <button
+              type="button"
+              className="link-button admin-card-dismiss"
+              onClick={() => setActiveModule(null)}
+            >
+              Back to console
+            </button>
+          </div>
+          <p className="admin-help">Add or remove members from IGA projects.</p>
+
+          <div className="admin-projects-toolbar">
+            <div className="admin-form-field admin-projects-select">
+              <label>Project</label>
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+              >
+                <option value="">Select project</option>
+                {projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name} {project.code ? `(${project.code})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {loadingProjects ? (
+              <span className="admin-inline-muted">Loading projects...</span>
+            ) : selectedProject ? (
+              <div className="admin-projects-meta">
+                <span
+                  className={`admin-pill ${
+                    String(selectedProject.status || "").toLowerCase() === "completed"
+                      ? "is-completed"
+                      : "is-active"
+                  }`}
+                >
+                  {selectedProject.status || "Active"}
+                </span>
+                {selectedProject.code && (
+                  <span className="admin-projects-code">{selectedProject.code}</span>
+                )}
+                {selectedProject.start_date && (
+                  <span className="admin-projects-start">
+                    Started {formatShortDate(selectedProject.start_date)}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <span className="admin-inline-muted">Select a project to manage.</span>
+            )}
+          </div>
+
+          {selectedProjectId ? (
+            <div className="admin-projects-grid">
+              <div className="admin-projects-panel">
+                <h4>Add member</h4>
+                <form className="admin-form" onSubmit={handleProjectMemberSubmit}>
+                  <div className="admin-form-grid">
+                    <div className="admin-form-field">
+                      <label>Member</label>
+                      <select
+                        name="member_id"
+                        value={projectMemberForm.member_id}
+                        onChange={handleProjectMemberChange}
+                      >
+                        <option value="">Select member</option>
+                        {availableProjectMembers.map((member) => (
+                          <option key={member.id} value={member.id}>
+                            {member.name || member.email || `Member #${member.id}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="admin-form-field">
+                      <label>Role</label>
+                      <select
+                        name="role"
+                        value={projectMemberForm.role}
+                        onChange={handleProjectMemberChange}
+                      >
+                        <option value="Member">Member</option>
+                        <option value="Project Manager">Project Manager</option>
+                        <option value="Treasurer">Treasurer</option>
+                        <option value="Secretary">Secretary</option>
+                        <option value="Chair">Chair</option>
+                      </select>
+                    </div>
+                    <div className="admin-form-field">
+                      <label>Start date</label>
+                      <input
+                        type="date"
+                        name="term_start"
+                        value={projectMemberForm.term_start}
+                        onChange={handleProjectMemberChange}
+                      />
+                    </div>
+                  </div>
+                  <div className="admin-form-actions">
+                    <button
+                      className="btn-primary"
+                      type="submit"
+                      disabled={addingProjectMember || !availableProjectMembers.length}
+                    >
+                      {addingProjectMember ? "Adding..." : "Add to project"}
+                    </button>
+                  </div>
+                  {!availableProjectMembers.length && (
+                    <p className="admin-helper-inline">
+                      All members are already assigned to this project.
+                    </p>
+                  )}
+                </form>
+              </div>
+              <div className="admin-projects-panel">
+                <div className="admin-list-header">
+                  <div className="admin-search">
+                    <Icon name="search" size={16} />
+                    <input
+                      value={projectSearch}
+                      onChange={(e) => setProjectSearch(e.target.value)}
+                      placeholder="Search project members"
+                    />
+                  </div>
+                  <span className="admin-projects-count">{projectMembers.length} members</span>
+                </div>
+                {loadingProjectMembers ? (
+                  <p>Loading project members...</p>
+                ) : filteredProjectMembers.length === 0 ? (
+                  <p className="admin-help">No members assigned yet.</p>
+                ) : (
+                  <>
+                    <div className="admin-table admin-table--projects desktop-only">
+                      <div className="admin-table-row admin-table-head">
+                        <span>Member</span>
+                        <span>Phone</span>
+                        <span>Role</span>
+                        <span>Start Date</span>
+                        <span>Actions</span>
+                      </div>
+                      {filteredProjectMembers.map((member) => {
+                        const currentRole = member.role || "Member";
+                        const selectedRole = projectMemberRoleEdits[member.id] || currentRole;
+                        const isSaving = savingProjectMemberId === member.id;
+                        const canSave = selectedRole !== currentRole;
+                        return (
+                          <div className="admin-table-row" key={member.id}>
+                            <span>{member.members?.name || `Member #${member.member_id}`}</span>
+                            <span>{member.members?.phone_number || "-"}</span>
+                            <span className="admin-role-cell">
+                              <select
+                                value={selectedRole}
+                                onChange={(e) =>
+                                  handleProjectMemberRoleChange(member.id, e.target.value)
+                                }
+                              >
+                                <option value="Member">Member</option>
+                                <option value="Project Manager">Project Manager</option>
+                                <option value="Treasurer">Treasurer</option>
+                                <option value="Secretary">Secretary</option>
+                                <option value="Chair">Chair</option>
+                              </select>
+                            </span>
+                            <span>{formatShortDate(member.term_start)}</span>
+                            <span className="admin-table-actions">
+                              <button
+                                type="button"
+                                className="link-button"
+                                onClick={() => handleSaveProjectMemberRole(member)}
+                                disabled={!canSave || isSaving}
+                              >
+                                {isSaving ? "Saving..." : "Save"}
+                              </button>
+                              <button
+                                type="button"
+                                className="link-button is-danger"
+                                onClick={() => handleRemoveProjectMember(member)}
+                                disabled={removingProjectMemberId === member.id}
+                              >
+                                {removingProjectMemberId === member.id ? "Removing..." : "Remove"}
+                              </button>
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="admin-project-members-list mobile-only">
+                      {filteredProjectMembers.map((member) => {
+                        const currentRole = member.role || "Member";
+                        const selectedRole = projectMemberRoleEdits[member.id] || currentRole;
+                        const isSaving = savingProjectMemberId === member.id;
+                        const canSave = selectedRole !== currentRole;
+                        return (
+                          <div className="admin-project-member-card" key={member.id}>
+                            <div className="admin-project-member-header">
+                              <div>
+                                <strong>{member.members?.name || `Member #${member.member_id}`}</strong>
+                                <span>{member.members?.phone_number || "-"}</span>
+                              </div>
+                              <span className="admin-project-member-date">
+                                {formatShortDate(member.term_start)}
+                              </span>
+                            </div>
+                            <div className="admin-project-member-row">
+                              <label>Role</label>
+                              <select
+                                value={selectedRole}
+                                onChange={(e) =>
+                                  handleProjectMemberRoleChange(member.id, e.target.value)
+                                }
+                              >
+                                <option value="Member">Member</option>
+                                <option value="Project Manager">Project Manager</option>
+                                <option value="Treasurer">Treasurer</option>
+                                <option value="Secretary">Secretary</option>
+                                <option value="Chair">Chair</option>
+                              </select>
+                            </div>
+                            <div className="admin-project-member-actions">
+                              <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => handleSaveProjectMemberRole(member)}
+                                disabled={!canSave || isSaving}
+                              >
+                                {isSaving ? "Saving..." : "Save role"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-secondary is-danger"
+                                onClick={() => handleRemoveProjectMember(member)}
+                                disabled={removingProjectMemberId === member.id}
+                              >
+                                {removingProjectMemberId === member.id ? "Removing..." : "Remove"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="admin-help">Choose a project to manage its members.</p>
+          )}
+        </div>
+      )}
+
       {activeSections.has("members-list") && (
         <div className="admin-card" id="admin-members-list">
           <div className="admin-card-header">
@@ -1129,42 +1997,615 @@ export default function AdminPage({ user }) {
           {loadingInvites ? (
             <p>Loading invites...</p>
           ) : (
-            <div className="admin-table">
-              <div className="admin-table-row admin-table-head">
-                <span>Email</span>
-                <span>Role</span>
-                <span>Status</span>
-                <span>Code</span>
-                <span>Expires</span>
-                <span>Actions</span>
+            <>
+              <div className="admin-table desktop-only">
+                <div className="admin-table-row admin-table-head">
+                  <span>Email</span>
+                  <span>Role</span>
+                  <span>Status</span>
+                  <span>Code</span>
+                  <span>Expires</span>
+                  <span>Actions</span>
+                </div>
+                {invites.map((invite) => (
+                  <div className="admin-table-row" key={invite.id}>
+                    <span>{invite.email}</span>
+                    <span>{invite.role}</span>
+                    <span>{invite.status}</span>
+                    <span>{invite.code_prefix}</span>
+                    <span>
+                      {invite.expires_at
+                        ? new Date(invite.expires_at).toLocaleDateString()
+                        : "-"}
+                    </span>
+                    <span>
+                      {invite.status === "pending" ? (
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => handleRevokeInvite(invite.id)}
+                        >
+                          Revoke
+                        </button>
+                      ) : (
+                        "-"
+                      )}
+                    </span>
+                  </div>
+                ))}
               </div>
-              {invites.map((invite) => (
-                <div className="admin-table-row" key={invite.id}>
-                  <span>{invite.email}</span>
-                  <span>{invite.role}</span>
-                  <span>{invite.status}</span>
-                  <span>{invite.code_prefix}</span>
-                  <span>
-                    {invite.expires_at
-                      ? new Date(invite.expires_at).toLocaleDateString()
-                      : "-"}
-                  </span>
-                  <span>
-                    {invite.status === "pending" ? (
+              <div className="admin-invite-list mobile-only">
+                {invites.map((invite) => (
+                  <div className="admin-invite-card" key={invite.id}>
+                    <div className="admin-invite-header">
+                      <div>
+                        <strong>{invite.email}</strong>
+                        <span className="admin-invite-role">{invite.role}</span>
+                      </div>
+                      <span
+                        className={`admin-invite-chip status-${String(invite.status || "")
+                          .toLowerCase()
+                          .replace(/\\s+/g, "-")}`}
+                      >
+                        {invite.status}
+                      </span>
+                    </div>
+                    <div className="admin-invite-meta">
+                      <div>
+                        <span>Code</span>
+                        <strong>{invite.code_prefix}</strong>
+                      </div>
+                      <div>
+                        <span>Expires</span>
+                        <strong>
+                          {invite.expires_at
+                            ? new Date(invite.expires_at).toLocaleDateString()
+                            : "-"}
+                        </strong>
+                      </div>
+                    </div>
+                    {invite.status === "pending" && (
                       <button
                         type="button"
-                        className="link-button"
+                        className="btn-secondary is-danger"
                         onClick={() => handleRevokeInvite(invite.id)}
                       >
-                        Revoke
+                        Revoke Invite
                       </button>
-                    ) : (
-                      "-"
                     )}
-                  </span>
-                </div>
-              ))}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {activeSections.has("finance-dashboard") && (
+        <div className="admin-card" id="admin-finance">
+          <div className="admin-card-header">
+            <h3>Expenses & Sales</h3>
+            <button
+              type="button"
+              className="link-button admin-card-dismiss"
+              onClick={() => setActiveModule(null)}
+            >
+              Back to console
+            </button>
+          </div>
+          <p className="admin-help">Track spend, sales, and approvals across projects.</p>
+
+          <div className="admin-finance-toolbar">
+            <div className="admin-finance-tabs">
+              <button
+                type="button"
+                className={`admin-finance-tab${financeTab === "expenses" ? " is-active" : ""}`}
+                onClick={() => setFinanceTab("expenses")}
+              >
+                Expenses
+              </button>
+              <button
+                type="button"
+                className={`admin-finance-tab${financeTab === "sales" ? " is-active" : ""}`}
+                onClick={() => setFinanceTab("sales")}
+              >
+                Sales
+              </button>
             </div>
+            <div className="admin-finance-filters">
+              <div className="admin-form-field admin-finance-select">
+                <label>Project</label>
+                <select
+                  value={financeProjectId}
+                  onChange={(e) => {
+                    setFinanceProjectId(e.target.value);
+                    setExpenseForm((prev) => ({ ...prev, project_id: e.target.value || "" }));
+                    setSaleForm((prev) => ({ ...prev, project_id: e.target.value || "" }));
+                  }}
+                >
+                  <option value="">All projects</option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name} {project.code ? `(${project.code})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="admin-finance-range">
+                {[7, 30, 90].map((range) => (
+                  <button
+                    key={range}
+                    type="button"
+                    className={`admin-finance-range-btn${financeRangeDays === range ? " is-active" : ""}`}
+                    onClick={() => setFinanceRangeDays(range)}
+                  >
+                    {range} days
+                  </button>
+                ))}
+              </div>
+              <div className="admin-search admin-finance-search">
+                <Icon name="search" size={16} />
+                <input
+                  value={financeSearch}
+                  onChange={(e) => setFinanceSearch(e.target.value)}
+                  placeholder={`Search ${financeTab}`}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="admin-finance-summary">
+            <div className="admin-finance-card">
+              <span>Total Expenses</span>
+              <strong>{formatCurrency(financeTotals.expenseTotal)}</strong>
+            </div>
+            <div className="admin-finance-card">
+              <span>Total Sales</span>
+              <strong>{formatCurrency(financeTotals.salesTotal)}</strong>
+            </div>
+            <div className="admin-finance-card">
+              <span>Net</span>
+              <strong>{formatCurrency(financeTotals.netTotal)}</strong>
+            </div>
+            <div className="admin-finance-card">
+              <span>Pending Approvals</span>
+              <strong>{financeTotals.pendingApprovals}</strong>
+            </div>
+          </div>
+
+          {loadingFinance ? (
+            <p>Loading finance data...</p>
+          ) : (
+            <>
+              {financeTab === "expenses" ? (
+                <div className="admin-finance-grid">
+                  <div className="admin-finance-panel">
+                    <h4>{selectedExpenseId ? "Edit Expense" : "Add Expense"}</h4>
+                    <form className="admin-form" onSubmit={handleExpenseSubmit}>
+                      <div className="admin-form-grid">
+                        <div className="admin-form-field">
+                          <label>Project *</label>
+                          <select
+                            name="project_id"
+                            value={expenseForm.project_id}
+                            onChange={handleExpenseChange}
+                          >
+                            <option value="">Select project</option>
+                            {projects.map((project) => (
+                              <option key={project.id} value={project.id}>
+                                {project.name} {project.code ? `(${project.code})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Date *</label>
+                          <input
+                            type="date"
+                            name="expense_date"
+                            value={expenseForm.expense_date}
+                            onChange={handleExpenseChange}
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Category *</label>
+                          <input
+                            name="category"
+                            value={expenseForm.category}
+                            onChange={handleExpenseChange}
+                            placeholder="Feed, Utilities"
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Amount *</label>
+                          <input
+                            name="amount"
+                            type="number"
+                            step="0.01"
+                            value={expenseForm.amount}
+                            onChange={handleExpenseChange}
+                            placeholder="1000"
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Vendor</label>
+                          <input
+                            name="vendor"
+                            value={expenseForm.vendor}
+                            onChange={handleExpenseChange}
+                            placeholder="Supplier name"
+                          />
+                        </div>
+                        <div className="admin-form-field admin-form-field--full">
+                          <label>Description</label>
+                          <input
+                            name="description"
+                            value={expenseForm.description}
+                            onChange={handleExpenseChange}
+                            placeholder="Optional description"
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label className="admin-checkbox">
+                            <input
+                              type="checkbox"
+                              name="receipt"
+                              checked={expenseForm.receipt}
+                              onChange={handleExpenseChange}
+                            />
+                            Receipt available
+                          </label>
+                        </div>
+                        <div className="admin-form-field">
+                          <label className="admin-checkbox">
+                            <input
+                              type="checkbox"
+                              name="approved"
+                              checked={expenseForm.approved}
+                              onChange={handleExpenseChange}
+                            />
+                            Mark approved
+                          </label>
+                        </div>
+                      </div>
+                      <div className="admin-form-actions">
+                        <button className="btn-primary" type="submit">
+                          {selectedExpenseId ? "Save Expense" : "Add Expense"}
+                        </button>
+                        {selectedExpenseId && (
+                          <button className="btn-secondary" type="button" onClick={handleExpenseCancel}>
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    </form>
+                  </div>
+
+                  <div className="admin-finance-panel">
+                    <div className="admin-list-header">
+                      <h4>Expense History</h4>
+                      <span className="admin-projects-count">{filteredExpenses.length} items</span>
+                    </div>
+                    <div className="admin-table admin-table--finance desktop-only">
+                      <div className="admin-table-row admin-table-head">
+                        <span>Expense</span>
+                        <span>Project</span>
+                        <span>Amount</span>
+                        <span>Status</span>
+                        <span>Actions</span>
+                      </div>
+                      {filteredExpenses.map((expense) => (
+                        <div className="admin-table-row" key={expense.id}>
+                          <span>
+                            {expense.category}
+                            <span className="admin-table-subtext">
+                              {expense.expense_date ? formatShortDate(expense.expense_date) : "-"}
+                            </span>
+                          </span>
+                          <span>{projectMap.get(String(expense.project_id))?.name || "-"}</span>
+                          <span>{formatCurrency(expense.amount)}</span>
+                          <span>
+                            <span
+                              className={`admin-pill ${
+                                expense.approved_by ? "is-active" : "is-completed"
+                              }`}
+                            >
+                              {expense.approved_by ? "Approved" : "Pending"}
+                            </span>
+                          </span>
+                          <span className="admin-table-actions">
+                            {!expense.approved_by && (
+                              <button
+                                type="button"
+                                className="link-button"
+                                onClick={() => handleExpenseApprove(expense.id)}
+                              >
+                                Approve
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => handleExpenseEdit(expense)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="link-button is-danger"
+                              onClick={() => handleExpenseDelete(expense.id)}
+                            >
+                              Delete
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="admin-finance-cards mobile-only">
+                      {filteredExpenses.map((expense) => (
+                        <div className="admin-finance-item" key={expense.id}>
+                          <div className="admin-finance-item-top">
+                            <div>
+                              <strong>{expense.category}</strong>
+                              <span>{projectMap.get(String(expense.project_id))?.name || "-"}</span>
+                            </div>
+                            <div className="admin-finance-amount-block">
+                              <span className="admin-finance-amount">
+                                {formatCurrency(expense.amount)}
+                              </span>
+                              <span
+                                className={`admin-finance-status ${
+                                  expense.approved_by ? "is-approved" : "is-pending"
+                                }`}
+                              >
+                                {expense.approved_by ? "Approved" : "Pending"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="admin-finance-item-meta">
+                            <span className="admin-finance-date">
+                              {expense.expense_date ? formatShortDate(expense.expense_date) : "-"}
+                            </span>
+                          </div>
+                          <div className="admin-finance-actions admin-finance-actions--cards">
+                            {!expense.approved_by ? (
+                              <button
+                                type="button"
+                                className="btn-primary"
+                                onClick={() => handleExpenseApprove(expense.id)}
+                              >
+                                Approve
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn-secondary is-danger"
+                                onClick={() => handleExpenseDelete(expense.id)}
+                              >
+                                Delete
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => handleExpenseEdit(expense)}
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="admin-finance-grid">
+                  <div className="admin-finance-panel">
+                    <h4>{selectedSaleId ? "Edit Sale" : "Add Sale"}</h4>
+                    <form className="admin-form" onSubmit={handleSaleSubmit}>
+                      <div className="admin-form-grid">
+                        <div className="admin-form-field">
+                          <label>Project *</label>
+                          <select
+                            name="project_id"
+                            value={saleForm.project_id}
+                            onChange={handleSaleChange}
+                          >
+                            <option value="">Select project</option>
+                            {projects.map((project) => (
+                              <option key={project.id} value={project.id}>
+                                {project.name} {project.code ? `(${project.code})` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Date *</label>
+                          <input
+                            type="date"
+                            name="sale_date"
+                            value={saleForm.sale_date}
+                            onChange={handleSaleChange}
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Product</label>
+                          <input
+                            name="product_type"
+                            value={saleForm.product_type}
+                            onChange={handleSaleChange}
+                            placeholder="Eggs, Peanut butter"
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Units</label>
+                          <input
+                            name="quantity_units"
+                            type="number"
+                            value={saleForm.quantity_units}
+                            onChange={handleSaleChange}
+                            placeholder="0"
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Unit price</label>
+                          <input
+                            name="unit_price"
+                            type="number"
+                            value={saleForm.unit_price}
+                            onChange={handleSaleChange}
+                            placeholder="0"
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Total amount</label>
+                          <input
+                            name="total_amount"
+                            type="number"
+                            value={saleForm.total_amount}
+                            onChange={handleSaleChange}
+                            placeholder="Auto calc"
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Customer</label>
+                          <input
+                            name="customer_name"
+                            value={saleForm.customer_name}
+                            onChange={handleSaleChange}
+                            placeholder="Customer name"
+                          />
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Customer type</label>
+                          <select
+                            name="customer_type"
+                            value={saleForm.customer_type}
+                            onChange={handleSaleChange}
+                          >
+                            <option value="retail">Retail</option>
+                            <option value="wholesale">Wholesale</option>
+                            <option value="member">Member</option>
+                          </select>
+                        </div>
+                        <div className="admin-form-field">
+                          <label>Payment status</label>
+                          <select
+                            name="payment_status"
+                            value={saleForm.payment_status}
+                            onChange={handleSaleChange}
+                          >
+                            <option value="paid">Paid</option>
+                            <option value="pending">Pending</option>
+                            <option value="partial">Partial</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="admin-form-actions">
+                        <button className="btn-primary" type="submit">
+                          {selectedSaleId ? "Save Sale" : "Add Sale"}
+                        </button>
+                        {selectedSaleId && (
+                          <button className="btn-secondary" type="button" onClick={handleSaleCancel}>
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    </form>
+                  </div>
+
+                  <div className="admin-finance-panel">
+                    <div className="admin-list-header">
+                      <h4>Sales History</h4>
+                      <span className="admin-projects-count">{filteredSales.length} items</span>
+                    </div>
+                    <div className="admin-table admin-table--finance desktop-only">
+                      <div className="admin-table-row admin-table-head">
+                        <span>Sale</span>
+                        <span>Project</span>
+                        <span>Total</span>
+                        <span>Status</span>
+                        <span>Actions</span>
+                      </div>
+                      {filteredSales.map((sale) => (
+                        <div className="admin-table-row" key={sale.id}>
+                          <span>
+                            {sale.product_type || "Sale"}
+                            <span className="admin-table-subtext">
+                              {sale.sale_date ? formatShortDate(sale.sale_date) : "-"}
+                            </span>
+                          </span>
+                          <span>{projectMap.get(String(sale.project_id))?.name || "-"}</span>
+                          <span>{formatCurrency(sale.total_amount)}</span>
+                          <span>
+                            <span className="admin-pill is-active">
+                              {sale.payment_status || "paid"}
+                            </span>
+                          </span>
+                          <span className="admin-table-actions">
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => handleSaleEdit(sale)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="link-button is-danger"
+                              onClick={() => handleSaleDelete(sale.id)}
+                            >
+                              Delete
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="admin-finance-cards mobile-only">
+                      {filteredSales.map((sale) => (
+                        <div className="admin-finance-item" key={sale.id}>
+                          <div className="admin-finance-item-top">
+                            <div>
+                              <strong>{sale.product_type || "Sale"}</strong>
+                              <span>{projectMap.get(String(sale.project_id))?.name || "-"}</span>
+                            </div>
+                            <div className="admin-finance-amount-block">
+                              <span className="admin-finance-amount">
+                                {formatCurrency(sale.total_amount)}
+                              </span>
+                              <span className="admin-finance-status is-approved">
+                                {sale.payment_status || "paid"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="admin-finance-item-meta">
+                            <span className="admin-finance-date">
+                              {sale.sale_date ? formatShortDate(sale.sale_date) : "-"}
+                            </span>
+                          </div>
+                          <div className="admin-finance-actions admin-finance-actions--cards">
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => handleSaleEdit(sale)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary is-danger"
+                              onClick={() => handleSaleDelete(sale.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

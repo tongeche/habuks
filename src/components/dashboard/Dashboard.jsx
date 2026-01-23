@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "./DashboardLayout.jsx";
 import DashboardOverview from "./DashboardOverview.jsx";
@@ -14,12 +14,15 @@ import DocumentsPage from "./DocumentsPage.jsx";
 import MeetingsPage from "./MeetingsPage.jsx";
 import ProfilePage from "./ProfilePage.jsx";
 import AdminPage from "./AdminPage.jsx";
-import { getCurrentMember, isAdminUser } from "../../lib/dataService.js";
+import { getCurrentMember, getProjectsWithMembership } from "../../lib/dataService.js";
+import { getRoleAccess, isAdminRole } from "./roleAccess.js";
 
 export default function Dashboard() {
   const [activePage, setActivePage] = useState("overview");
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [accessibleProjectCodes, setAccessibleProjectCodes] = useState([]);
+  const [projectAccessLoaded, setProjectAccessLoaded] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -43,10 +46,48 @@ export default function Dashboard() {
   }, [navigate]);
 
   useEffect(() => {
-    if (activePage === "admin" && user && !isAdminUser(user)) {
-      setActivePage("overview");
+    if (!user) return;
+    const loadProjectAccess = async () => {
+      if (isAdminRole(user?.role)) {
+        setAccessibleProjectCodes(["JPP", "JGF"]);
+        setProjectAccessLoaded(true);
+        return;
+      }
+      try {
+        const projects = await getProjectsWithMembership(user?.id);
+        const codes = (projects || [])
+          .filter((project) => project.membership || project.project_leader === user?.id)
+          .map((project) => String(project.code || "").trim().toUpperCase())
+          .filter(Boolean);
+        setAccessibleProjectCodes(codes);
+      } catch (error) {
+        console.error("Error loading project access:", error);
+        setAccessibleProjectCodes([]);
+      } finally {
+        setProjectAccessLoaded(true);
+      }
+    };
+    loadProjectAccess();
+  }, [user]);
+
+  const access = useMemo(
+    () => getRoleAccess({ role: user?.role, projectCodes: accessibleProjectCodes }),
+    [user?.role, accessibleProjectCodes]
+  );
+
+  useEffect(() => {
+    if (!user || !projectAccessLoaded) return;
+    if (!access?.allowedPages?.has(activePage)) {
+      setActivePage(access.defaultPage || "overview");
+      return;
     }
-  }, [activePage, user]);
+    if (activePage === "projects-jpp" && !access.allowedProjectCodes?.has("JPP")) {
+      setActivePage(access.defaultPage || "projects");
+    }
+    if (activePage === "projects-jgf" && !access.allowedProjectCodes?.has("JGF")) {
+      setActivePage(access.defaultPage || "projects");
+    }
+  }, [activePage, access, user, projectAccessLoaded]);
 
   if (loading) {
     return (
@@ -62,7 +103,10 @@ export default function Dashboard() {
   }
 
   const renderPage = () => {
-    switch (activePage) {
+    const safePage = access?.allowedPages?.has(activePage)
+      ? activePage
+      : access?.defaultPage || "overview";
+    switch (safePage) {
       case "overview":
         return <DashboardOverview user={user} />;
       case "contributions":
@@ -97,7 +141,12 @@ export default function Dashboard() {
   };
 
   return (
-    <DashboardLayout activePage={activePage} setActivePage={setActivePage} user={user}>
+    <DashboardLayout
+      activePage={activePage}
+      setActivePage={setActivePage}
+      user={user}
+      access={access}
+    >
       {renderPage()}
     </DashboardLayout>
   );
