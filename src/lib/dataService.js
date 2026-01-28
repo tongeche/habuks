@@ -85,6 +85,23 @@ export async function getCurrentMember() {
     return member;
   }
 
+  const email = String(user?.email || "").trim();
+  if (email) {
+    const { data: linkedMember, error: linkError } = await supabase
+      .from("members")
+      .update({ auth_id: user.id })
+      .ilike("email", email)
+      .is("auth_id", null)
+      .select("*")
+      .maybeSingle();
+
+    if (linkError) {
+      console.error("Error linking member profile by email:", linkError);
+    } else if (linkedMember) {
+      return linkedMember;
+    }
+  }
+
   const payload = buildMemberPayload(user);
   if (!payload.auth_id || !payload.email) {
     console.error("Missing auth_id or email for member profile creation.");
@@ -99,30 +116,25 @@ export async function getCurrentMember() {
 
   if (insertError) {
     if (insertError.code === "23505") {
-      const { data: existingMember, error: lookupError } = await supabase
-        .from("members")
-        .select("*")
-        .eq("email", payload.email)
-        .maybeSingle();
-
-      if (lookupError || !existingMember) {
-        console.error("Error creating member profile:", insertError);
-        return null;
-      }
-
-      const { data: updatedMember, error: updateError } = await supabase
+      const { data: linkedMember, error: linkError } = await supabase
         .from("members")
         .update({ auth_id: payload.auth_id })
-        .eq("id", existingMember.id)
+        .ilike("email", payload.email)
+        .is("auth_id", null)
         .select("*")
-        .single();
+        .maybeSingle();
 
-      if (updateError) {
-        console.error("Error linking existing member profile:", updateError);
+      if (linkError) {
+        console.error("Error linking existing member profile:", linkError);
         return null;
       }
 
-      return updatedMember;
+      if (linkedMember) {
+        return linkedMember;
+      }
+
+      console.error("Error creating member profile:", insertError);
+      return null;
     }
 
     console.error("Error creating member profile:", insertError);
