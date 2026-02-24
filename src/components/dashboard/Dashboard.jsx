@@ -1,29 +1,39 @@
 import { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import DashboardLayout from "./DashboardLayout.jsx";
 import DashboardOverview from "./DashboardOverview.jsx";
-import ContributionsPage from "./ContributionsPage.jsx";
-import WelfarePage from "./WelfarePage.jsx";
 import ProjectsPage from "./ProjectsPage.jsx";
 import JppProjectPage from "./JppProjectPage.jsx";
 import JgfProjectPage from "./JgfProjectPage.jsx";
-import ExpensesPage from "./ExpensesPage.jsx";
 import ReportsPage from "./ReportsPage.jsx";
 import NewsPage from "./NewsPage.jsx";
-import DocumentsPage from "./DocumentsPage.jsx";
 import MeetingsPage from "./MeetingsPage.jsx";
-import ProfilePage from "./ProfilePage.jsx";
+import MembersPage from "./MembersPage.jsx";
+import FinanceRecordsPage from "./FinanceRecordsPage.jsx";
+import SettingsPage from "./SettingsPage.jsx";
 import AdminPage from "./AdminPage.jsx";
-import { getCurrentMember, getProjectsWithMembership } from "../../lib/dataService.js";
+import { getCurrentMember, getProjectsWithMembership, getTenantMembershipForSlug } from "../../lib/dataService.js";
+import { buildTenantBrand, buildTenantFeatures, buildTenantThemeVars } from "../../lib/tenantBranding.js";
 import { getRoleAccess, isAdminRole } from "./roleAccess.js";
 
 export default function Dashboard() {
   const [activePage, setActivePage] = useState("overview");
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [accessibleProjectCodes, setAccessibleProjectCodes] = useState([]);
+  const [accessibleProjectModules, setAccessibleProjectModules] = useState([]);
   const [projectAccessLoaded, setProjectAccessLoaded] = useState(false);
+  const [tenantRole, setTenantRole] = useState(null);
+  const [tenantInfo, setTenantInfo] = useState(null);
+  const [activeJppProjectId, setActiveJppProjectId] = useState(null);
+  const [activeJgfProjectId, setActiveJgfProjectId] = useState(null);
   const navigate = useNavigate();
+  const { slug } = useParams();
+  const baseSiteData = useMemo(() => {
+    if (typeof window !== "undefined" && typeof window.siteData === "function") {
+      return window.siteData() || {};
+    }
+    return {};
+  }, []);
 
   useEffect(() => {
     async function loadUser() {
@@ -48,31 +58,78 @@ export default function Dashboard() {
   useEffect(() => {
     if (!user) return;
     const loadProjectAccess = async () => {
-      if (isAdminRole(user?.role)) {
-        setAccessibleProjectCodes(["JPP", "JGF"]);
-        setProjectAccessLoaded(true);
-        return;
-      }
       try {
-        const projects = await getProjectsWithMembership(user?.id);
-        const codes = (projects || [])
-          .filter((project) => project.membership || project.project_leader === user?.id)
-          .map((project) => String(project.code || "").trim().toUpperCase())
+        const projects = await getProjectsWithMembership(user?.id, tenantInfo?.id);
+        const visibleProjects = isAdminRole(user?.role)
+          ? projects || []
+          : (projects || []).filter(
+              (project) => project.membership || project.project_leader === user?.id
+            );
+        const moduleKeys = visibleProjects
+          .map((project) => {
+            const raw = project?.module_key || project?.code || "";
+            const lower = String(raw).trim().toLowerCase();
+            if (lower === "jpp" || lower === "jgf") return lower;
+            const upper = String(raw).trim().toUpperCase();
+            if (upper === "JPP") return "jpp";
+            if (upper === "JGF") return "jgf";
+            return null;
+          })
           .filter(Boolean);
-        setAccessibleProjectCodes(codes);
+        setAccessibleProjectModules(Array.from(new Set(moduleKeys)));
       } catch (error) {
         console.error("Error loading project access:", error);
-        setAccessibleProjectCodes([]);
+        setAccessibleProjectModules([]);
       } finally {
         setProjectAccessLoaded(true);
       }
     };
     loadProjectAccess();
-  }, [user]);
+  }, [user, tenantInfo?.id]);
+
+  useEffect(() => {
+    if (!user || !slug) {
+      setTenantRole(null);
+      setTenantInfo(null);
+      return;
+    }
+
+    const loadTenantRole = async () => {
+      try {
+        const membership = await getTenantMembershipForSlug(user.id, slug);
+        setTenantRole(membership?.role || null);
+        setTenantInfo(membership?.tenant || null);
+      } catch (error) {
+        console.error("Error loading tenant role:", error);
+        setTenantRole(null);
+        setTenantInfo(null);
+      }
+    };
+
+    loadTenantRole();
+  }, [user, slug]);
+
+  const tenantBrand = useMemo(
+    () => buildTenantBrand(tenantInfo, baseSiteData),
+    [tenantInfo, baseSiteData]
+  );
+  const tenantFeatures = useMemo(
+    () => buildTenantFeatures(tenantInfo, baseSiteData),
+    [tenantInfo, baseSiteData]
+  );
+  const tenantTheme = useMemo(
+    () => buildTenantThemeVars(tenantInfo, baseSiteData),
+    [tenantInfo, baseSiteData]
+  );
 
   const access = useMemo(
-    () => getRoleAccess({ role: user?.role, projectCodes: accessibleProjectCodes }),
-    [user?.role, accessibleProjectCodes]
+    () =>
+      getRoleAccess({
+        role: tenantRole || user?.role,
+        projectModules: accessibleProjectModules,
+        features: tenantFeatures,
+      }),
+    [tenantRole, user?.role, accessibleProjectModules, tenantFeatures]
   );
 
   useEffect(() => {
@@ -81,10 +138,10 @@ export default function Dashboard() {
       setActivePage(access.defaultPage || "overview");
       return;
     }
-    if (activePage === "projects-jpp" && !access.allowedProjectCodes?.has("JPP")) {
+    if (activePage === "projects-jpp" && !access.allowedProjectModules?.has("jpp")) {
       setActivePage(access.defaultPage || "projects");
     }
-    if (activePage === "projects-jgf" && !access.allowedProjectCodes?.has("JGF")) {
+    if (activePage === "projects-jgf" && !access.allowedProjectModules?.has("jgf")) {
       setActivePage(access.defaultPage || "projects");
     }
   }, [activePage, access, user, projectAccessLoaded]);
@@ -108,35 +165,90 @@ export default function Dashboard() {
       : access?.defaultPage || "overview";
     switch (safePage) {
       case "overview":
-        return <DashboardOverview user={user} />;
+        return (
+          <DashboardOverview
+            user={user}
+            tenantId={tenantInfo?.id}
+            tenantBrand={tenantBrand}
+            tenantFeatures={tenantFeatures}
+          />
+        );
       case "contributions":
-        return <ContributionsPage user={user} />;
+        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="contribution" />;
       case "payouts":
-        return <WelfarePage user={user} initialTab="payouts" />;
+        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="payout" />;
       case "welfare":
-        return <WelfarePage user={user} initialTab="overview" />;
+        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="welfare" />;
       case "projects":
-        return <ProjectsPage user={user} setActivePage={setActivePage} />;
+        return (
+          <ProjectsPage
+            user={user}
+            setActivePage={setActivePage}
+            tenantId={tenantInfo?.id}
+            onManageProject={(project) => {
+              const raw = project?.module_key || project?.code || "";
+              const lower = String(raw).trim().toLowerCase();
+              if (lower === "jpp" || String(raw).trim().toUpperCase() === "JPP") {
+                setActiveJppProjectId(project?.id ?? null);
+              }
+              if (lower === "jgf" || String(raw).trim().toUpperCase() === "JGF") {
+                setActiveJgfProjectId(project?.id ?? null);
+              }
+            }}
+          />
+        );
       case "projects-jpp":
-        return <JppProjectPage user={user} />;
+        return (
+          <JppProjectPage
+            user={user}
+            tenantId={tenantInfo?.id}
+            activeProjectId={activeJppProjectId}
+            onProjectChange={setActiveJppProjectId}
+          />
+        );
       case "projects-jgf":
-        return <JgfProjectPage user={user} />;
+        return (
+          <JgfProjectPage
+            user={user}
+            tenantId={tenantInfo?.id}
+            activeProjectId={activeJgfProjectId}
+            onProjectChange={setActiveJgfProjectId}
+          />
+        );
       case "expenses":
-        return <ExpensesPage user={user} />;
+        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="expense" />;
       case "reports":
-        return <ReportsPage user={user} setActivePage={setActivePage} />;
+        return <ReportsPage user={user} setActivePage={setActivePage} tenantId={tenantInfo?.id} />;
       case "news":
-        return <NewsPage user={user} />;
+        return <NewsPage user={user} tenantId={tenantInfo?.id} />;
       case "documents":
-        return <DocumentsPage user={user} />;
+        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="all" />;
       case "meetings":
-        return <MeetingsPage user={user} />;
-      case "profile":
-        return <ProfilePage user={user} />;
+        return <MeetingsPage user={user} tenantId={tenantInfo?.id} />;
+      case "members":
+        return <MembersPage tenantInfo={tenantInfo} />;
+      case "settings":
+        return (
+          <SettingsPage
+            user={user}
+            onUserUpdate={setUser}
+            tenantId={tenantInfo?.id}
+            tenant={tenantInfo}
+            onTenantUpdated={setTenantInfo}
+            setActivePage={setActivePage}
+          />
+        );
       case "admin":
-        return <AdminPage user={user} />;
+        return (
+          <AdminPage
+            user={user}
+            tenantId={tenantInfo?.id}
+            tenantRole={tenantRole}
+            onTenantUpdated={setTenantInfo}
+          />
+        );
       default:
-        return <DashboardOverview user={user} />;
+        return <DashboardOverview user={user} tenantId={tenantInfo?.id} tenantBrand={tenantBrand} />;
     }
   };
 
@@ -146,6 +258,8 @@ export default function Dashboard() {
       setActivePage={setActivePage}
       user={user}
       access={access}
+      tenant={tenantBrand}
+      tenantTheme={tenantTheme}
     >
       {renderPage()}
     </DashboardLayout>

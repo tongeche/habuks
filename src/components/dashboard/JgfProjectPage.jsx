@@ -36,6 +36,7 @@ import {
   createJgfFarmingLog,
   updateJgfFarmingLog,
   deleteJgfFarmingLog,
+  getProjectsWithMembership,
 } from "../../lib/dataService.js";
 
 const parseNumberOrZero = (val) => {
@@ -101,9 +102,10 @@ const downloadDocs = [
   { key: "inventory", label: "Inventory Checklist" },
 ];
 
-export default function JgfProjectPage({ user }) {
+export default function JgfProjectPage({ user, tenantId, activeProjectId, onProjectChange }) {
   const today = new Date().toISOString().slice(0, 10);
   const canManage = ["admin", "superadmin", "project_manager"].includes(user?.role);
+  const canViewAllProjects = ["admin", "superadmin"].includes(user?.role);
 
   const initialBatchForm = {
     batch_code: "",
@@ -267,6 +269,9 @@ export default function JgfProjectPage({ user }) {
   const [errorMessage, setErrorMessage] = useState("");
   
   const hasBatches = batches.length > 0;
+  const [moduleProjects, setModuleProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectsLoading, setProjectsLoading] = useState(true);
 
   const handlePrint = (sheetKey) => {
     if (typeof window === "undefined") {
@@ -281,23 +286,124 @@ export default function JgfProjectPage({ user }) {
     setErrorMessage("");
   };
 
+  const resolveJgfProject = (project) => {
+    const raw = project?.module_key || project?.code || "";
+    const lower = String(raw).trim().toLowerCase();
+    if (lower === "jgf") return true;
+    return String(raw).trim().toUpperCase() === "JGF";
+  };
+
+  const handleProjectChange = (event) => {
+    const nextId = event.target.value;
+    setSelectedProjectId(nextId);
+    if (typeof onProjectChange === "function") {
+      onProjectChange(nextId ? Number(nextId) : null);
+    }
+  };
+
+  useEffect(() => {
+    const loadProjects = async () => {
+      if (!tenantId || !user?.id) {
+        setModuleProjects([]);
+        setSelectedProjectId("");
+        setProjectsLoading(false);
+        return;
+      }
+      setProjectsLoading(true);
+      try {
+        const data = await getProjectsWithMembership(user?.id, tenantId);
+        const moduleList = (data || []).filter(resolveJgfProject);
+        const accessible = canViewAllProjects
+          ? moduleList
+          : moduleList.filter(
+              (project) => project.membership || project.project_leader === user?.id
+            );
+        setModuleProjects(accessible);
+      } catch (error) {
+        console.error("Error loading JGF projects:", error);
+        setModuleProjects([]);
+      } finally {
+        setProjectsLoading(false);
+      }
+    };
+    loadProjects();
+  }, [user?.id, tenantId, canViewAllProjects]);
+
+  useEffect(() => {
+    if (projectsLoading) {
+      return;
+    }
+    if (moduleProjects.length === 0) {
+      if (selectedProjectId) {
+        setSelectedProjectId("");
+      }
+      if (typeof onProjectChange === "function") {
+        onProjectChange(null);
+      }
+      return;
+    }
+    const activeId = activeProjectId ? String(activeProjectId) : "";
+    const activeValid = activeId && moduleProjects.some((p) => String(p.id) === activeId);
+    const currentValid =
+      selectedProjectId && moduleProjects.some((p) => String(p.id) === selectedProjectId);
+    const nextId = activeValid
+      ? activeId
+      : currentValid
+        ? selectedProjectId
+        : String(moduleProjects[0].id);
+    if (nextId !== selectedProjectId) {
+      setSelectedProjectId(nextId);
+    }
+    if (typeof onProjectChange === "function") {
+      onProjectChange(nextId ? Number(nextId) : null);
+    }
+  }, [moduleProjects, activeProjectId, projectsLoading]);
+
+  const selectedProject = useMemo(() => {
+    if (!selectedProjectId) return null;
+    return moduleProjects.find((project) => String(project.id) === selectedProjectId) || null;
+  }, [moduleProjects, selectedProjectId]);
+
   const loadJgfData = async (showLoading = true) => {
     if (showLoading) {
       setLoading(true);
     }
     try {
       resetMessages();
+      if (!selectedProjectId) {
+        setBatches([]);
+        setKpis([]);
+        setProductionLogs([]);
+        setSales([]);
+        setExpenses([]);
+        setInventory([]);
+        setPurchases([]);
+        setLandLeases([]);
+        setCropCycles([]);
+        setFarmingLogs([]);
+        setModuleCounts({
+          productionLogs: 0,
+          sales: 0,
+          expenses: 0,
+          inventory: 0,
+          purchases: 0,
+          landLeases: 0,
+          cropCycles: 0,
+          farmingLogs: 0,
+        });
+        return;
+      }
       const results = await Promise.allSettled([
-        getJgfBatches(),
-        getJgfBatchKpis(),
-        getJgfProductionLogs(),
-        getJgfSales(),
-        getJgfExpenses(),
-        getJgfInventory(),
-        getJgfPurchases(),
-        getJgfLandLeases(),
-        getJgfCropCycles(),
-        getJgfFarmingLogs(),
+        getJgfBatches(tenantId, selectedProjectId),
+        getJgfBatchKpis(tenantId, selectedProjectId),
+        getJgfProductionLogs(tenantId, selectedProjectId),
+        getJgfSales(tenantId, selectedProjectId),
+        getJgfExpenses(tenantId, selectedProjectId),
+        getJgfInventory(tenantId, selectedProjectId),
+        getJgfPurchases(tenantId, selectedProjectId),
+        getJgfLandLeases(tenantId, selectedProjectId),
+        getJgfCropCycles(tenantId, selectedProjectId),
+        getJgfFarmingLogs(undefined, tenantId, selectedProjectId),
       ]);
 
       const [
@@ -366,7 +472,7 @@ export default function JgfProjectPage({ user }) {
       }
     } catch (error) {
       console.error("Error loading JGF data:", error);
-      setErrorMessage("Failed to load JGF data.");
+      setErrorMessage("Failed to load project data.");
     } finally {
       if (showLoading) {
         setLoading(false);
@@ -376,7 +482,7 @@ export default function JgfProjectPage({ user }) {
 
   useEffect(() => {
     loadJgfData(true);
-  }, []);
+  }, [tenantId, selectedProjectId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -440,6 +546,10 @@ export default function JgfProjectPage({ user }) {
   const handleBatchSubmit = async (e) => {
     e.preventDefault();
     if (!canManage) return;
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     try {
       resetMessages();
@@ -463,11 +573,11 @@ export default function JgfProjectPage({ user }) {
       }
 
       if (editingBatchId) {
-        await updateJgfBatch(editingBatchId, payload);
+        await updateJgfBatch(editingBatchId, payload, tenantId);
         setStatusMessage("Batch updated successfully.");
       } else {
-        await createJgfBatch({ ...payload, created_by: user.auth_id });
-        setStatusMessage("New JGF batch created.");
+        await createJgfBatch({ ...payload, created_by: user.auth_id }, tenantId, selectedProjectId);
+        setStatusMessage(`New ${selectedProject?.name || "project"} batch created.`);
         setBatchForm(initialBatchForm);
       }
       setEditingBatchId(null);
@@ -503,7 +613,7 @@ export default function JgfProjectPage({ user }) {
     if (!canManage || !window.confirm("Delete this batch? All related records will be removed.")) return;
     try {
       resetMessages();
-      await deleteJgfBatch(batchId);
+      await deleteJgfBatch(batchId, tenantId);
       setStatusMessage("Batch deleted.");
       if (selectedBatchId === String(batchId)) {
         setSelectedBatchId("");
@@ -519,6 +629,10 @@ export default function JgfProjectPage({ user }) {
   const handleSalesSubmit = async (e) => {
     e.preventDefault();
     if (!canManage) return;
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     try {
       resetMessages();
@@ -542,10 +656,10 @@ export default function JgfProjectPage({ user }) {
       }
 
       if (editingSalesId) {
-        await updateJgfSale(editingSalesId, payload);
+        await updateJgfSale(editingSalesId, payload, tenantId);
         setStatusMessage("Sale updated successfully.");
       } else {
-        await createJgfSale({ ...payload, created_by: user.auth_id });
+        await createJgfSale({ ...payload, created_by: user.auth_id }, tenantId, selectedProjectId);
         setStatusMessage("New sale recorded.");
         setSalesForm({
           ...initialSalesForm,
@@ -585,7 +699,7 @@ export default function JgfProjectPage({ user }) {
     if (!canManage || !window.confirm("Delete this sale record?")) return;
     try {
       resetMessages();
-      await deleteJgfSale(saleId);
+      await deleteJgfSale(saleId, tenantId);
       setStatusMessage("Sale record deleted.");
       loadJgfData(false);
     } catch (err) {
@@ -598,6 +712,10 @@ export default function JgfProjectPage({ user }) {
   const handleLandLeaseSubmit = async (e) => {
     e.preventDefault();
     if (!canManage) return;
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     try {
       resetMessages();
@@ -620,10 +738,10 @@ export default function JgfProjectPage({ user }) {
       }
 
       if (editingLandLeaseId) {
-        await updateJgfLandLease(editingLandLeaseId, payload);
+        await updateJgfLandLease(editingLandLeaseId, payload, tenantId);
         setStatusMessage("Land lease updated successfully.");
       } else {
-        await createJgfLandLease({ ...payload, created_by: user.auth_id });
+        await createJgfLandLease({ ...payload, created_by: user.auth_id }, tenantId, selectedProjectId);
         setStatusMessage("New land lease created.");
         setLandLeaseForm(initialLandLeaseForm);
       }
@@ -658,7 +776,7 @@ export default function JgfProjectPage({ user }) {
     if (!canManage || !window.confirm("Delete this lease? Related crop cycles will be affected.")) return;
     try {
       resetMessages();
-      await deleteJgfLandLease(leaseId);
+      await deleteJgfLandLease(leaseId, tenantId);
       setStatusMessage("Land lease deleted.");
       loadJgfData(false);
     } catch (err) {
@@ -671,6 +789,10 @@ export default function JgfProjectPage({ user }) {
   const handleCropCycleSubmit = async (e) => {
     e.preventDefault();
     if (!canManage) return;
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     try {
       resetMessages();
@@ -692,10 +814,10 @@ export default function JgfProjectPage({ user }) {
       }
 
       if (editingCropCycleId) {
-        await updateJgfCropCycle(editingCropCycleId, payload);
+        await updateJgfCropCycle(editingCropCycleId, payload, tenantId);
         setStatusMessage("Crop cycle updated successfully.");
       } else {
-        await createJgfCropCycle({ ...payload, created_by: user.auth_id });
+        await createJgfCropCycle({ ...payload, created_by: user.auth_id }, tenantId, selectedProjectId);
         setStatusMessage("New crop cycle created.");
         setCropCycleForm(initialCropCycleForm);
       }
@@ -730,7 +852,7 @@ export default function JgfProjectPage({ user }) {
     if (!canManage || !window.confirm("Delete this crop cycle?")) return;
     try {
       resetMessages();
-      await deleteJgfCropCycle(cycleId);
+      await deleteJgfCropCycle(cycleId, tenantId);
       setStatusMessage("Crop cycle deleted.");
       loadJgfData(false);
     } catch (err) {
@@ -743,6 +865,10 @@ export default function JgfProjectPage({ user }) {
   const handleFarmingLogSubmit = async (e) => {
     e.preventDefault();
     if (!canManage) return;
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     try {
       resetMessages();
@@ -764,10 +890,10 @@ export default function JgfProjectPage({ user }) {
       }
 
       if (editingFarmingLogId) {
-        await updateJgfFarmingLog(editingFarmingLogId, payload);
+        await updateJgfFarmingLog(editingFarmingLogId, payload, tenantId);
         setStatusMessage("Farming log updated successfully.");
       } else {
-        await createJgfFarmingLog({ ...payload, created_by: user.auth_id });
+        await createJgfFarmingLog({ ...payload, created_by: user.auth_id }, tenantId, selectedProjectId);
         setStatusMessage("New activity logged.");
         setFarmingLogForm({
             ...initialFarmingLogForm,
@@ -805,7 +931,7 @@ export default function JgfProjectPage({ user }) {
     if (!canManage || !window.confirm("Delete this activity log?")) return;
     try {
       resetMessages();
-      await deleteJgfFarmingLog(logId);
+      await deleteJgfFarmingLog(logId, tenantId);
       setStatusMessage("Activity log deleted.");
       loadJgfData(false);
     } catch (err) {
@@ -817,11 +943,22 @@ export default function JgfProjectPage({ user }) {
   // Other section renderers and logic similar to JPP page would go here
   // For brevity, defaulting to a simplified view for now
 
-  if (loading) {
+  if (projectsLoading || loading) {
     return (
       <div className="dashboard-loading">
         <div className="loading-spinner"></div>
-        <p>Loading JGF project data...</p>
+        <p>Loading {selectedProject?.name || "groundnut"} project data...</p>
+      </div>
+    );
+  }
+
+  if (!selectedProjectId && moduleProjects.length === 0) {
+    return (
+      <div className="jpp-page">
+        <div className="admin-card jpp-empty-card">
+          <h3>No groundnut projects yet</h3>
+          <p className="admin-help">Create a project to start tracking production.</p>
+        </div>
       </div>
     );
   }
@@ -863,8 +1000,27 @@ export default function JgfProjectPage({ user }) {
     <div className="jpp-page">
       <header className="page-header">
         <div className="page-header-text">
-          <h1>Groundnut Foods Project (JGF)</h1>
-          <p>Value-addition agribusiness & nutrition</p>
+          <h1>{selectedProject?.name || "Groundnut Foods Project"}</h1>
+          <p>
+            {selectedProject?.tagline ||
+              selectedProject?.short_description ||
+              "Value-addition agribusiness & nutrition"}
+          </p>
+        </div>
+        <div className="jpp-project-selector">
+          <label htmlFor="jgf-project-select">Project</label>
+          <select
+            id="jgf-project-select"
+            value={selectedProjectId}
+            onChange={handleProjectChange}
+            disabled={moduleProjects.length <= 1}
+          >
+            {moduleProjects.map((project) => (
+              <option key={project.id} value={String(project.id)}>
+                {project.name}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="jpp-header-badges">
            <button 
@@ -1002,7 +1158,7 @@ export default function JgfProjectPage({ user }) {
                         value={batchForm.batch_code}
                         onChange={(e) => setBatchForm({ ...batchForm, batch_code: e.target.value })}
                         required
-                        placeholder="e.g. JGF-2026-01"
+                        placeholder={`e.g. ${selectedProject?.code || "JGF"}-2026-01`}
                       />
                     </div>
                     <div className="admin-form-field">

@@ -17,6 +17,7 @@ import {
   createProjectExpenseItem,
   getProjectProducts,
   getProjectExpenseItems,
+  getProjectsWithMembership,
   uploadBirdPhoto,
   updateProjectExpenseItem,
   updateJppBatch,
@@ -81,9 +82,10 @@ const toDateKey = (value) => {
   return String(value).slice(0, 10);
 };
 
-export default function JppProjectPage({ user }) {
+export default function JppProjectPage({ user, tenantId, activeProjectId, onProjectChange }) {
   const today = new Date().toISOString().slice(0, 10);
   const canManage = ["admin", "superadmin", "project_manager"].includes(user?.role);
+  const canViewAllProjects = ["admin", "superadmin"].includes(user?.role);
 
   const initialBatchForm = {
     batch_code: "",
@@ -208,6 +210,9 @@ export default function JppProjectPage({ user }) {
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const hasBatches = batches.length > 0;
+  const [moduleProjects, setModuleProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [projectsLoading, setProjectsLoading] = useState(true);
 
   const handlePrint = (sheetKey) => {
     if (typeof window === "undefined") {
@@ -222,21 +227,111 @@ export default function JppProjectPage({ user }) {
     setErrorMessage("");
   };
 
+  const resolveJppProject = (project) => {
+    const raw = project?.module_key || project?.code || "";
+    const lower = String(raw).trim().toLowerCase();
+    if (lower === "jpp") return true;
+    return String(raw).trim().toUpperCase() === "JPP";
+  };
+
+  const handleProjectChange = (event) => {
+    const nextId = event.target.value;
+    setSelectedProjectId(nextId);
+    if (typeof onProjectChange === "function") {
+      onProjectChange(nextId ? Number(nextId) : null);
+    }
+  };
+
+  useEffect(() => {
+    const loadProjects = async () => {
+      if (!tenantId || !user?.id) {
+        setModuleProjects([]);
+        setSelectedProjectId("");
+        setProjectsLoading(false);
+        return;
+      }
+      setProjectsLoading(true);
+      try {
+        const data = await getProjectsWithMembership(user?.id, tenantId);
+        const moduleList = (data || []).filter(resolveJppProject);
+        const accessible = canViewAllProjects
+          ? moduleList
+          : moduleList.filter(
+              (project) => project.membership || project.project_leader === user?.id
+            );
+        setModuleProjects(accessible);
+      } catch (error) {
+        console.error("Error loading JPP projects:", error);
+        setModuleProjects([]);
+      } finally {
+        setProjectsLoading(false);
+      }
+    };
+    loadProjects();
+  }, [user?.id, tenantId, canViewAllProjects]);
+
+  useEffect(() => {
+    if (projectsLoading) {
+      return;
+    }
+    if (moduleProjects.length === 0) {
+      if (selectedProjectId) {
+        setSelectedProjectId("");
+      }
+      if (typeof onProjectChange === "function") {
+        onProjectChange(null);
+      }
+      return;
+    }
+    const activeId = activeProjectId ? String(activeProjectId) : "";
+    const activeValid = activeId && moduleProjects.some((p) => String(p.id) === activeId);
+    const currentValid =
+      selectedProjectId && moduleProjects.some((p) => String(p.id) === selectedProjectId);
+    const nextId = activeValid
+      ? activeId
+      : currentValid
+        ? selectedProjectId
+        : String(moduleProjects[0].id);
+    if (nextId !== selectedProjectId) {
+      setSelectedProjectId(nextId);
+    }
+    if (typeof onProjectChange === "function") {
+      onProjectChange(nextId ? Number(nextId) : null);
+    }
+  }, [moduleProjects, activeProjectId, projectsLoading]);
+
+  const selectedProject = useMemo(() => {
+    if (!selectedProjectId) return null;
+    return moduleProjects.find((project) => String(project.id) === selectedProjectId) || null;
+  }, [moduleProjects, selectedProjectId]);
+
   const loadJppData = async (showLoading = true) => {
     if (showLoading) {
       setLoading(true);
     }
     try {
       resetMessages();
+      if (!selectedProjectId) {
+        setBatches([]);
+        setKpis([]);
+        setDailyLogs([]);
+        setWeeklyGrowth([]);
+        setBirdProducts([]);
+        setBirds([]);
+        setExpenses([]);
+        setExpenseItems([]);
+        setModuleCounts({ dailyLogs: 0, weeklyGrowth: 0, expenses: 0 });
+        return;
+      }
       const results = await Promise.allSettled([
-        getJppBatches(),
-        getJppBatchKpis(),
-        getJppDailyLogs(),
-        getJppWeeklyGrowth(),
-        getJppExpenses(),
-        getProjectExpenseItems("JPP"),
-        getProjectProducts("JPP", { trackingMode: "individual" }),
-        getJppBirds(),
+        getJppBatches(tenantId, selectedProjectId),
+        getJppBatchKpis(tenantId, selectedProjectId),
+        getJppDailyLogs(tenantId, selectedProjectId),
+        getJppWeeklyGrowth(tenantId, selectedProjectId),
+        getJppExpenses(tenantId, selectedProjectId),
+        getProjectExpenseItems(selectedProjectId, tenantId),
+        getProjectProducts(selectedProjectId, { trackingMode: "individual" }, tenantId),
+        getJppBirds(tenantId, selectedProjectId),
       ]);
 
       const [
@@ -295,7 +390,7 @@ export default function JppProjectPage({ user }) {
       }
     } catch (error) {
       console.error("Error loading JPP data:", error);
-      setErrorMessage("Failed to load JPP data.");
+      setErrorMessage("Failed to load project data.");
     } finally {
       if (showLoading) {
         setLoading(false);
@@ -305,7 +400,7 @@ export default function JppProjectPage({ user }) {
 
   useEffect(() => {
     loadJppData(true);
-  }, []);
+  }, [tenantId, selectedProjectId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -792,7 +887,9 @@ export default function JppProjectPage({ user }) {
       resetMessages();
       setSavingExpenseItems(true);
       const results = await Promise.allSettled(
-        changes.map((change) => updateProjectExpenseItem(change.id, { label: change.nextLabel }))
+        changes.map((change) =>
+          updateProjectExpenseItem(change.id, { label: change.nextLabel }, tenantId)
+        )
       );
 
       const updatedMap = new Map();
@@ -839,6 +936,10 @@ export default function JppProjectPage({ user }) {
     if (addingExpenseItem) {
       return;
     }
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     try {
       resetMessages();
@@ -856,10 +957,14 @@ export default function JppProjectPage({ user }) {
         nextLabel = `New item ${counter}`;
       }
 
-      const created = await createProjectExpenseItem("JPP", {
-        label: nextLabel,
-        display_order: expenseItems.length + 1,
-      });
+      const created = await createProjectExpenseItem(
+        selectedProjectId,
+        {
+          label: nextLabel,
+          display_order: expenseItems.length + 1,
+        },
+        tenantId
+      );
 
       setExpenseItems((prev) => [...prev, created]);
       setExpenseItemEdits((prev) => ({ ...prev, [created.id]: created.label || nextLabel }));
@@ -890,6 +995,10 @@ export default function JppProjectPage({ user }) {
   const handleBatchSubmit = async (event) => {
     event.preventDefault();
     resetMessages();
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     if (!batchForm.batch_code.trim()) {
       setErrorMessage("Batch code is required.");
@@ -926,10 +1035,10 @@ export default function JppProjectPage({ user }) {
 
     try {
       if (editingBatchId) {
-        await updateJppBatch(editingBatchId, payload);
+        await updateJppBatch(editingBatchId, payload, tenantId);
         setStatusMessage("Batch updated successfully.");
       } else {
-        await createJppBatch(payload);
+        await createJppBatch(payload, tenantId, selectedProjectId);
         setStatusMessage("Batch created successfully.");
       }
       setBatchForm(initialBatchForm);
@@ -944,6 +1053,10 @@ export default function JppProjectPage({ user }) {
   const handleDailySubmit = async (event) => {
     event.preventDefault();
     resetMessages();
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     if (!dailyForm.batch_id) {
       setErrorMessage("Select a batch for the daily log.");
@@ -978,10 +1091,10 @@ export default function JppProjectPage({ user }) {
 
     try {
       if (editingDailyId) {
-        await updateJppDailyLog(editingDailyId, payload);
+        await updateJppDailyLog(editingDailyId, payload, tenantId);
         setStatusMessage("Daily log updated successfully.");
       } else {
-        await createJppDailyLog(payload);
+        await createJppDailyLog(payload, tenantId, selectedProjectId);
         setStatusMessage("Daily log added successfully.");
       }
       setDailyForm(initialDailyForm);
@@ -996,6 +1109,10 @@ export default function JppProjectPage({ user }) {
   const handleWeeklySubmit = async (event) => {
     event.preventDefault();
     resetMessages();
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     if (!weeklyForm.batch_id) {
       setErrorMessage("Select a batch for weekly growth.");
@@ -1024,10 +1141,10 @@ export default function JppProjectPage({ user }) {
 
     try {
       if (editingWeeklyId) {
-        await updateJppWeeklyGrowth(editingWeeklyId, payload);
+        await updateJppWeeklyGrowth(editingWeeklyId, payload, tenantId);
         setStatusMessage("Weekly growth entry updated.");
       } else {
-        await createJppWeeklyGrowth(payload);
+        await createJppWeeklyGrowth(payload, tenantId, selectedProjectId);
         setStatusMessage("Weekly growth entry added.");
       }
       setWeeklyForm(initialWeeklyForm);
@@ -1042,6 +1159,10 @@ export default function JppProjectPage({ user }) {
   const handleBirdSubmit = async (event) => {
     event.preventDefault();
     resetMessages();
+    if (!selectedProjectId) {
+      setErrorMessage("Select a project first.");
+      return;
+    }
 
     if (!birdForm.product_id) {
       setErrorMessage("Select a bird product.");
@@ -1058,7 +1179,8 @@ export default function JppProjectPage({ user }) {
     try {
       let photoPath = null;
       if (birdPhoto) {
-        const upload = await uploadBirdPhoto(birdPhoto, { folder: "jpp" });
+        const folder = `tenants/${tenantId || "global"}/projects/${selectedProjectId}/birds`;
+        const upload = await uploadBirdPhoto(birdPhoto, { folder });
         photoPath = upload?.path || upload?.publicUrl || null;
       }
 
@@ -1082,7 +1204,7 @@ export default function JppProjectPage({ user }) {
         description: normalizeOptional(birdForm.description),
       };
 
-      await createJppBird(payload);
+      await createJppBird(payload, tenantId, selectedProjectId);
       const resetDate = new Date().toISOString().slice(0, 10);
       const fallbackProductId = birdForm.product_id || birdProducts[0]?.id || "";
       setBirdForm({
@@ -1180,7 +1302,7 @@ export default function JppProjectPage({ user }) {
     }
     resetMessages();
     try {
-      await deleteJppBatch(batchId);
+      await deleteJppBatch(batchId, tenantId);
       setStatusMessage("Batch deleted.");
       setOpenBatchActionId(null);
       await loadJppData(false);
@@ -1195,7 +1317,7 @@ export default function JppProjectPage({ user }) {
     }
     resetMessages();
     try {
-      await deleteJppDailyLog(logId);
+      await deleteJppDailyLog(logId, tenantId);
       setStatusMessage("Daily log deleted.");
       await loadJppData(false);
     } catch (error) {
@@ -1209,7 +1331,7 @@ export default function JppProjectPage({ user }) {
     }
     resetMessages();
     try {
-      await deleteJppWeeklyGrowth(entryId);
+      await deleteJppWeeklyGrowth(entryId, tenantId);
       setStatusMessage("Weekly growth entry deleted.");
       await loadJppData(false);
     } catch (error) {
@@ -1235,12 +1357,23 @@ export default function JppProjectPage({ user }) {
     setEditingWeeklyId(null);
   };
 
-  if (loading) {
+  if (projectsLoading || loading) {
     return (
       <div className="jpp-page">
         <div className="loading-state">
           <div className="loading-spinner"></div>
-          <p>Loading JPP project data...</p>
+          <p>Loading {selectedProject?.name || "poultry"} project data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!selectedProjectId && moduleProjects.length === 0) {
+    return (
+      <div className="jpp-page">
+        <div className="admin-card jpp-empty-card">
+          <h3>No poultry projects yet</h3>
+          <p className="admin-help">Create a project to start tracking batches and birds.</p>
         </div>
       </div>
     );
@@ -1250,8 +1383,27 @@ export default function JppProjectPage({ user }) {
     <div className={`jpp-page ${activeTab === "overview" ? "is-overview" : ""}`}>
       <div className="page-header">
         <div className="page-header-text">
-          <h1>JPP Poultry Project</h1>
-          <p>Track batches, daily logs, and growth.</p>
+          <h1>{selectedProject?.name || "Poultry Project"}</h1>
+          <p>
+            {selectedProject?.tagline ||
+              selectedProject?.short_description ||
+              "Track batches, daily logs, and growth."}
+          </p>
+        </div>
+        <div className="jpp-project-selector">
+          <label htmlFor="jpp-project-select">Project</label>
+          <select
+            id="jpp-project-select"
+            value={selectedProjectId}
+            onChange={handleProjectChange}
+            disabled={moduleProjects.length <= 1}
+          >
+            {moduleProjects.map((project) => (
+              <option key={project.id} value={String(project.id)}>
+                {project.name}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="jpp-header-badges">
           <span className="jpp-badge">
@@ -1331,14 +1483,14 @@ export default function JppProjectPage({ user }) {
               <div className="jpp-mobile-hero-media">
                 <img
                   src="/assets/jpp_farm-bg.png"
-                  alt="JPP poultry project"
+                  alt={`${selectedProject?.name || "Poultry project"} cover`}
                   loading="lazy"
                 />
                 <div className="jpp-mobile-hero-overlay">
                   <div className="jpp-mobile-hero-top">
                     <span className="jpp-mobile-hero-pill">
                       <Icon name="location" size={14} />
-                      JPP Poultry Farm
+                      {selectedProject?.name || "Poultry Project"}
                     </span>
                     <span className="jpp-mobile-hero-pill is-muted">
                       <Icon name="calendar" size={14} />
@@ -1355,13 +1507,17 @@ export default function JppProjectPage({ user }) {
               </div>
               <div className="jpp-mobile-project-card">
                 <div className="jpp-mobile-project-header">
-                  <h2>JPP Poultry Project</h2>
+                  <h2>{selectedProject?.name || "Poultry Project"}</h2>
                   <span className="jpp-mobile-project-chip">
                     <Icon name="check-circle" size={14} />
                     Active
                   </span>
                 </div>
-                <p>Track batches, daily logs, and growth.</p>
+                <p>
+                  {selectedProject?.short_description ||
+                    selectedProject?.tagline ||
+                    "Track batches, daily logs, and growth."}
+                </p>
                 <div className="jpp-mobile-project-meta">
                   <span>
                     <Icon name="folder" size={14} />
@@ -1532,11 +1688,13 @@ export default function JppProjectPage({ user }) {
                 {selectedDownloadDoc === "weekly" && (
                   <div
                     className={`jpp-print-sheet${printSheet === "weekly" ? " is-print" : ""}`}
-                    aria-label="JPP Layers Weekly Sheet"
+                    aria-label={`${selectedProject?.name || "Poultry project"} Weekly Sheet`}
                   >
                     <div className="jpp-sheet-header">
                       <div>
-                        <h2 className="jpp-sheet-title">JPP Layers - Weekly</h2>
+                        <h2 className="jpp-sheet-title">
+                          {selectedProject?.name || "Poultry Project"} - Weekly
+                        </h2>
                         <p className="jpp-sheet-subtitle">
                           Weekly checklist (tick what is done).
                         </p>
@@ -1646,11 +1804,13 @@ export default function JppProjectPage({ user }) {
                 {selectedDownloadDoc === "expenses" && (
                   <div
                     className={`jpp-print-sheet${printSheet === "expenses" ? " is-print" : ""}`}
-                    aria-label="JPP Expense Log Sheet"
+                    aria-label={`${selectedProject?.name || "Poultry project"} Expense Log Sheet`}
                   >
                     <div className="jpp-sheet-header">
                       <div>
-                        <h2 className="jpp-sheet-title">JPP Expense Log - Weekly</h2>
+                        <h2 className="jpp-sheet-title">
+                          {selectedProject?.name || "Poultry Project"} Expense Log - Weekly
+                        </h2>
                         <p className="jpp-sheet-subtitle">
                           Write each expense and tick receipt.
                         </p>
@@ -1786,11 +1946,13 @@ export default function JppProjectPage({ user }) {
                     className={`jpp-print-sheet${
                       printSheet === "feed-inventory" ? " is-print" : ""
                     }`}
-                    aria-label="JPP Feed Inventory Sheet"
+                    aria-label={`${selectedProject?.name || "Poultry project"} Feed Inventory Sheet`}
                   >
                     <div className="jpp-sheet-header">
                       <div>
-                        <h2 className="jpp-sheet-title">JPP Feed Inventory - Weekly</h2>
+                        <h2 className="jpp-sheet-title">
+                          {selectedProject?.name || "Poultry Project"} Feed Inventory - Weekly
+                        </h2>
                         <p className="jpp-sheet-subtitle">
                           Track opening stock, deliveries, usage, and closing stock.
                         </p>
@@ -1913,7 +2075,7 @@ export default function JppProjectPage({ user }) {
                     name="batch_code"
                     value={batchForm.batch_code}
                     onChange={handleBatchChange}
-                    placeholder="JPP-2026-01-A"
+                    placeholder={`${selectedProject?.code || "JPP"}-2026-01-A`}
                   />
                 </div>
                 <div className="admin-form-field">
@@ -3087,7 +3249,10 @@ export default function JppProjectPage({ user }) {
               <div className="empty-state">
                 <Icon name="folder" size={40} />
                 <h3>No bird products yet</h3>
-                <p>Create a JPP product with tracking mode "individual" to start adding birds.</p>
+                <p>
+                  Create a product with tracking mode "individual" to start adding birds for{" "}
+                  {selectedProject?.name || "this project"}.
+                </p>
               </div>
             ) : (
               <form className="admin-form" onSubmit={handleBirdSubmit}>
@@ -3120,15 +3285,15 @@ export default function JppProjectPage({ user }) {
                       ))}
                     </select>
                   </div>
-                  <div className="admin-form-field">
-                    <label>Tag ID</label>
-                    <input
-                      name="tag_id"
-                      value={birdForm.tag_id}
-                      onChange={handleBirdChange}
-                      placeholder="JPP-001"
-                    />
-                  </div>
+                <div className="admin-form-field">
+                  <label>Tag ID</label>
+                  <input
+                    name="tag_id"
+                    value={birdForm.tag_id}
+                    onChange={handleBirdChange}
+                    placeholder={`${selectedProject?.code || "JPP"}-001`}
+                  />
+                </div>
                   <div className="admin-form-field">
                     <label>Bird Name</label>
                     <input
@@ -3383,7 +3548,7 @@ export default function JppProjectPage({ user }) {
                       const bio =
                         bird.description?.trim() ||
                         bird.notes?.trim() ||
-                        "JPP bird profile for tracking health, growth, and status updates.";
+                        `Bird profile for tracking health, growth, and status updates for ${selectedProject?.name || "this project"}.`;
 
                       return (
                         <article className="jpp-bird-card" key={bird.id}>

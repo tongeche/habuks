@@ -1,9 +1,56 @@
 /**
  * Get all members with their total welfare transaction amount (for admin UI)
  */
-export async function getMembersWithTotalWelfare() {
+export async function getMembersWithTotalWelfare(tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
+  }
+
+  if (tenantId) {
+    const { data: membershipRows, error: membershipError } = await supabase
+      .from("tenant_members")
+      .select("member_id")
+      .eq("tenant_id", tenantId);
+
+    if (membershipError) {
+      throw membershipError;
+    }
+
+    const memberIds = (membershipRows || []).map((row) => row.member_id).filter(Boolean);
+    if (!memberIds.length) {
+      return [];
+    }
+
+    const { data: memberData, error: memberError } = await supabase
+      .from("members")
+      .select("id, name, email, phone_number, role, status, join_date")
+      .in("id", memberIds)
+      .order("name", { ascending: true });
+
+    if (memberError) {
+      throw memberError;
+    }
+
+    const { data: welfareRows, error: welfareError } = await supabase
+      .from("welfare_transactions")
+      .select("member_id, amount")
+      .in("member_id", memberIds)
+      .eq("tenant_id", tenantId);
+
+    if (welfareError) {
+      throw welfareError;
+    }
+
+    const totals = new Map();
+    (welfareRows || []).forEach((row) => {
+      const current = totals.get(row.member_id) || 0;
+      totals.set(row.member_id, current + Number(row.amount || 0));
+    });
+
+    return (memberData || []).map((member) => ({
+      ...member,
+      total_welfare: totals.get(member.id) || 0,
+    }));
   }
 
   const fullSelect = "id, name, email, phone_number, role, status, join_date, total_welfare";
@@ -30,6 +77,51 @@ export async function getMembersWithTotalWelfare() {
   return data || [];
 }
 import { supabase, isSupabaseConfigured } from "./supabase.js";
+
+let supabaseFallbackEnabled = false;
+
+const shouldUseSupabase = () =>
+  isSupabaseConfigured && supabase && (!import.meta.env.DEV || !supabaseFallbackEnabled);
+
+const isMissingColumnError = (error, columnName) => {
+  if (!error || !columnName) return false;
+  const message = String(error?.message || error?.details || "").toLowerCase();
+  const column = String(columnName).toLowerCase();
+  return message.includes("does not exist") && message.includes(column);
+};
+
+const isMissingRelationError = (error, relationName = "") => {
+  if (!error) return false;
+  const code = String(error?.code || "");
+  const message = String(error?.message || error?.details || "").toLowerCase();
+  const relation = String(relationName || "").toLowerCase();
+  if (code === "42P01") return true;
+  if (!message.includes("relation") || !message.includes("does not exist")) {
+    return false;
+  }
+  if (!relation) return true;
+  return message.includes(relation);
+};
+
+const markSupabaseUnavailable = (error) => {
+  if (!import.meta.env.DEV || !error) return;
+  const status = Number(error?.status || error?.statusCode || 0);
+  const code = String(error?.code || "");
+  const message = String(error?.message || error?.details || "").toLowerCase();
+  if (
+    status >= 400 ||
+    code.startsWith("42") ||
+    message.includes("column") ||
+    message.includes("relation")
+  ) {
+    supabaseFallbackEnabled = true;
+  }
+};
+
+/** Reset the dev-mode Supabase fallback flag (call after successful auth). */
+export function resetSupabaseFallback() {
+  supabaseFallbackEnabled = false;
+}
 
 /**
  * Get the current authenticated user's member profile
@@ -100,6 +192,13 @@ export async function getCurrentMember() {
     } else if (linkedMember) {
       return linkedMember;
     }
+
+    const { data: rpcLinked, error: rpcError } = await supabase.rpc("link_member_profile");
+    if (rpcError) {
+      console.error("Error linking member profile via RPC:", rpcError);
+    } else if (rpcLinked) {
+      return rpcLinked;
+    }
   }
 
   const payload = buildMemberPayload(user);
@@ -147,8 +246,8 @@ export async function getCurrentMember() {
 /**
  * Get contributions for a specific member
  */
-export async function getMemberContributions(memberId) {
-  // Mock contributions for development (Timothy's 2 contributions)
+export async function getMemberContributions(memberId, tenantId) {
+  // Mock contributions for development
   const mockContributions = [
     { id: 1, member_id: memberId, amount: 500, date: '2025-12-15', cycle_number: 1 },
     { id: 2, member_id: memberId, amount: 500, date: '2025-12-30', cycle_number: 2 },
@@ -156,11 +255,13 @@ export async function getMemberContributions(memberId) {
 
   if (!isSupabaseConfigured || !supabase) return mockContributions;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("contributions")
     .select("*")
     .eq("member_id", memberId)
     .order("date", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching contributions:", error);
@@ -173,14 +274,16 @@ export async function getMemberContributions(memberId) {
 /**
  * Get contribution split transactions for a specific member
  */
-export async function getContributionSplits(memberId) {
+export async function getContributionSplits(memberId, tenantId) {
   if (!isSupabaseConfigured || !supabase) return [];
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("contribution_splits")
     .select("*")
     .eq("member_id", memberId)
     .order("date", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching contribution splits:", error);
@@ -193,32 +296,18 @@ export async function getContributionSplits(memberId) {
 /**
  * Get payout schedule with member names
  */
-export async function getPayoutSchedule() {
-  // Mock payout schedule for development
-  const mockPayouts = [
-    { id: 1, cycle_number: 1, date: '2025-12-15', amount: 5000, member_id: 1, members: { name: 'Orpah Achieng' } },
-    { id: 2, cycle_number: 2, date: '2025-12-30', amount: 5000, member_id: 2, members: { name: 'Shadrack Otieno' } },
-    { id: 3, cycle_number: 3, date: '2026-01-15', amount: 5000, member_id: 3, members: { name: 'Ketty Awino' } },
-    { id: 4, cycle_number: 4, date: '2026-01-30', amount: 5000, member_id: 4, members: { name: 'Eunice Anyango' } },
-    { id: 5, cycle_number: 5, date: '2026-02-15', amount: 5000, member_id: 5, members: { name: 'Helida Auma' } },
-    { id: 6, cycle_number: 6, date: '2026-02-28', amount: 5000, member_id: 6, members: { name: 'Moses Omondi' } },
-    { id: 7, cycle_number: 7, date: '2026-03-15', amount: 5000, member_id: 7, members: { name: 'Sipora Adhiambo' } },
-    { id: 8, cycle_number: 8, date: '2026-03-30', amount: 5000, member_id: 8, members: { name: 'Timothy Ongeche' } },
-    { id: 9, cycle_number: 9, date: '2026-04-15', amount: 5000, member_id: 9, members: { name: 'Peres Atieno' } },
-    { id: 10, cycle_number: 10, date: '2026-04-30', amount: 5000, member_id: 10, members: { name: 'Mitchell Achieng' } },
-    { id: 11, cycle_number: 11, date: '2026-05-15', amount: 5000, member_id: 11, members: { name: 'Rosa Awuor' } },
-    { id: 12, cycle_number: 12, date: '2026-05-30', amount: 5000, member_id: 12, members: { name: 'Quinter Atieno' } },
-  ];
+export async function getPayoutSchedule(tenantId) {
+  if (!isSupabaseConfigured || !supabase) return [];
 
-  if (!isSupabaseConfigured || !supabase) return mockPayouts;
-
-  const { data, error } = await supabase
+  let query = supabase
     .from("payouts")
     .select(`
       *,
       members (id, name)
     `)
     .order("cycle_number", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching payouts:", error);
@@ -231,14 +320,15 @@ export async function getPayoutSchedule() {
 /**
  * Get a specific member's payout info
  */
-export async function getMemberPayout(memberId) {
+export async function getMemberPayout(memberId, tenantId) {
   if (!isSupabaseConfigured || !supabase) return null;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("payouts")
     .select("*")
-    .eq("member_id", memberId)
-    .single();
+    .eq("member_id", memberId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.single();
 
   if (error) {
     console.error("Error fetching member payout:", error);
@@ -251,14 +341,15 @@ export async function getMemberPayout(memberId) {
 /**
  * Get welfare balance for a member
  */
-export async function getWelfareBalance(memberId) {
+export async function getWelfareBalance(memberId, tenantId) {
   if (!isSupabaseConfigured || !supabase) return null;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("welfare_balances")
     .select("*")
-    .eq("member_id", memberId)
-    .single();
+    .eq("member_id", memberId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.single();
 
   if (error) {
     // If no balance record exists, return 0
@@ -272,24 +363,20 @@ export async function getWelfareBalance(memberId) {
  * Get welfare transactions (all group transactions)
  * Uses the welfare_transactions_view which joins with members for recipient names
  */
-export async function getWelfareTransactions(memberId) {
-  // Mock data for development with recipient names
-  const mockTransactions = [
-    { id: 1, date_of_issue: '2025-12-15', recipient: 'Orpah Achieng', amount: 1000, status: 'Completed' },
-    { id: 2, date_of_issue: '2025-12-30', recipient: 'Shadrack Otieno', amount: 1000, status: 'Completed' },
-  ];
-
-  if (!isSupabaseConfigured || !supabase) return mockTransactions;
+export async function getWelfareTransactions(memberId, tenantId) {
+  if (!isSupabaseConfigured || !supabase) return [];
 
   // Try to use the view first (includes recipient names)
-  let { data, error } = await supabase
+  let query = supabase
     .from("welfare_transactions_view")
-    .select("id, recipient, date_of_issue, amount, status")
+    .select("id, tenant_id, recipient, date_of_issue, amount, status")
     .order("date_of_issue", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  let { data, error } = await query;
 
   // Fallback to regular table with join if view doesn't exist
   if (error) {
-    const result = await supabase
+    let fallbackQuery = supabase
       .from("welfare_transactions")
       .select(`
         id,
@@ -299,10 +386,12 @@ export async function getWelfareTransactions(memberId) {
         members (first_name, last_name)
       `)
       .order("date", { ascending: false });
+    fallbackQuery = applyTenantFilter(fallbackQuery, tenantId);
+    const result = await fallbackQuery;
 
     if (result.error) {
       console.error("Error fetching welfare transactions:", result.error);
-      return mockTransactions;
+      return [];
     }
 
     // Transform to match expected format
@@ -315,30 +404,30 @@ export async function getWelfareTransactions(memberId) {
     }));
   }
 
-  return data && data.length > 0 ? data : mockTransactions;
+  return data && data.length > 0 ? data : [];
 }
 
 /**
  * Get total welfare fund (current balance)
  */
-export async function getTotalWelfareFund() {
+export async function getTotalWelfareFund(tenantId) {
   if (!isSupabaseConfigured || !supabase) {
-    // Mock: 2 cycles completed = Ksh. 2,000
-    return 2000;
+    return 0;
   }
 
   // Get the latest welfare balance
-  const { data, error } = await supabase
+  let query = supabase
     .from("welfare_balances")
     .select("balance, cycle_id")
     .order("cycle_id", { ascending: false })
-    .limit(1)
-    .single();
+    .limit(1);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.single();
 
   if (error) {
     console.error("Error fetching welfare balance:", error);
     // Fallback: calculate from completed cycles
-    return await calculateWelfareFromCycles();
+    return await calculateWelfareFromCycles(tenantId);
   }
 
   return data?.balance || 0;
@@ -347,20 +436,21 @@ export async function getTotalWelfareFund() {
 /**
  * Calculate welfare balance from completed cycles
  */
-async function calculateWelfareFromCycles() {
-  if (!isSupabaseConfigured || !supabase) return 2000;
+async function calculateWelfareFromCycles(tenantId) {
+  if (!isSupabaseConfigured || !supabase) return 0;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("welfare_cycles")
     .select("cycle_number")
     .lte("end_date", new Date().toISOString().split("T")[0])
     .order("cycle_number", { ascending: false })
-    .limit(1)
-    .single();
+    .limit(1);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.single();
 
   if (error) {
     console.error("Error calculating welfare:", error);
-    return 2000; // Default 2 cycles
+    return 0;
   }
 
   // Ksh. 1,000 per cycle
@@ -370,49 +460,40 @@ async function calculateWelfareFromCycles() {
 /**
  * Get welfare summary with cycle details
  */
-export async function getWelfareSummary() {
-  const mockSummary = {
-    currentBalance: 2000,
-    completedCycles: 2,
-    totalCycles: 12,
-    contributionPerCycle: 1000,
-    finalAmount: 12000,
-    nextPayoutDate: '2026-01-15',
-    nextRecipient: 'Ketty',
-    cycles: [
-      { cycle_number: 1, payout_date: '2025-12-15', recipient: 'Orpah', welfare_balance: 1000, status: 'Completed' },
-      { cycle_number: 2, payout_date: '2025-12-30', recipient: 'Shadrack', welfare_balance: 2000, status: 'Completed' },
-      { cycle_number: 3, payout_date: '2026-01-15', recipient: 'Ketty', welfare_balance: 3000, status: 'Upcoming' },
-      { cycle_number: 4, payout_date: '2026-01-30', recipient: 'Eunice', welfare_balance: 4000, status: 'Upcoming' },
-      { cycle_number: 5, payout_date: '2026-02-15', recipient: 'Helida', welfare_balance: 5000, status: 'Upcoming' },
-      { cycle_number: 6, payout_date: '2026-02-28', recipient: 'Moses', welfare_balance: 6000, status: 'Upcoming' },
-      { cycle_number: 7, payout_date: '2026-03-15', recipient: 'Sipora', welfare_balance: 7000, status: 'Upcoming' },
-      { cycle_number: 8, payout_date: '2026-03-30', recipient: 'Timothy', welfare_balance: 8000, status: 'Upcoming' },
-      { cycle_number: 9, payout_date: '2026-04-15', recipient: 'Peres', welfare_balance: 9000, status: 'Upcoming' },
-      { cycle_number: 10, payout_date: '2026-04-30', recipient: 'Mitchell', welfare_balance: 10000, status: 'Upcoming' },
-      { cycle_number: 11, payout_date: '2026-05-15', recipient: 'Rosa', welfare_balance: 11000, status: 'Upcoming' },
-      { cycle_number: 12, payout_date: '2026-05-30', recipient: 'Quinter', welfare_balance: 12000, status: 'Upcoming' },
-    ]
+export async function getWelfareSummary(tenantId) {
+  const emptySummary = {
+    currentBalance: 0,
+    completedCycles: 0,
+    totalCycles: 0,
+    contributionPerCycle: 0,
+    finalAmount: 0,
+    nextPayoutDate: null,
+    nextRecipient: null,
+    cycles: [],
   };
 
-  if (!isSupabaseConfigured || !supabase) return mockSummary;
+  if (!isSupabaseConfigured || !supabase) return emptySummary;
 
   try {
     // Get welfare cycles
-    const { data: cycles, error: cyclesError } = await supabase
+    let cyclesQuery = supabase
       .from("welfare_cycles")
       .select("*")
       .order("cycle_number", { ascending: true });
+    cyclesQuery = applyTenantFilter(cyclesQuery, tenantId);
+    const { data: cycles, error: cyclesError } = await cyclesQuery;
 
     if (cyclesError || !cycles || cycles.length === 0) {
-      return mockSummary;
+      return emptySummary;
     }
 
     // Get payout schedule to match recipients
-    const { data: payouts } = await supabase
+    let payoutsQuery = supabase
       .from("payouts")
       .select("cycle_number, member_id, members(name)")
       .order("cycle_number", { ascending: true });
+    payoutsQuery = applyTenantFilter(payoutsQuery, tenantId);
+    const { data: payouts } = await payoutsQuery;
 
     const payoutMap = {};
     (payouts || []).forEach(p => {
@@ -420,47 +501,56 @@ export async function getWelfareSummary() {
     });
 
     const today = new Date().toISOString().split("T")[0];
-    let completedCycles = 0;
-    let currentBalance = 0;
+    const completedCycleRows = cycles.filter((c) => c.end_date && c.end_date <= today);
+    const completedCycles = completedCycleRows.length;
+    const totalCycles = cycles.length;
+    const contributionPerCycle = completedCycles
+      ? completedCycleRows.reduce((sum, c) => sum + Number(c.total_contributed || 0), 0) /
+        completedCycles
+      : 0;
+    const finalAmount = totalCycles ? contributionPerCycle * totalCycles : 0;
+    const lastCompleted = completedCycleRows[completedCycleRows.length - 1];
+    const currentBalance = lastCompleted
+      ? Number(lastCompleted.total_contributed || 0) - Number(lastCompleted.total_disbursed || 0)
+      : 0;
 
-    const enrichedCycles = cycles.map(c => {
-      const isCompleted = c.end_date <= today;
-      if (isCompleted) {
-        completedCycles++;
-        currentBalance = c.cycle_number * 1000;
-      }
-
+    const enrichedCycles = cycles.map((c) => {
+      const isCompleted = c.end_date && c.end_date <= today;
+      const cycleBalance = Number(c.total_contributed || 0) - Number(c.total_disbursed || 0);
+      const inProgress = !isCompleted && c.start_date && c.start_date <= today;
       return {
         cycle_number: c.cycle_number,
         payout_date: c.start_date,
-        recipient: payoutMap[c.cycle_number] || mockSummary.cycles[c.cycle_number - 1]?.recipient || 'TBD',
-        welfare_balance: c.cycle_number * 1000,
-        status: isCompleted ? 'Completed' : (c.start_date <= today ? 'In Progress' : 'Upcoming')
+        recipient: payoutMap[c.cycle_number] || "TBD",
+        welfare_balance: cycleBalance,
+        status: isCompleted ? "Completed" : inProgress ? "In Progress" : "Upcoming",
       };
     });
 
-    const nextCycle = enrichedCycles.find(c => c.status === 'Upcoming' || c.status === 'In Progress');
+    const nextCycle = enrichedCycles.find(
+      (c) => c.status === "Upcoming" || c.status === "In Progress"
+    );
 
     return {
       currentBalance,
       completedCycles,
-      totalCycles: 12,
-      contributionPerCycle: 1000,
-      finalAmount: 12000,
+      totalCycles,
+      contributionPerCycle,
+      finalAmount,
       nextPayoutDate: nextCycle?.payout_date || null,
       nextRecipient: nextCycle?.recipient || null,
-      cycles: enrichedCycles
+      cycles: enrichedCycles,
     };
   } catch (error) {
     console.error("Error fetching welfare summary:", error);
-    return mockSummary;
+    return emptySummary;
   }
 }
 
 /**
  * Get all IGA projects
  */
-export async function getProjects() {
+export async function getProjects(tenantId) {
   // Mock projects for development
   const mockProjects = [
     {
@@ -481,19 +571,22 @@ export async function getProjects() {
     }
   ];
 
-  if (!isSupabaseConfigured || !supabase) return mockProjects;
+  if (!shouldUseSupabase()) return mockProjects;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("iga_projects")
     .select(`
       *,
       project_leader_member:members!iga_projects_project_leader_fkey (name)
     `)
     .order("start_date", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
+    markSupabaseUnavailable(error);
     console.error("Error fetching projects:", error);
-    return [];
+    return mockProjects;
   }
 
   return data || [];
@@ -502,12 +595,13 @@ export async function getProjects() {
 /**
  * Get projects with member's participation status
  */
-export async function getProjectsWithMembership(memberId) {
+export async function getProjectsWithMembership(memberId, tenantId) {
   // Mock data for development or when no projects exist
   const mockProjects = [
     {
       id: 1,
       code: "JGF",
+      module_key: "jgf",
       name: "Community Fish Farming",
       description: "Sustainable tilapia farming initiative to provide income and nutrition for the community.",
       status: "Active",
@@ -518,28 +612,46 @@ export async function getProjectsWithMembership(memberId) {
     {
       id: 2,
       code: "JPP",
+      module_key: "jpp",
       name: "Poultry Keeping Project",
       description: "Egg and broiler production for local markets and group consumption.",
-      status: "Active", 
+      status: "Active",
       start_date: "2025-09-15",
       member_count: 5,
       membership: null
     }
   ];
 
-  if (!isSupabaseConfigured || !supabase) {
+  if (!shouldUseSupabase()) {
     // Return mock data for development
     return mockProjects;
   }
 
   try {
-    // Get all projects - simplified query without complex joins
-    const { data: projects, error: projectsError } = await supabase
+    // Prefer module_key when available, but keep compatibility with older schemas.
+    let projects = null;
+    let projectsError = null;
+
+    let projectsQuery = supabase
       .from("iga_projects")
-      .select("id, code, name, description, status, start_date, project_leader")
+      .select(
+        "id, tenant_id, code, module_key, name, description, short_description, image_url, status, start_date, project_leader, is_visible"
+      )
       .order("start_date", { ascending: false });
+    projectsQuery = applyTenantFilter(projectsQuery, tenantId);
+    ({ data: projects, error: projectsError } = await projectsQuery);
+
+    if (projectsError && isMissingColumnError(projectsError, "module_key")) {
+      let fallbackQuery = supabase
+        .from("iga_projects")
+        .select("id, tenant_id, code, name, description, short_description, image_url, status, start_date, project_leader, is_visible")
+        .order("start_date", { ascending: false });
+      fallbackQuery = applyTenantFilter(fallbackQuery, tenantId);
+      ({ data: projects, error: projectsError } = await fallbackQuery);
+    }
 
     if (projectsError) {
+      markSupabaseUnavailable(projectsError);
       console.error("Error fetching projects:", projectsError);
       return mockProjects;
     }
@@ -550,17 +662,75 @@ export async function getProjectsWithMembership(memberId) {
       return mockProjects;
     }
 
+    const projectIds = projects
+      .map((project) => Number.parseInt(String(project?.id), 10))
+      .filter((projectId) => Number.isInteger(projectId) && projectId > 0);
+    const budgetSummaryByProject = new Map();
+
+    if (projectIds.length) {
+      try {
+        let budgetsQuery = supabase
+          .from("iga_budgets")
+          .select("project_id, item, planned_amount, date")
+          .in("project_id", projectIds);
+        budgetsQuery = applyTenantFilter(budgetsQuery, tenantId);
+        const { data: budgetRows, error: budgetError } = await budgetsQuery;
+
+        if (budgetError) {
+          console.warn("Unable to fetch project budget summaries:", budgetError);
+        } else {
+          (budgetRows || []).forEach((row) => {
+            const projectId = Number.parseInt(String(row?.project_id), 10);
+            if (!Number.isInteger(projectId) || projectId <= 0) return;
+
+            const itemKey = String(row?.item || "").trim().toLowerCase();
+            if (itemKey !== "total budget" && itemKey !== "expected revenue") return;
+
+            const amount = Number(row?.planned_amount);
+            if (!Number.isFinite(amount) || amount < 0) return;
+
+            const timestampSource = row?.date || "";
+            const timestamp = Date.parse(timestampSource);
+            const safeTimestamp = Number.isFinite(timestamp) ? timestamp : 0;
+
+            const current = budgetSummaryByProject.get(projectId) || {
+              budget_total: null,
+              budget_total_ts: -1,
+              expected_revenue: null,
+              expected_revenue_ts: -1,
+            };
+
+            if (itemKey === "total budget" && safeTimestamp >= current.budget_total_ts) {
+              current.budget_total = amount;
+              current.budget_total_ts = safeTimestamp;
+            }
+            if (itemKey === "expected revenue" && safeTimestamp >= current.expected_revenue_ts) {
+              current.expected_revenue = amount;
+              current.expected_revenue_ts = safeTimestamp;
+            }
+
+            budgetSummaryByProject.set(projectId, current);
+          });
+        }
+      } catch (budgetSummaryError) {
+        console.warn("Error preparing project budget summary map:", budgetSummaryError);
+      }
+    }
+
     // Get member count for each project
     const projectsWithCounts = await Promise.all(
       projects.map(async (project) => {
         let memberCount = 0;
         let membership = null;
+        const projectId = Number.parseInt(String(project?.id), 10);
 
         try {
-          const { count } = await supabase
+          let countQuery = supabase
             .from("iga_committee_members")
             .select("*", { count: "exact", head: true })
             .eq("project_id", project.id);
+          countQuery = applyTenantFilter(countQuery, tenantId);
+          const { count } = await countQuery;
           memberCount = count || 0;
         } catch (e) {
           console.log("Error getting member count:", e);
@@ -569,13 +739,15 @@ export async function getProjectsWithMembership(memberId) {
         // Check if current member is part of this project
         if (memberId) {
           try {
-            const { data: memberData } = await supabase
+            let membershipQuery = supabase
               .from("iga_committee_members")
               .select("term_start, role")
               .eq("project_id", project.id)
               .eq("member_id", memberId)
               .maybeSingle();
-            
+            membershipQuery = applyTenantFilter(membershipQuery, tenantId);
+            const { data: memberData } = await membershipQuery;
+
             membership = memberData;
           } catch (e) {
             console.log("Error checking membership:", e);
@@ -584,6 +756,15 @@ export async function getProjectsWithMembership(memberId) {
 
         return {
           ...project,
+          module_key: resolveModuleKey(project?.module_key || project?.code) || null,
+          budget_total:
+            Number.isInteger(projectId) && budgetSummaryByProject.has(projectId)
+              ? budgetSummaryByProject.get(projectId)?.budget_total ?? null
+              : null,
+          expected_revenue:
+            Number.isInteger(projectId) && budgetSummaryByProject.has(projectId)
+              ? budgetSummaryByProject.get(projectId)?.expected_revenue ?? null
+              : null,
           member_count: memberCount,
           membership
         };
@@ -598,20 +779,674 @@ export async function getProjectsWithMembership(memberId) {
 }
 
 /**
+ * Create an IGA project
+ */
+export async function createIgaProject(payload = {}, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const name = normalizeOptional(payload?.name);
+  if (!name) {
+    throw new Error("Project name is required");
+  }
+
+  const moduleRaw = normalizeOptional(payload?.module_key);
+  let moduleKey = moduleRaw ? String(moduleRaw).trim().toLowerCase() : "generic";
+  moduleKey = moduleKey.replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+  if (!/^[a-z][a-z0-9_]*$/.test(moduleKey)) {
+    moduleKey = "generic";
+  }
+
+  const projectLeaderRaw = normalizeOptional(payload?.project_leader);
+  const projectLeader =
+    projectLeaderRaw === null ? null : Number.parseInt(String(projectLeaderRaw), 10);
+  if (projectLeaderRaw !== null && !Number.isInteger(projectLeader)) {
+    throw new Error("Invalid project leader");
+  }
+
+  const insertPayload = {
+    name,
+    code: normalizeOptional(payload?.code)
+      ? String(payload.code).trim().toUpperCase()
+      : null,
+    module_key: moduleKey,
+    description: normalizeOptional(payload?.description),
+    short_description: normalizeOptional(payload?.short_description),
+    status: normalizeOptional(payload?.status) || "active",
+    start_date: normalizeOptional(payload?.start_date),
+    project_leader: projectLeader,
+    tenant_id: tenantId ?? normalizeOptional(payload?.tenant_id),
+    is_visible: payload?.is_visible ?? true,
+  };
+
+  if (!insertPayload.short_description && insertPayload.description) {
+    insertPayload.short_description = insertPayload.description;
+  }
+
+  const { data, error } = await supabase
+    .from("iga_projects")
+    .insert(insertPayload)
+    .select("id, code, module_key, name, description, short_description, status, start_date, project_leader")
+    .single();
+
+  if (error) {
+    console.error("Error creating project:", error);
+    if (error.code === "23505") {
+      throw new Error("A project with the same code already exists.");
+    }
+    if (error.code === "42501") {
+      throw new Error("You do not have permission to create projects.");
+    }
+    throw new Error("Failed to create project");
+  }
+
+  return {
+    ...data,
+    module_key: resolveModuleKey(data?.module_key || data?.code) || data?.module_key || "generic",
+    member_count: 0,
+    membership: null,
+  };
+}
+
+const MANAGED_BUDGET_ITEM_KEYS = new Set([
+  "total budget",
+  "expected revenue",
+  "budget plan details",
+]);
+
+const parseNonNegativeNumberOrNull = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error("Budget values must be non-negative numbers.");
+  }
+  return parsed;
+};
+
+const parseProjectIdOrThrow = (projectId) => {
+  const parsed = Number.parseInt(String(projectId), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("Project id is required.");
+  }
+  return parsed;
+};
+
+const normalizeModuleKeyForProject = (value) => {
+  const moduleRaw = normalizeOptional(value);
+  let moduleKey = moduleRaw ? String(moduleRaw).trim().toLowerCase() : "generic";
+  moduleKey = moduleKey.replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+  if (!/^[a-z][a-z0-9_]*$/.test(moduleKey)) {
+    moduleKey = "generic";
+  }
+  return moduleKey;
+};
+
+const parseProjectLeader = (value) => {
+  const normalized = normalizeOptional(value);
+  if (normalized === null) return null;
+  const parsed = Number.parseInt(String(normalized), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("Invalid project leader");
+  }
+  return parsed;
+};
+
+const extractBirdStoragePath = (value) => {
+  if (!value) return null;
+  const raw = String(value);
+  if (!raw) return null;
+
+  let path = raw;
+  if (raw.startsWith("http")) {
+    const markers = [
+      "/storage/v1/object/public/birds/",
+      "/storage/v1/object/sign/birds/",
+      "/storage/v1/object/birds/",
+    ];
+    const marker = markers.find((item) => raw.includes(item));
+    if (!marker) return null;
+    path = raw.split(marker)[1] || "";
+  }
+
+  if (path.includes("?")) {
+    path = path.split("?")[0];
+  }
+  path = path.replace(/^\/+/, "");
+  if (!path) return null;
+  return path;
+};
+
+export async function getProjectEditorData(projectId, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+
+  let projectQuery = supabase
+    .from("iga_projects")
+    .select(
+      "id, code, module_key, name, description, short_description, status, start_date, project_leader, is_visible, image_url"
+    )
+    .eq("id", parsedProjectId)
+    .single();
+  projectQuery = applyTenantFilter(projectQuery, tenantId);
+  const { data: project, error: projectError } = await projectQuery;
+
+  if (projectError) {
+    console.error("Error fetching project for edit:", projectError);
+    throw new Error("Failed to load project for editing.");
+  }
+
+  let budgetQuery = supabase
+    .from("iga_budgets")
+    .select("id, item, planned_amount, actual_amount, date, notes")
+    .eq("project_id", parsedProjectId)
+    .order("date", { ascending: true });
+  budgetQuery = applyTenantFilter(budgetQuery, tenantId);
+  const { data: budgetEntries, error: budgetError } = await budgetQuery;
+  if (budgetError) {
+    console.error("Error loading project budget entries:", budgetError);
+    throw new Error("Failed to load project budget details.");
+  }
+
+  const memberAssignments = await getProjectMembersAdmin(parsedProjectId, tenantId);
+
+  let galleryQuery = supabase
+    .from("project_gallery")
+    .select("id, image_url, caption, is_primary, display_order")
+    .eq("project_id", parsedProjectId)
+    .order("display_order", { ascending: true });
+  galleryQuery = applyTenantFilter(galleryQuery, tenantId);
+  const { data: gallery, error: galleryError } = await galleryQuery;
+  if (galleryError) {
+    console.error("Error loading project gallery:", galleryError);
+    throw new Error("Failed to load project media.");
+  }
+
+  return {
+    project,
+    budget_entries: budgetEntries || [],
+    member_assignments: memberAssignments || [],
+    gallery: gallery || [],
+  };
+}
+
+export async function updateIgaProject(projectId, payload = {}, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+  const updatePayload = {};
+
+  if (Object.prototype.hasOwnProperty.call(payload, "name")) {
+    const name = normalizeOptional(payload?.name);
+    if (!name) {
+      throw new Error("Project name is required.");
+    }
+    updatePayload.name = name;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "code")) {
+    updatePayload.code = normalizeOptional(payload?.code)
+      ? String(payload.code).trim().toUpperCase()
+      : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "module_key")) {
+    updatePayload.module_key = normalizeModuleKeyForProject(payload?.module_key);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "description")) {
+    updatePayload.description = normalizeOptional(payload?.description);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "short_description")) {
+    updatePayload.short_description = normalizeOptional(payload?.short_description);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "status")) {
+    updatePayload.status = normalizeOptional(payload?.status) || "active";
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "start_date")) {
+    updatePayload.start_date = normalizeOptional(payload?.start_date);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "project_leader")) {
+    updatePayload.project_leader = parseProjectLeader(payload?.project_leader);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "is_visible")) {
+    updatePayload.is_visible = Boolean(payload?.is_visible);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "image_url")) {
+    updatePayload.image_url = normalizeOptional(payload?.image_url);
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(updatePayload, "description") &&
+    !Object.prototype.hasOwnProperty.call(updatePayload, "short_description") &&
+    updatePayload.description
+  ) {
+    updatePayload.short_description = updatePayload.description;
+  }
+
+  if (!Object.keys(updatePayload).length) {
+    throw new Error("No project fields to update.");
+  }
+
+  let query = supabase
+    .from("iga_projects")
+    .update(updatePayload)
+    .eq("id", parsedProjectId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query
+    .select(
+      "id, code, module_key, name, description, short_description, status, start_date, project_leader, is_visible, image_url"
+    )
+    .single();
+
+  if (error) {
+    console.error("Error updating project:", error);
+    if (error.code === "42501") {
+      throw new Error("You do not have permission to update this project.");
+    }
+    throw new Error("Failed to update project.");
+  }
+
+  return data;
+}
+
+export async function setIgaProjectVisibility(projectId, isVisible, tenantId) {
+  return updateIgaProject(projectId, { is_visible: Boolean(isVisible) }, tenantId);
+}
+
+export async function replaceIgaProjectBudgetPlan(projectId, plan = {}, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+  const totalBudget = parseNonNegativeNumberOrNull(plan?.total_budget);
+  const expectedRevenue = parseNonNegativeNumberOrNull(plan?.expected_revenue);
+  const fundingSource = normalizeOptional(plan?.funding_source) || "member_contributions";
+  const payoutSchedule = normalizeOptional(plan?.payout_schedule) || "monthly";
+  const notes = normalizeOptional(plan?.notes);
+  const budgetDate = normalizeOptional(plan?.date) || new Date().toISOString().slice(0, 10);
+
+  let existingQuery = supabase
+    .from("iga_budgets")
+    .select("id, item")
+    .eq("project_id", parsedProjectId);
+  existingQuery = applyTenantFilter(existingQuery, tenantId);
+  const { data: existingRows, error: existingError } = await existingQuery;
+  if (existingError) {
+    console.error("Error loading existing budget plan entries:", existingError);
+    throw new Error("Failed to update project budget details.");
+  }
+
+  const managedRowIds = (existingRows || [])
+    .filter((row) => MANAGED_BUDGET_ITEM_KEYS.has(String(row?.item || "").trim().toLowerCase()))
+    .map((row) => row.id)
+    .filter((id) => Number.isInteger(id));
+
+  if (managedRowIds.length) {
+    let deleteQuery = supabase
+      .from("iga_budgets")
+      .delete()
+      .eq("project_id", parsedProjectId)
+      .in("id", managedRowIds);
+    deleteQuery = applyTenantFilter(deleteQuery, tenantId);
+    const { error: deleteError } = await deleteQuery;
+    if (deleteError) {
+      console.error("Error deleting managed budget plan entries:", deleteError);
+      throw new Error("Failed to update project budget details.");
+    }
+  }
+
+  const budgetDetailNotes = [
+    `Funding source: ${fundingSource}`,
+    `Payout schedule: ${payoutSchedule}`,
+    notes ? `Notes: ${notes}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const insertEntries = [];
+  if (totalBudget !== null) {
+    insertEntries.push({
+      item: "Total budget",
+      planned_amount: totalBudget,
+      date: budgetDate,
+    });
+  }
+  if (expectedRevenue !== null) {
+    insertEntries.push({
+      item: "Expected revenue",
+      planned_amount: expectedRevenue,
+      date: budgetDate,
+    });
+  }
+  if (budgetDetailNotes) {
+    insertEntries.push({
+      item: "Budget plan details",
+      date: budgetDate,
+      notes: budgetDetailNotes,
+    });
+  }
+
+  if (!insertEntries.length) {
+    return [];
+  }
+
+  return createIgaBudgetEntries(parsedProjectId, insertEntries, tenantId);
+}
+
+export async function syncProjectMemberAssignments(projectId, assignments = [], tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+  const desiredMap = new Map();
+  (Array.isArray(assignments) ? assignments : []).forEach((entry) => {
+    const memberId = Number.parseInt(String(entry?.member_id), 10);
+    if (!Number.isInteger(memberId) || memberId <= 0) return;
+    desiredMap.set(memberId, {
+      member_id: memberId,
+      role: normalizeOptional(entry?.role) || "Member",
+      term_start: normalizeOptional(entry?.term_start) || new Date().toISOString().slice(0, 10),
+    });
+  });
+
+  let existingQuery = supabase
+    .from("iga_committee_members")
+    .select("id, member_id, role, term_start")
+    .eq("project_id", parsedProjectId);
+  existingQuery = applyTenantFilter(existingQuery, tenantId);
+  const { data: existingRows, error: existingError } = await existingQuery;
+  if (existingError) {
+    console.error("Error loading existing project members:", existingError);
+    throw new Error("Failed to sync project members.");
+  }
+
+  const existingByMember = new Map(
+    (existingRows || [])
+      .filter((row) => Number.isInteger(row?.member_id))
+      .map((row) => [row.member_id, row])
+  );
+
+  for (const row of existingRows || []) {
+    if (!Number.isInteger(row?.member_id)) continue;
+    if (desiredMap.has(row.member_id)) continue;
+    let deleteQuery = supabase.from("iga_committee_members").delete().eq("id", row.id);
+    deleteQuery = applyTenantFilter(deleteQuery, tenantId);
+    const { error } = await deleteQuery;
+    if (error) {
+      console.error("Error removing project member:", error);
+      throw new Error("Failed to sync project members.");
+    }
+  }
+
+  for (const [memberId, desired] of desiredMap.entries()) {
+    const existing = existingByMember.get(memberId);
+    if (!existing) {
+      const { error } = await supabase
+        .from("iga_committee_members")
+        .insert({
+          project_id: parsedProjectId,
+          member_id: memberId,
+          role: desired.role,
+          term_start: desired.term_start,
+          tenant_id: tenantId ?? null,
+        });
+      if (error) {
+        console.error("Error assigning project member:", error);
+        throw new Error("Failed to sync project members.");
+      }
+      continue;
+    }
+
+    const existingRole = normalizeOptional(existing?.role) || "Member";
+    const existingTerm = normalizeOptional(existing?.term_start);
+    if (existingRole === desired.role && existingTerm === desired.term_start) {
+      continue;
+    }
+
+    let updateQuery = supabase
+      .from("iga_committee_members")
+      .update({
+        role: desired.role,
+        term_start: desired.term_start,
+      })
+      .eq("id", existing.id);
+    updateQuery = applyTenantFilter(updateQuery, tenantId);
+    const { error } = await updateQuery;
+    if (error) {
+      console.error("Error updating project member assignment:", error);
+      throw new Error("Failed to sync project members.");
+    }
+  }
+
+  return true;
+}
+
+export async function deleteProjectMediaAssets(projectId, galleryIds = [], tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+
+  let rowsQuery = supabase
+    .from("project_gallery")
+    .select("id, image_url")
+    .eq("project_id", parsedProjectId);
+  if (Array.isArray(galleryIds) && galleryIds.length) {
+    rowsQuery = rowsQuery.in("id", galleryIds);
+  }
+  rowsQuery = applyTenantFilter(rowsQuery, tenantId);
+  const { data: rows, error: rowsError } = await rowsQuery;
+  if (rowsError) {
+    console.error("Error loading media rows for delete:", rowsError);
+    throw new Error("Failed to remove project media.");
+  }
+
+  if (!rows?.length) {
+    return { deleted: 0 };
+  }
+
+  let deleteQuery = supabase
+    .from("project_gallery")
+    .delete()
+    .eq("project_id", parsedProjectId)
+    .in("id", rows.map((row) => row.id));
+  deleteQuery = applyTenantFilter(deleteQuery, tenantId);
+  const { error: deleteError } = await deleteQuery;
+  if (deleteError) {
+    console.error("Error deleting media rows:", deleteError);
+    throw new Error("Failed to remove project media.");
+  }
+
+  const paths = rows
+    .map((row) => extractBirdStoragePath(row?.image_url))
+    .filter(Boolean);
+  if (paths.length) {
+    const { error: storageError } = await supabase.storage.from("birds").remove(paths);
+    if (storageError) {
+      console.warn("Media rows deleted but storage cleanup failed:", storageError);
+    }
+  }
+
+  return { deleted: rows.length };
+}
+
+export async function deleteIgaProject(projectId, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+
+  const childTables = [
+    "iga_committee_members",
+    "iga_budgets",
+    "iga_inventory",
+    "iga_reports",
+    "iga_sales",
+    "iga_activities",
+    "iga_beneficiaries",
+    "iga_training_sessions",
+    "project_gallery",
+    "project_goals",
+    "project_volunteer_roles",
+    "project_faq",
+    "project_activities",
+    "project_donation_items",
+    "project_expenses",
+    "project_sales",
+    "project_products",
+    "jpp_birds",
+    "jpp_weekly_growth",
+    "jpp_daily_log",
+    "jpp_batches",
+    "jpp_expenses",
+    "jgf_farming_activities",
+    "jgf_crop_cycles",
+    "jgf_land_leases",
+    "jgf_inventory",
+    "jgf_purchases",
+    "jgf_sales",
+    "jgf_expenses",
+    "jgf_production_logs",
+    "jgf_batches",
+  ];
+
+  await deleteProjectMediaAssets(parsedProjectId, [], tenantId);
+
+  for (const tableName of childTables) {
+    if (tableName === "project_gallery") continue;
+    try {
+      let query = supabase.from(tableName).delete().eq("project_id", parsedProjectId);
+      query = applyTenantFilter(query, tenantId);
+      const { error } = await query;
+      if (error) {
+        const code = String(error?.code || "");
+        if (code === "42P01") {
+          continue;
+        }
+        throw error;
+      }
+    } catch (error) {
+      console.error(`Error deleting child records from ${tableName}:`, error);
+      throw new Error("Failed to delete project. Hide it first or remove linked records.");
+    }
+  }
+
+  let projectDeleteQuery = supabase.from("iga_projects").delete().eq("id", parsedProjectId);
+  projectDeleteQuery = applyTenantFilter(projectDeleteQuery, tenantId);
+  const { error: projectDeleteError } = await projectDeleteQuery;
+  if (projectDeleteError) {
+    console.error("Error deleting project:", projectDeleteError);
+    throw new Error("Failed to delete project. Hide it instead if records are linked.");
+  }
+
+  return true;
+}
+
+/**
+ * Create budget entries for an IGA project
+ */
+export async function createIgaBudgetEntries(projectId, entries = [], tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedProjectId = Number.parseInt(String(projectId), 10);
+  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    throw new Error("Invalid project id");
+  }
+
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return [];
+  }
+
+  const insertPayload = entries
+    .map((entry) => {
+      const item = normalizeOptional(entry?.item);
+      const notes = normalizeOptional(entry?.notes);
+      const date = normalizeOptional(entry?.date);
+
+      const plannedRaw = entry?.planned_amount;
+      const actualRaw = entry?.actual_amount;
+      const plannedAmount =
+        plannedRaw === undefined || plannedRaw === null || plannedRaw === ""
+          ? null
+          : Number(plannedRaw);
+      const actualAmount =
+        actualRaw === undefined || actualRaw === null || actualRaw === ""
+          ? null
+          : Number(actualRaw);
+
+      if (plannedAmount !== null && !Number.isFinite(plannedAmount)) {
+        throw new Error("Invalid planned amount");
+      }
+      if (actualAmount !== null && !Number.isFinite(actualAmount)) {
+        throw new Error("Invalid actual amount");
+      }
+
+      return {
+        project_id: parsedProjectId,
+        item,
+        planned_amount: plannedAmount,
+        actual_amount: actualAmount,
+        date,
+        notes,
+        tenant_id: tenantId ?? null,
+      };
+    })
+    .filter(
+      (entry) =>
+        entry.item ||
+        entry.notes ||
+        entry.date ||
+        entry.planned_amount !== null ||
+        entry.actual_amount !== null
+    );
+
+  if (insertPayload.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("iga_budgets")
+    .insert(insertPayload)
+    .select("*");
+
+  if (error) {
+    console.error("Error creating budget entries:", error);
+    if (error.code === "42501") {
+      throw new Error("You do not have permission to save budget details.");
+    }
+    throw new Error("Failed to save project budget details");
+  }
+
+  return data || [];
+}
+
+/**
  * Join an IGA project
  */
-export async function joinProject(projectId, memberId) {
+export async function joinProject(projectId, memberId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
   // Check if already a member
-  const { data: existing } = await supabase
+  let existingQuery = supabase
     .from("iga_committee_members")
     .select("id")
     .eq("project_id", projectId)
-    .eq("member_id", memberId)
-    .single();
+    .eq("member_id", memberId);
+  existingQuery = applyTenantFilter(existingQuery, tenantId);
+  const { data: existing } = await existingQuery.single();
 
   if (existing) {
     throw new Error("You are already a member of this project");
@@ -623,7 +1458,8 @@ export async function joinProject(projectId, memberId) {
       project_id: projectId,
       member_id: memberId,
       role: "Member",
-      term_start: new Date().toISOString().split("T")[0]
+      term_start: new Date().toISOString().split("T")[0],
+      tenant_id: tenantId ?? null,
     })
     .select()
     .single();
@@ -639,16 +1475,18 @@ export async function joinProject(projectId, memberId) {
 /**
  * Leave an IGA project
  */
-export async function leaveProject(projectId, memberId) {
+export async function leaveProject(projectId, memberId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { error } = await supabase
+  let deleteQuery = supabase
     .from("iga_committee_members")
     .delete()
     .eq("project_id", projectId)
     .eq("member_id", memberId);
+  deleteQuery = applyTenantFilter(deleteQuery, tenantId);
+  const { error } = await deleteQuery;
 
   if (error) {
     console.error("Error leaving project:", error);
@@ -661,7 +1499,7 @@ export async function leaveProject(projectId, memberId) {
 /**
  * Get JPP batches
  */
-export async function getJppBatches() {
+export async function getJppBatches(tenantId, projectId) {
   const mockBatches = [
     {
       id: 1,
@@ -689,10 +1527,15 @@ export async function getJppBatches() {
 
   if (!isSupabaseConfigured || !supabase) return mockBatches;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jpp_batches")
     .select("*")
     .order("start_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching JPP batches:", error);
@@ -705,7 +1548,7 @@ export async function getJppBatches() {
 /**
  * Get JPP batch KPIs
  */
-export async function getJppBatchKpis() {
+export async function getJppBatchKpis(tenantId, projectId) {
   const mockKpis = [
     {
       batch_code: "JPP-2026-01-A",
@@ -733,10 +1576,15 @@ export async function getJppBatchKpis() {
 
   if (!isSupabaseConfigured || !supabase) return mockKpis;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("v_jpp_batch_kpis")
     .select("*")
     .order("start_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching JPP batch KPIs:", error);
@@ -749,20 +1597,35 @@ export async function getJppBatchKpis() {
 /**
  * Get JPP module counts
  */
-export async function getJppModuleCounts() {
+export async function getJppModuleCounts(tenantId, projectId) {
   const mockCounts = { dailyLogs: 18, weeklyGrowth: 4, expenses: 12 };
 
   if (!isSupabaseConfigured || !supabase) return mockCounts;
 
   try {
-    const projectId = await resolveProjectId("JPP");
+    const resolvedProjectId = await resolveModuleProjectId("jpp", tenantId, projectId);
     const [dailyRes, weeklyRes, expensesRes] = await Promise.all([
-      supabase.from("jpp_daily_log").select("*", { count: "exact", head: true }),
-      supabase.from("jpp_weekly_growth").select("*", { count: "exact", head: true }),
-      supabase
-        .from("project_expenses")
-        .select("*", { count: "exact", head: true })
-        .eq("project_id", projectId),
+      applyTenantFilter(
+        supabase
+          .from("jpp_daily_log")
+          .select("*", { count: "exact", head: true })
+          .eq("project_id", resolvedProjectId),
+        tenantId
+      ),
+      applyTenantFilter(
+        supabase
+          .from("jpp_weekly_growth")
+          .select("*", { count: "exact", head: true })
+          .eq("project_id", resolvedProjectId),
+        tenantId
+      ),
+      applyTenantFilter(
+        supabase
+          .from("project_expenses")
+          .select("*", { count: "exact", head: true })
+          .eq("project_id", resolvedProjectId),
+        tenantId
+      ),
     ]);
 
     return {
@@ -779,7 +1642,7 @@ export async function getJppModuleCounts() {
 /**
  * Get JPP daily logs
  */
-export async function getJppDailyLogs() {
+export async function getJppDailyLogs(tenantId, projectId) {
   const mockDailyLogs = [
     {
       id: 1,
@@ -827,10 +1690,15 @@ export async function getJppDailyLogs() {
 
   if (!isSupabaseConfigured || !supabase) return mockDailyLogs;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jpp_daily_log")
     .select("*")
     .order("log_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching JPP daily logs:", error);
@@ -843,7 +1711,7 @@ export async function getJppDailyLogs() {
 /**
  * Get JPP weekly growth logs
  */
-export async function getJppWeeklyGrowth() {
+export async function getJppWeeklyGrowth(tenantId, projectId) {
   const mockWeekly = [
     {
       id: 1,
@@ -864,10 +1732,15 @@ export async function getJppWeeklyGrowth() {
 
   if (!isSupabaseConfigured || !supabase) return mockWeekly;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jpp_weekly_growth")
     .select("*")
     .order("week_ending", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching JPP weekly growth:", error);
@@ -880,7 +1753,7 @@ export async function getJppWeeklyGrowth() {
 /**
  * Get JPP birds
  */
-export async function getJppBirds() {
+export async function getJppBirds(tenantId, projectId) {
   const mockBirds = [
     {
       id: "mock-bird-1",
@@ -918,16 +1791,26 @@ export async function getJppBirds() {
 
   if (!isSupabaseConfigured || !supabase) return mockBirds;
 
-  let { data, error } = await supabase
+  let query = supabase
     .from("v_jpp_bird_cards")
     .select("*")
     .order("created_at", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  let { data, error } = await query;
 
   if (error) {
-    const fallback = await supabase
+    let fallbackQuery = supabase
       .from("jpp_birds")
       .select("*")
       .order("created_at", { ascending: false });
+    if (projectId) {
+      fallbackQuery = fallbackQuery.eq("project_id", projectId);
+    }
+    fallbackQuery = applyTenantFilter(fallbackQuery, tenantId);
+    const fallback = await fallbackQuery;
     if (fallback.error) {
       console.error("Error fetching JPP birds:", fallback.error);
       throw fallback.error;
@@ -995,7 +1878,7 @@ async function resolveBirdPhotoUrl(value) {
 /**
  * Get project expenses (by project code or id)
  */
-export async function getProjectExpenses(projectRef) {
+export async function getProjectExpenses(projectRef, tenantId) {
   const mockExpenses = [
     {
       id: 1,
@@ -1021,25 +1904,27 @@ export async function getProjectExpenses(projectRef) {
 
   if (!isSupabaseConfigured || !supabase) return mockExpenses;
 
-  const projectId = await resolveProjectId(projectRef);
-  const { data, error } = await supabase
+  const projectId = await resolveProjectId(projectRef, tenantId);
+  let query = supabase
     .from("project_expenses")
     .select("*")
     .eq("project_id", projectId)
     .order("expense_date", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching project expenses:", error);
     throw error;
   }
 
-  return data || [];
+  return attachExpenseReceiptSignedUrls(data || []);
 }
 
 /**
  * Get project expenses for multiple projects (by ids)
  */
-export async function getProjectExpensesForProjects(projectIds) {
+export async function getProjectExpensesForProjects(projectIds, tenantId) {
   if (!projectIds || projectIds.length === 0) {
     return [];
   }
@@ -1078,24 +1963,26 @@ export async function getProjectExpensesForProjects(projectIds) {
     return [];
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("project_expenses")
     .select("*")
     .in("project_id", safeIds)
     .order("expense_date", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching project expenses:", error);
     throw error;
   }
 
-  return data || [];
+  return attachExpenseReceiptSignedUrls(data || []);
 }
 
 /**
  * Get recent expenses across multiple projects
  */
-export async function getRecentProjectExpenses(projectIds = [], limit = 3) {
+export async function getRecentProjectExpenses(projectIds = [], limit = 3, tenantId) {
   if (!Array.isArray(projectIds) || projectIds.length === 0) {
     return [];
   }
@@ -1142,25 +2029,64 @@ export async function getRecentProjectExpenses(projectIds = [], limit = 3) {
     return mockExpenses.slice(0, safeLimit);
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("project_expenses")
     .select("*")
     .in("project_id", projectIds)
     .order("expense_date", { ascending: false })
     .limit(safeLimit);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching recent project expenses:", error);
     throw error;
   }
 
-  return data || [];
+  return attachExpenseReceiptSignedUrls(data || []);
+}
+
+async function attachExpenseReceiptSignedUrls(rows = []) {
+  if (!isSupabaseConfigured || !supabase || !Array.isArray(rows) || rows.length === 0) {
+    return rows || [];
+  }
+
+  const signedUrlMap = new Map();
+  const uniquePaths = Array.from(
+    new Set(
+      rows
+        .map((row) => String(row?.receipt_file_path || "").trim())
+        .filter(Boolean)
+    )
+  );
+
+  await Promise.all(
+    uniquePaths.map(async (path) => {
+      const { data: signedData, error: signedError } = await supabase.storage
+        .from(PROJECT_DOCUMENT_BUCKET)
+        .createSignedUrl(path, 60 * 60);
+      if (signedError) {
+        console.warn("Error creating signed URL for expense receipt:", signedError);
+        return;
+      }
+      signedUrlMap.set(path, signedData?.signedUrl || null);
+    })
+  );
+
+  return rows.map((row) => {
+    const path = String(row?.receipt_file_path || "").trim();
+    return {
+      ...row,
+      receipt_download_url:
+        (path ? signedUrlMap.get(path) : null) || row?.receipt_file_url || null,
+    };
+  });
 }
 
 /**
  * Get project sales (by project code or id)
  */
-export async function getProjectSales(projectRef) {
+export async function getProjectSales(projectRef, tenantId) {
   const mockSales = [
     {
       id: 1,
@@ -1178,12 +2104,14 @@ export async function getProjectSales(projectRef) {
 
   if (!isSupabaseConfigured || !supabase) return mockSales;
 
-  const projectId = await resolveProjectId(projectRef);
-  const { data, error } = await supabase
+  const projectId = await resolveProjectId(projectRef, tenantId);
+  let query = supabase
     .from("project_sales")
     .select("*")
     .eq("project_id", projectId)
     .order("sale_date", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching project sales:", error);
@@ -1196,7 +2124,7 @@ export async function getProjectSales(projectRef) {
 /**
  * Get project sales for multiple projects (by ids)
  */
-export async function getProjectSalesForProjects(projectIds) {
+export async function getProjectSalesForProjects(projectIds, tenantId) {
   if (!projectIds || projectIds.length === 0) {
     return [];
   }
@@ -1226,11 +2154,13 @@ export async function getProjectSalesForProjects(projectIds) {
     return [];
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("project_sales")
     .select("*")
     .in("project_id", safeIds)
     .order("sale_date", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching project sales:", error);
@@ -1243,7 +2173,7 @@ export async function getProjectSalesForProjects(projectIds) {
 /**
  * Get project products (by project code or id)
  */
-export async function getProjectProducts(projectRef, options = {}) {
+export async function getProjectProducts(projectRef, options = {}, tenantId) {
   const mockProducts = [
     {
       id: "mock-jpp-birds",
@@ -1270,13 +2200,14 @@ export async function getProjectProducts(projectRef, options = {}) {
     return mockProducts;
   }
 
-  const projectId = await resolveProjectId(projectRef);
+  const projectId = await resolveProjectId(projectRef, tenantId);
   let query = supabase
     .from("project_products")
     .select("id, name, category, tracking_mode, unit, is_active")
     .eq("project_id", projectId)
     .eq("is_active", true)
     .order("name", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
 
   if (options.trackingMode) {
     query = query.eq("tracking_mode", options.trackingMode);
@@ -1295,11 +2226,25 @@ export async function getProjectProducts(projectRef, options = {}) {
 /**
  * Get JPP expenses
  */
-export async function getJppExpenses() {
-  return getProjectExpenses("JPP");
+export async function getJppExpenses(tenantId, projectId) {
+  return getProjectExpenses(projectId ?? "jpp", tenantId);
 }
 
-async function resolveProjectId(projectRef) {
+const MODULE_KEYS = new Set(["jpp", "jgf", "generic"]);
+
+const resolveModuleKey = (value) => {
+  if (!value) return null;
+  const lower = String(value).trim().toLowerCase();
+  if (MODULE_KEYS.has(lower)) {
+    return lower;
+  }
+  const upper = String(value).trim().toUpperCase();
+  if (upper === "JPP") return "jpp";
+  if (upper === "JGF") return "jgf";
+  return null;
+};
+
+async function resolveProjectId(projectRef, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
@@ -1321,12 +2266,50 @@ async function resolveProjectId(projectRef) {
     return Number(trimmed);
   }
 
+  const moduleKey = resolveModuleKey(trimmed);
+  if (moduleKey) {
+    if (!tenantId) {
+      throw new Error("Tenant is required to resolve module projects.");
+    }
+    let moduleQuery = supabase
+      .from("iga_projects")
+      .select("id")
+      .eq("module_key", moduleKey)
+      .order("display_order", { ascending: true })
+      .order("created_at", { ascending: true })
+      .limit(1);
+    moduleQuery = applyTenantFilter(moduleQuery, tenantId);
+    let { data: moduleProject, error: moduleError } = await moduleQuery.maybeSingle();
+
+    // Older schemas may not yet have module_key. Fall back to code lookup.
+    if (moduleError && isMissingColumnError(moduleError, "module_key")) {
+      let fallbackQuery = supabase
+        .from("iga_projects")
+        .select("id")
+        .eq("code", moduleKey.toUpperCase())
+        .order("display_order", { ascending: true })
+        .order("created_at", { ascending: true })
+        .limit(1);
+      fallbackQuery = applyTenantFilter(fallbackQuery, tenantId);
+      ({ data: moduleProject, error: moduleError } = await fallbackQuery.maybeSingle());
+    }
+
+    if (moduleError) {
+      console.error("Error fetching project by module_key:", moduleError);
+      throw moduleError;
+    }
+
+    if (!moduleProject) {
+      throw new Error(`Project not found for module ${moduleKey}.`);
+    }
+
+    return moduleProject.id;
+  }
+
   const projectCode = trimmed.toUpperCase();
-  const { data: project, error } = await supabase
-    .from("iga_projects")
-    .select("id")
-    .eq("code", projectCode)
-    .maybeSingle();
+  let query = supabase.from("iga_projects").select("id").eq("code", projectCode);
+  query = applyTenantFilter(query, tenantId);
+  const { data: project, error } = await query.maybeSingle();
 
   if (error) {
     console.error("Error fetching project by code:", error);
@@ -1340,10 +2323,17 @@ async function resolveProjectId(projectRef) {
   return project.id;
 }
 
+async function resolveModuleProjectId(moduleKey, tenantId, projectId) {
+  if (projectId) {
+    return projectId;
+  }
+  return resolveProjectId(moduleKey, tenantId);
+}
+
 /**
  * Get project expense items (by project code or id)
  */
-export async function getProjectExpenseItems(projectRef) {
+export async function getProjectExpenseItems(projectRef, tenantId) {
   const mockItems = [
     { id: 1, label: "Layer feed (mash)", category: "Feed", display_order: 1 },
     { id: 2, label: "Supplements (grit/oyster shell)", category: "Feed", display_order: 2 },
@@ -1371,14 +2361,16 @@ export async function getProjectExpenseItems(projectRef) {
 
   if (!isSupabaseConfigured || !supabase) return mockItems;
 
-  const projectId = await resolveProjectId(projectRef);
+  const projectId = await resolveProjectId(projectRef, tenantId);
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("project_expense_items")
     .select("id, label, category, display_order, is_active")
     .eq("project_id", projectId)
     .eq("is_active", true)
     .order("display_order", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching project expense items:", error);
@@ -1388,7 +2380,7 @@ export async function getProjectExpenseItems(projectRef) {
   return data || [];
 }
 
-export async function getProjectExpenseCategories(projectRef) {
+export async function getProjectExpenseCategories(projectRef, tenantId) {
   const normalizedCode = projectRef ? String(projectRef).trim().toUpperCase() : "";
   const mockCategoriesByProject = {
     JPP: [
@@ -1417,15 +2409,17 @@ export async function getProjectExpenseCategories(projectRef) {
     return mockCategoriesByProject[normalizedCode] || [];
   }
 
-  const projectId = await resolveProjectId(projectRef);
+  const projectId = await resolveProjectId(projectRef, tenantId);
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("project_expense_items")
     .select("category, display_order")
     .eq("project_id", projectId)
     .eq("is_active", true)
     .not("category", "is", null)
     .order("display_order", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching project expense categories:", error);
@@ -1446,12 +2440,703 @@ export async function getProjectExpenseCategories(projectRef) {
   return categories;
 }
 
-export async function createProjectExpenseItem(projectRef, payload) {
+export async function getProjectExpenseCategoryDefinitions(projectRef, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    const fallback = await getProjectExpenseCategories(projectRef, tenantId);
+    return (fallback || []).map((name, index) => ({
+      id: `fallback-${index}-${String(name).toLowerCase().replace(/\s+/g, "-")}`,
+      project_id: null,
+      name,
+      display_order: index,
+      archived_at: null,
+      created_at: null,
+      updated_at: null,
+    }));
+  }
+
+  const projectId = await resolveProjectId(projectRef, tenantId);
+
+  let query = supabase
+    .from("project_expense_categories")
+    .select("id, project_id, tenant_id, name, display_order, archived_at, created_at, updated_at")
+    .eq("project_id", projectId)
+    .is("archived_at", null)
+    .order("display_order", { ascending: true })
+    .order("name", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+  let { data, error } = await query;
+
+  if (error && isMissingRelationError(error, "project_expense_categories")) {
+    const fallback = await getProjectExpenseCategories(projectRef, tenantId);
+    return (fallback || []).map((name, index) => ({
+      id: `fallback-${index}-${String(name).toLowerCase().replace(/\s+/g, "-")}`,
+      project_id: projectId,
+      name,
+      display_order: index,
+      archived_at: null,
+      created_at: null,
+      updated_at: null,
+    }));
+  }
+
+  if (error) {
+    console.error("Error fetching project expense category definitions:", error);
+    throw error;
+  }
+
+  return data || [];
+}
+
+const normalizeTaskPriority = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "urgent" || normalized === "high" || normalized === "normal") {
+    return normalized;
+  }
+  return "normal";
+};
+
+const normalizeTaskStatus = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (
+    normalized === "open" ||
+    normalized === "in_progress" ||
+    normalized === "done" ||
+    normalized === "cancelled"
+  ) {
+    return normalized;
+  }
+  if (normalized === "in progress") return "in_progress";
+  if (normalized === "completed") return "done";
+  if (normalized === "canceled") return "cancelled";
+  return "open";
+};
+
+const normalizeNoteVisibility = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "admins_only" || normalized === "project_team") {
+    return normalized;
+  }
+  if (normalized === "admins only") return "admins_only";
+  if (normalized === "project team") return "project_team";
+  return "project_team";
+};
+
+const parseOptionalMemberId = (value) => {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+};
+
+export async function getProjectTasks(projectRef, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  const projectId = await resolveProjectId(projectRef, tenantId);
+
+  let query = supabase
+    .from("project_tasks")
+    .select(
+      "id, project_id, tenant_id, title, details, assignee_member_id, due_date, priority, status, created_by_member_id, completed_at, archived_at, created_at, updated_at"
+    )
+    .eq("project_id", projectId)
+    .is("archived_at", null)
+    .order("created_at", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
+
+  if (error && isMissingRelationError(error, "project_tasks")) {
+    throw new Error("Tasks table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (error) {
+    console.error("Error fetching project tasks:", error);
+    throw error;
+  }
+
+  const tasks = Array.isArray(data) ? data : [];
+  const memberIds = Array.from(
+    new Set(
+      tasks
+        .flatMap((task) => [task?.assignee_member_id, task?.created_by_member_id])
+        .map((id) => Number.parseInt(String(id ?? ""), 10))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    )
+  );
+  const memberNames = new Map();
+
+  if (memberIds.length) {
+    const { data: members, error: memberError } = await supabase
+      .from("members")
+      .select("id, name")
+      .in("id", memberIds);
+    if (memberError) {
+      console.warn("Error loading task member names:", memberError);
+    } else {
+      (members || []).forEach((member) => {
+        memberNames.set(member.id, member.name || `Member #${member.id}`);
+      });
+    }
+  }
+
+  return tasks.map((task) => ({
+    ...task,
+    assignee_name: task?.assignee_member_id ? memberNames.get(task.assignee_member_id) || null : null,
+    created_by_name: task?.created_by_member_id ? memberNames.get(task.created_by_member_id) || null : null,
+  }));
+}
+
+export async function createProjectTask(projectRef, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const projectId = await resolveProjectId(projectRef);
+  const projectId = await resolveProjectId(projectRef, tenantId);
+  const title = normalizeOptional(payload?.title);
+  if (!title) {
+    throw new Error("Task title is required.");
+  }
+
+  const insertPayload = {
+    project_id: projectId,
+    tenant_id: tenantId ?? null,
+    title,
+    details: normalizeOptional(payload?.details),
+    assignee_member_id: parseOptionalMemberId(payload?.assignee_member_id),
+    due_date: normalizeOptional(payload?.due_date),
+    priority: normalizeTaskPriority(payload?.priority),
+    status: normalizeTaskStatus(payload?.status),
+    created_by_member_id: parseOptionalMemberId(payload?.created_by_member_id),
+  };
+
+  const { data, error } = await supabase
+    .from("project_tasks")
+    .insert(insertPayload)
+    .select(
+      "id, project_id, tenant_id, title, details, assignee_member_id, due_date, priority, status, created_by_member_id, completed_at, archived_at, created_at, updated_at"
+    )
+    .single();
+
+  if (error && isMissingRelationError(error, "project_tasks")) {
+    throw new Error("Tasks table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (error) {
+    console.error("Error creating project task:", error);
+    throw error;
+  }
+
+  return data;
+}
+
+export async function updateProjectTask(taskId, payload, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedTaskId = String(taskId || "").trim();
+  if (!parsedTaskId) {
+    throw new Error("Task id is required.");
+  }
+
+  const updatePayload = {};
+  if ("title" in payload) updatePayload.title = normalizeOptional(payload?.title);
+  if ("details" in payload) updatePayload.details = normalizeOptional(payload?.details);
+  if ("assignee_member_id" in payload) {
+    updatePayload.assignee_member_id = parseOptionalMemberId(payload?.assignee_member_id);
+  }
+  if ("due_date" in payload) updatePayload.due_date = normalizeOptional(payload?.due_date);
+  if ("priority" in payload) updatePayload.priority = normalizeTaskPriority(payload?.priority);
+  if ("status" in payload) updatePayload.status = normalizeTaskStatus(payload?.status);
+  if ("created_by_member_id" in payload) {
+    updatePayload.created_by_member_id = parseOptionalMemberId(payload?.created_by_member_id);
+  }
+  if ("completed_at" in payload) updatePayload.completed_at = normalizeOptional(payload?.completed_at);
+
+  if (Object.keys(updatePayload).length === 0) {
+    throw new Error("No fields to update.");
+  }
+
+  updatePayload.updated_at = new Date().toISOString();
+
+  let query = supabase
+    .from("project_tasks")
+    .update(updatePayload)
+    .eq("id", parsedTaskId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query
+    .select(
+      "id, project_id, tenant_id, title, details, assignee_member_id, due_date, priority, status, created_by_member_id, completed_at, archived_at, created_at, updated_at"
+    )
+    .single();
+
+  if (error && isMissingRelationError(error, "project_tasks")) {
+    throw new Error("Tasks table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (error) {
+    console.error("Error updating project task:", error);
+    throw error;
+  }
+
+  return data;
+}
+
+export async function deleteProjectTask(taskId, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedTaskId = String(taskId || "").trim();
+  if (!parsedTaskId) {
+    throw new Error("Task id is required.");
+  }
+
+  let query = supabase
+    .from("project_tasks")
+    .delete()
+    .eq("id", parsedTaskId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
+
+  if (error && isMissingRelationError(error, "project_tasks")) {
+    throw new Error("Tasks table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (error) {
+    console.error("Error deleting project task:", error);
+    throw error;
+  }
+
+  return true;
+}
+
+export async function getProjectNotes(projectRef, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  const projectId = await resolveProjectId(projectRef, tenantId);
+
+  let query = supabase
+    .from("project_notes")
+    .select("id, project_id, tenant_id, title, body, visibility, author_member_id, pinned, archived_at, created_at, updated_at")
+    .eq("project_id", projectId)
+    .is("archived_at", null)
+    .order("created_at", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
+
+  if (error && isMissingRelationError(error, "project_notes")) {
+    throw new Error("Notes table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (error) {
+    console.error("Error fetching project notes:", error);
+    throw error;
+  }
+
+  const notes = Array.isArray(data) ? data : [];
+  const memberIds = Array.from(
+    new Set(
+      notes
+        .map((note) => Number.parseInt(String(note?.author_member_id ?? ""), 10))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    )
+  );
+  const memberNames = new Map();
+  if (memberIds.length) {
+    const { data: members, error: memberError } = await supabase
+      .from("members")
+      .select("id, name")
+      .in("id", memberIds);
+    if (memberError) {
+      console.warn("Error loading note author names:", memberError);
+    } else {
+      (members || []).forEach((member) => {
+        memberNames.set(member.id, member.name || `Member #${member.id}`);
+      });
+    }
+  }
+
+  return notes.map((note) => ({
+    ...note,
+    author_name: note?.author_member_id ? memberNames.get(note.author_member_id) || null : null,
+  }));
+}
+
+export async function createProjectNote(projectRef, payload, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const projectId = await resolveProjectId(projectRef, tenantId);
+  const title = normalizeOptional(payload?.title);
+  if (!title) {
+    throw new Error("Note title is required.");
+  }
+
+  const insertPayload = {
+    project_id: projectId,
+    tenant_id: tenantId ?? null,
+    title,
+    body: normalizeOptional(payload?.body),
+    visibility: normalizeNoteVisibility(payload?.visibility),
+    author_member_id: parseOptionalMemberId(payload?.author_member_id),
+    pinned: Boolean(payload?.pinned),
+  };
+
+  const { data, error } = await supabase
+    .from("project_notes")
+    .insert(insertPayload)
+    .select("id, project_id, tenant_id, title, body, visibility, author_member_id, pinned, archived_at, created_at, updated_at")
+    .single();
+
+  if (error && isMissingRelationError(error, "project_notes")) {
+    throw new Error("Notes table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (error) {
+    console.error("Error creating project note:", error);
+    throw error;
+  }
+
+  return data;
+}
+
+export async function updateProjectNote(noteId, payload, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedNoteId = String(noteId || "").trim();
+  if (!parsedNoteId) {
+    throw new Error("Note id is required.");
+  }
+
+  const updatePayload = {};
+  if ("title" in payload) updatePayload.title = normalizeOptional(payload?.title);
+  if ("body" in payload) updatePayload.body = normalizeOptional(payload?.body);
+  if ("visibility" in payload) updatePayload.visibility = normalizeNoteVisibility(payload?.visibility);
+  if ("author_member_id" in payload) {
+    updatePayload.author_member_id = parseOptionalMemberId(payload?.author_member_id);
+  }
+  if ("pinned" in payload) updatePayload.pinned = Boolean(payload?.pinned);
+
+  if (Object.keys(updatePayload).length === 0) {
+    throw new Error("No fields to update.");
+  }
+
+  updatePayload.updated_at = new Date().toISOString();
+
+  let query = supabase
+    .from("project_notes")
+    .update(updatePayload)
+    .eq("id", parsedNoteId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query
+    .select("id, project_id, tenant_id, title, body, visibility, author_member_id, pinned, archived_at, created_at, updated_at")
+    .single();
+
+  if (error && isMissingRelationError(error, "project_notes")) {
+    throw new Error("Notes table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (error) {
+    console.error("Error updating project note:", error);
+    throw error;
+  }
+
+  return data;
+}
+
+export async function deleteProjectNote(noteId, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedNoteId = String(noteId || "").trim();
+  if (!parsedNoteId) {
+    throw new Error("Note id is required.");
+  }
+
+  let query = supabase
+    .from("project_notes")
+    .delete()
+    .eq("id", parsedNoteId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
+
+  if (error && isMissingRelationError(error, "project_notes")) {
+    throw new Error("Notes table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (error) {
+    console.error("Error deleting project note:", error);
+    throw error;
+  }
+
+  return true;
+}
+
+export async function createProjectExpenseCategory(projectRef, payload, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const projectId = await resolveProjectId(projectRef, tenantId);
+  const name = normalizeOptional(payload?.name);
+  if (!name) {
+    throw new Error("Category name is required");
+  }
+  const normalizedName = String(name).trim();
+
+  let existingQuery = supabase
+    .from("project_expense_categories")
+    .select("id, project_id, tenant_id, name, display_order, archived_at, created_at, updated_at")
+    .eq("project_id", projectId)
+    .is("archived_at", null)
+    .ilike("name", normalizedName)
+    .limit(1);
+  existingQuery = applyTenantFilter(existingQuery, tenantId);
+  const { data: existingRows, error: existingError } = await existingQuery;
+
+  if (existingError && isMissingRelationError(existingError, "project_expense_categories")) {
+    throw new Error(
+      "Expense categories table is not available. Run migration_043_project_expense_categories.sql."
+    );
+  }
+  if (existingError) {
+    console.error("Error checking existing expense category:", existingError);
+    throw existingError;
+  }
+  if (existingRows?.length) {
+    throw new Error(`Category "${normalizedName}" already exists.`);
+  }
+
+  let displayOrder = Number(payload?.display_order);
+  if (!Number.isFinite(displayOrder)) {
+    let orderQuery = supabase
+      .from("project_expense_categories")
+      .select("display_order")
+      .eq("project_id", projectId)
+      .is("archived_at", null)
+      .order("display_order", { ascending: false })
+      .limit(1);
+    orderQuery = applyTenantFilter(orderQuery, tenantId);
+    const { data: orderRows, error: orderError } = await orderQuery;
+    if (orderError && isMissingRelationError(orderError, "project_expense_categories")) {
+      throw new Error(
+        "Expense categories table is not available. Run migration_043_project_expense_categories.sql."
+      );
+    }
+    if (orderError) {
+      console.error("Error resolving expense category order:", orderError);
+      throw orderError;
+    }
+    displayOrder = Number(orderRows?.[0]?.display_order ?? -1) + 1;
+    if (!Number.isFinite(displayOrder) || displayOrder < 0) {
+      displayOrder = 0;
+    }
+  }
+
+  const insertPayload = {
+    project_id: projectId,
+    tenant_id: tenantId ?? null,
+    name: normalizedName,
+    display_order: displayOrder,
+  };
+
+  const { data, error } = await supabase
+    .from("project_expense_categories")
+    .insert(insertPayload)
+    .select("id, project_id, tenant_id, name, display_order, archived_at, created_at, updated_at")
+    .single();
+
+  if (error && isMissingRelationError(error, "project_expense_categories")) {
+    throw new Error(
+      "Expense categories table is not available. Run migration_043_project_expense_categories.sql."
+    );
+  }
+  if (error?.code === "23505") {
+    throw new Error(`Category "${normalizedName}" already exists.`);
+  }
+  if (error) {
+    console.error("Error creating expense category:", error);
+    throw error;
+  }
+
+  return data;
+}
+
+export async function renameProjectExpenseCategory(categoryId, payload, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedCategoryId = String(categoryId || "").trim();
+  if (!parsedCategoryId) {
+    throw new Error("Category id is required.");
+  }
+
+  const name = normalizeOptional(payload?.name);
+  if (!name) {
+    throw new Error("Category name is required");
+  }
+  const nextName = String(name).trim();
+
+  let sourceQuery = supabase
+    .from("project_expense_categories")
+    .select("id, project_id, tenant_id, name, display_order, archived_at, created_at, updated_at")
+    .eq("id", parsedCategoryId)
+    .maybeSingle();
+  sourceQuery = applyTenantFilter(sourceQuery, tenantId);
+  const { data: sourceCategory, error: sourceError } = await sourceQuery;
+
+  if (sourceError && isMissingRelationError(sourceError, "project_expense_categories")) {
+    throw new Error(
+      "Expense categories table is not available. Run migration_043_project_expense_categories.sql."
+    );
+  }
+  if (sourceError) {
+    console.error("Error loading expense category for rename:", sourceError);
+    throw sourceError;
+  }
+  if (!sourceCategory || sourceCategory.archived_at) {
+    throw new Error("Category not found.");
+  }
+
+  const previousName = String(sourceCategory.name || "").trim();
+  if (previousName.toLowerCase() === nextName.toLowerCase()) {
+    return sourceCategory;
+  }
+
+  let duplicateQuery = supabase
+    .from("project_expense_categories")
+    .select("id")
+    .eq("project_id", sourceCategory.project_id)
+    .is("archived_at", null)
+    .ilike("name", nextName)
+    .neq("id", sourceCategory.id)
+    .limit(1);
+  duplicateQuery = applyTenantFilter(duplicateQuery, tenantId);
+  const { data: duplicateRows, error: duplicateError } = await duplicateQuery;
+  if (duplicateError) {
+    console.error("Error checking duplicate category on rename:", duplicateError);
+    throw duplicateError;
+  }
+  if (duplicateRows?.length) {
+    throw new Error(`Category "${nextName}" already exists.`);
+  }
+
+  const updatePayload = {
+    name: nextName,
+    updated_at: new Date().toISOString(),
+  };
+  let updateQuery = supabase
+    .from("project_expense_categories")
+    .update(updatePayload)
+    .eq("id", sourceCategory.id);
+  updateQuery = applyTenantFilter(updateQuery, tenantId);
+  const { data: renamedCategory, error: renameError } = await updateQuery
+    .select("id, project_id, tenant_id, name, display_order, archived_at, created_at, updated_at")
+    .single();
+
+  if (renameError) {
+    console.error("Error renaming expense category:", renameError);
+    throw renameError;
+  }
+
+  const shouldApplyToExpenses = payload?.applyToExpenses !== false;
+  if (shouldApplyToExpenses && previousName) {
+    let expenseRenameQuery = supabase
+      .from("project_expenses")
+      .update({
+        category: nextName,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("project_id", sourceCategory.project_id)
+      .ilike("category", previousName);
+    expenseRenameQuery = applyTenantFilter(expenseRenameQuery, tenantId);
+    const { error: expenseRenameError } = await expenseRenameQuery;
+
+    if (expenseRenameError) {
+      console.error("Category renamed but expense category sync failed:", expenseRenameError);
+      throw expenseRenameError;
+    }
+  }
+
+  return renamedCategory;
+}
+
+export async function archiveProjectExpenseCategory(categoryId, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedCategoryId = String(categoryId || "").trim();
+  if (!parsedCategoryId) {
+    throw new Error("Category id is required.");
+  }
+
+  const archivePayload = {
+    archived_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  let query = supabase
+    .from("project_expense_categories")
+    .update(archivePayload)
+    .eq("id", parsedCategoryId)
+    .is("archived_at", null);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query
+    .select("id, project_id, tenant_id, name, display_order, archived_at, created_at, updated_at")
+    .single();
+
+  if (error && isMissingRelationError(error, "project_expense_categories")) {
+    throw new Error(
+      "Expense categories table is not available. Run migration_043_project_expense_categories.sql."
+    );
+  }
+  if (error) {
+    console.error("Error archiving expense category:", error);
+    throw error;
+  }
+
+  return data;
+}
+
+async function ensureProjectExpenseCategoryDefinition(projectId, categoryName, tenantId) {
+  const normalizedCategory = normalizeOptional(categoryName);
+  if (!normalizedCategory) return null;
+
+  try {
+    return await createProjectExpenseCategory(
+      projectId,
+      { name: normalizedCategory },
+      tenantId
+    );
+  } catch (error) {
+    const message = String(error?.message || "").toLowerCase();
+    if (
+      message.includes("already exists") ||
+      message.includes("not available") ||
+      isMissingRelationError(error, "project_expense_categories")
+    ) {
+      return null;
+    }
+    console.warn("Failed to sync expense category definition:", error);
+    return null;
+  }
+}
+
+export async function createProjectExpenseItem(projectRef, payload, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const projectId = await resolveProjectId(projectRef, tenantId);
 
   const label = normalizeOptional(payload.label);
   if (!label) {
@@ -1464,6 +3149,7 @@ export async function createProjectExpenseItem(projectRef, payload) {
     category: normalizeOptional(payload.category),
     display_order: payload.display_order ?? 0,
     is_active: payload.is_active ?? true,
+    tenant_id: tenantId ?? null,
   };
 
   const { data, error } = await supabase
@@ -1480,7 +3166,7 @@ export async function createProjectExpenseItem(projectRef, payload) {
   return data;
 }
 
-export async function updateProjectExpenseItem(itemId, payload) {
+export async function updateProjectExpenseItem(itemId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
@@ -1495,12 +3181,12 @@ export async function updateProjectExpenseItem(itemId, payload) {
     throw new Error("No fields to update");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("project_expense_items")
     .update(updatePayload)
-    .eq("id", itemId)
-    .select()
-    .single();
+    .eq("id", itemId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     console.error("Error updating project expense item:", error);
@@ -1510,14 +3196,20 @@ export async function updateProjectExpenseItem(itemId, payload) {
   return data;
 }
 
-export async function createJppBatch(payload) {
+export async function createJppBatch(payload, tenantId, projectId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
+  const insertPayload = {
+    ...payload,
+    project_id: payload?.project_id ?? projectId ?? null,
+    tenant_id: tenantId ?? null,
+  };
+
   const { data, error } = await supabase
     .from("jpp_batches")
-    .insert(payload)
+    .insert(insertPayload)
     .select()
     .single();
 
@@ -1529,17 +3221,17 @@ export async function createJppBatch(payload) {
   return data;
 }
 
-export async function updateJppBatch(batchId, payload) {
+export async function updateJppBatch(batchId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jpp_batches")
     .update(payload)
-    .eq("id", batchId)
-    .select()
-    .single();
+    .eq("id", batchId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     console.error("Error updating JPP batch:", error);
@@ -1549,15 +3241,17 @@ export async function updateJppBatch(batchId, payload) {
   return data;
 }
 
-export async function deleteJppBatch(batchId) {
+export async function deleteJppBatch(batchId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { error } = await supabase
+  let query = supabase
     .from("jpp_batches")
     .delete()
     .eq("id", batchId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     console.error("Error deleting JPP batch:", error);
@@ -1567,14 +3261,20 @@ export async function deleteJppBatch(batchId) {
   return true;
 }
 
-export async function createJppDailyLog(payload) {
+export async function createJppDailyLog(payload, tenantId, projectId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
+  const insertPayload = {
+    ...payload,
+    project_id: payload?.project_id ?? projectId ?? null,
+    tenant_id: tenantId ?? null,
+  };
+
   const { data, error } = await supabase
     .from("jpp_daily_log")
-    .insert(payload)
+    .insert(insertPayload)
     .select()
     .single();
 
@@ -1586,17 +3286,17 @@ export async function createJppDailyLog(payload) {
   return data;
 }
 
-export async function updateJppDailyLog(logId, payload) {
+export async function updateJppDailyLog(logId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jpp_daily_log")
     .update(payload)
-    .eq("id", logId)
-    .select()
-    .single();
+    .eq("id", logId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     console.error("Error updating JPP daily log:", error);
@@ -1606,15 +3306,17 @@ export async function updateJppDailyLog(logId, payload) {
   return data;
 }
 
-export async function deleteJppDailyLog(logId) {
+export async function deleteJppDailyLog(logId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { error } = await supabase
+  let query = supabase
     .from("jpp_daily_log")
     .delete()
     .eq("id", logId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     console.error("Error deleting JPP daily log:", error);
@@ -1624,14 +3326,20 @@ export async function deleteJppDailyLog(logId) {
   return true;
 }
 
-export async function createJppWeeklyGrowth(payload) {
+export async function createJppWeeklyGrowth(payload, tenantId, projectId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
+  const insertPayload = {
+    ...payload,
+    project_id: payload?.project_id ?? projectId ?? null,
+    tenant_id: tenantId ?? null,
+  };
+
   const { data, error } = await supabase
     .from("jpp_weekly_growth")
-    .insert(payload)
+    .insert(insertPayload)
     .select()
     .single();
 
@@ -1643,17 +3351,17 @@ export async function createJppWeeklyGrowth(payload) {
   return data;
 }
 
-export async function updateJppWeeklyGrowth(entryId, payload) {
+export async function updateJppWeeklyGrowth(entryId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jpp_weekly_growth")
     .update(payload)
-    .eq("id", entryId)
-    .select()
-    .single();
+    .eq("id", entryId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     console.error("Error updating JPP weekly growth:", error);
@@ -1663,15 +3371,17 @@ export async function updateJppWeeklyGrowth(entryId, payload) {
   return data;
 }
 
-export async function deleteJppWeeklyGrowth(entryId) {
+export async function deleteJppWeeklyGrowth(entryId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { error } = await supabase
+  let query = supabase
     .from("jpp_weekly_growth")
     .delete()
     .eq("id", entryId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     console.error("Error deleting JPP weekly growth:", error);
@@ -1720,7 +3430,623 @@ export async function uploadBirdPhoto(file, options = {}) {
   };
 }
 
-export async function createJppBird(payload) {
+const MEMBER_AVATAR_MAX_SIZE_BYTES = 10 * 1024 * 1024;
+
+export async function uploadMemberAvatar(file, options = {}) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+  if (!file) {
+    throw new Error("Avatar file is required.");
+  }
+  const mimeType = String(file?.type || "")
+    .trim()
+    .toLowerCase();
+  if (!mimeType.startsWith("image/")) {
+    throw new Error("Only image files are allowed for member avatar.");
+  }
+  const fileSize = Number(file?.size || 0);
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    throw new Error("Invalid avatar file size.");
+  }
+  if (fileSize > MEMBER_AVATAR_MAX_SIZE_BYTES) {
+    throw new Error("Avatar file is too large. Maximum allowed size is 10 MB.");
+  }
+
+  const tenantId = normalizeOptional(options?.tenantId ?? options?.tenant_id);
+  if (!tenantId) {
+    throw new Error("Tenant is required for avatar upload.");
+  }
+
+  const tenantSegment = sanitizeStorageSegment(tenantId, "global");
+  const memberSegment = sanitizeStorageSegment(
+    options?.memberId ?? options?.member_id ?? "pending",
+    "pending"
+  );
+  const extension =
+    String(file?.name || "")
+      .split(".")
+      .pop()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "") || "jpg";
+  const safeExtension = extension || "jpg";
+  const baseName = sanitizeDocumentName(file?.name, "member-avatar");
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const timestamp = Date.now();
+  const fileName = `${timestamp}-${baseName}-${suffix}.${safeExtension}`;
+  const filePath = `tenants/${tenantSegment}/members/${memberSegment}/avatars/${fileName}`;
+
+  const { error: uploadError } = await supabase.storage.from("birds").upload(filePath, file, {
+    cacheControl: "3600",
+    upsert: false,
+    contentType: file.type || undefined,
+  });
+
+  if (uploadError) {
+    console.error("Error uploading member avatar:", uploadError);
+    throw uploadError;
+  }
+
+  const { data: publicData } = supabase.storage.from("birds").getPublicUrl(filePath);
+  return {
+    path: filePath,
+    publicUrl: publicData?.publicUrl || null,
+    mimeType: mimeType || file.type || null,
+    fileSizeBytes: fileSize,
+  };
+}
+
+function sanitizeStorageSegment(value, fallback = "global") {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return normalized || fallback;
+}
+
+function deriveCaptionFromFileName(fileName) {
+  const base = String(fileName || "")
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .trim();
+  return normalizeOptional(base);
+}
+
+const PROJECT_DOCUMENT_BUCKET = "project-docs";
+const ORGANIZATION_TEMPLATE_BUCKET = "organization-templates";
+const PROJECT_DOCUMENT_MAX_SIZE_BYTES = 25 * 1024 * 1024;
+const PROJECT_DOCUMENT_ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
+const PROJECT_DOCUMENT_ALLOWED_EXTENSIONS = new Set([
+  "pdf",
+  "docx",
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+  "gif",
+  "bmp",
+  "heic",
+  "heif",
+  "tif",
+  "tiff",
+]);
+
+const PROJECT_EXPENSE_RECEIPT_MAX_SIZE_BYTES = 15 * 1024 * 1024;
+const PROJECT_EXPENSE_RECEIPT_ALLOWED_MIME_TYPES = new Set(["application/pdf"]);
+const PROJECT_EXPENSE_RECEIPT_ALLOWED_EXTENSIONS = new Set([
+  "pdf",
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+  "gif",
+  "bmp",
+  "heic",
+  "heif",
+  "tif",
+  "tiff",
+]);
+
+const getFileExtension = (fileName) =>
+  String(fileName || "")
+    .split(".")
+    .pop()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+const getTemplateFormatFromMetadata = (row = {}) => {
+  const fileExt =
+    normalizeOptional(row?.file_ext) ||
+    getFileExtension(normalizeOptional(row?.file_path) || normalizeOptional(row?.file_url) || "");
+  const mimeType = String(normalizeOptional(row?.mime_type) || "")
+    .trim()
+    .toLowerCase();
+  const explicitFormat = String(normalizeOptional(row?.format) || "")
+    .trim()
+    .toUpperCase();
+
+  const extension = String(fileExt || "")
+    .trim()
+    .toLowerCase();
+
+  if (extension === "docx") return "DOCX";
+  if (extension === "pdf") return "PDF";
+  if (extension === "xlsx" || extension === "xls") return "XLSX";
+  if (extension === "pptx" || extension === "ppt") return "PPTX";
+  if (extension === "csv") return "CSV";
+  if (extension === "jpg" || extension === "jpeg") return "JPG";
+  if (extension === "png") return "PNG";
+  if (extension === "svg") return "SVG";
+  if (extension === "webp") return "WEBP";
+  if (extension === "gif") return "GIF";
+
+  if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return "DOCX";
+  if (mimeType === "application/pdf") return "PDF";
+  if (mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "XLSX";
+  if (mimeType === "application/vnd.ms-excel") return "XLSX";
+  if (mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    return "PPTX";
+  if (mimeType === "text/csv") return "CSV";
+  if (mimeType.startsWith("image/")) {
+    const imageSubtype = mimeType.split("/")[1] || "";
+    return imageSubtype ? imageSubtype.toUpperCase() : "IMAGE";
+  }
+
+  if (explicitFormat) {
+    return explicitFormat;
+  }
+
+  return extension ? extension.toUpperCase() : "FILE";
+};
+
+const isAllowedProjectDocumentType = (file) => {
+  const mimeType = String(file?.type || "")
+    .trim()
+    .toLowerCase();
+  const extension = getFileExtension(file?.name);
+  const allowedByMime = mimeType.startsWith("image/") || PROJECT_DOCUMENT_ALLOWED_MIME_TYPES.has(mimeType);
+  const allowedByExtension = PROJECT_DOCUMENT_ALLOWED_EXTENSIONS.has(extension);
+  return {
+    isAllowed: allowedByMime || allowedByExtension,
+    mimeType,
+    extension,
+  };
+};
+
+const isAllowedExpenseReceiptType = (file) => {
+  const mimeType = String(file?.type || "")
+    .trim()
+    .toLowerCase();
+  const extension = getFileExtension(file?.name);
+  const allowedByMime =
+    mimeType.startsWith("image/") || PROJECT_EXPENSE_RECEIPT_ALLOWED_MIME_TYPES.has(mimeType);
+  const allowedByExtension = PROJECT_EXPENSE_RECEIPT_ALLOWED_EXTENSIONS.has(extension);
+  return {
+    isAllowed: allowedByMime || allowedByExtension,
+    mimeType,
+    extension,
+  };
+};
+
+const sanitizeDocumentName = (fileName, fallback = "document") =>
+  String(fileName || "")
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60) || fallback;
+
+const extractStorageMessage = (error) => {
+  const message = String(error?.message || error?.details || "").trim();
+  if (!message) return "";
+  return message.toLowerCase();
+};
+
+export async function getProjectDocuments(projectRef, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  const projectId = await resolveProjectId(projectRef, tenantId);
+
+  let query = supabase
+    .from("project_documents")
+    .select(
+      "id, project_id, tenant_id, name, file_path, file_url, mime_type, file_ext, file_size_bytes, uploaded_by_member_id, uploaded_at, updated_at, archived_at"
+    )
+    .eq("project_id", projectId)
+    .is("archived_at", null)
+    .order("uploaded_at", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
+
+  if (error && isMissingRelationError(error, "project_documents")) {
+    throw new Error("Project documents table is not available. Run migration_045_project_documents.sql.");
+  }
+  if (error) {
+    console.error("Error fetching project documents:", error);
+    throw error;
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  const memberIds = Array.from(
+    new Set(
+      rows
+        .map((row) => Number.parseInt(String(row?.uploaded_by_member_id ?? ""), 10))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    )
+  );
+
+  const memberNames = new Map();
+  if (memberIds.length) {
+    const { data: members, error: memberError } = await supabase
+      .from("members")
+      .select("id, name")
+      .in("id", memberIds);
+    if (memberError) {
+      console.warn("Error loading document uploader names:", memberError);
+    } else {
+      (members || []).forEach((member) => {
+        memberNames.set(member.id, member.name || `Member #${member.id}`);
+      });
+    }
+  }
+
+  const signedUrlMap = new Map();
+  await Promise.all(
+    rows
+      .map((row) => String(row?.file_path || "").trim())
+      .filter(Boolean)
+      .map(async (path) => {
+        const { data: signedData, error: signedError } = await supabase.storage
+          .from(PROJECT_DOCUMENT_BUCKET)
+          .createSignedUrl(path, 60 * 60);
+        if (signedError) {
+          console.warn("Error creating signed document URL:", signedError);
+          return;
+        }
+        signedUrlMap.set(path, signedData?.signedUrl || null);
+      })
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    uploader_name: row?.uploaded_by_member_id
+      ? memberNames.get(row.uploaded_by_member_id) || null
+      : null,
+    download_url: signedUrlMap.get(String(row?.file_path || "").trim()) || row?.file_url || null,
+  }));
+}
+
+export async function uploadProjectDocument(projectRef, file, options = {}, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  if (!file) {
+    throw new Error("Document file is required.");
+  }
+
+  const projectId = await resolveProjectId(projectRef, tenantId);
+  let effectiveTenantId = normalizeOptional(tenantId);
+  try {
+    const { data: projectRow, error: projectError } = await supabase
+      .from("iga_projects")
+      .select("tenant_id")
+      .eq("id", projectId)
+      .maybeSingle();
+    if (projectError) {
+      console.warn("Unable to resolve tenant from project before document upload:", projectError);
+    } else {
+      const projectTenantId = normalizeOptional(projectRow?.tenant_id);
+      if (projectTenantId) {
+        effectiveTenantId = projectTenantId;
+      }
+    }
+  } catch (projectTenantLookupError) {
+    console.warn("Project tenant lookup failed before document upload:", projectTenantLookupError);
+  }
+
+  if (!effectiveTenantId) {
+    throw new Error("Project tenant is missing. Assign this project to a tenant, then try again.");
+  }
+
+  const { isAllowed, mimeType, extension } = isAllowedProjectDocumentType(file);
+  if (!isAllowed) {
+    throw new Error("Only .docx, .pdf, and image files are allowed.");
+  }
+
+  const fileSize = Number(file?.size || 0);
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    throw new Error("Invalid file size.");
+  }
+  if (fileSize > PROJECT_DOCUMENT_MAX_SIZE_BYTES) {
+    throw new Error("File is too large. Maximum allowed size is 25 MB.");
+  }
+
+  const safeExtension = extension || (mimeType.startsWith("image/") ? "jpg" : "bin");
+  const tenantSegment = sanitizeStorageSegment(effectiveTenantId, "global");
+  const safeBaseName = sanitizeDocumentName(file?.name);
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const timestamp = Date.now();
+  const fileName = `${timestamp}-${safeBaseName}-${suffix}.${safeExtension}`;
+  const filePath = `tenants/${tenantSegment}/projects/${projectId}/documents/${fileName}`;
+
+  const { error: uploadError } = await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).upload(filePath, file, {
+    cacheControl: "3600",
+    upsert: false,
+    contentType: file.type || undefined,
+  });
+
+  if (uploadError) {
+    console.error("Error uploading project document:", uploadError);
+    throw uploadError;
+  }
+
+  const { data: publicData } = supabase.storage.from(PROJECT_DOCUMENT_BUCKET).getPublicUrl(filePath);
+  const uploadedByMemberId = parseOptionalMemberId(options?.uploaded_by_member_id ?? options?.uploadedByMemberId);
+
+  const insertPayload = {
+    project_id: projectId,
+    tenant_id: effectiveTenantId,
+    name: normalizeOptional(options?.name) || file.name || "Document",
+    file_path: filePath,
+    file_url: publicData?.publicUrl || null,
+    mime_type: mimeType || file.type || "application/octet-stream",
+    file_ext: safeExtension,
+    file_size_bytes: fileSize,
+    uploaded_by_member_id: uploadedByMemberId,
+  };
+
+  const { data, error } = await supabase
+    .from("project_documents")
+    .insert(insertPayload)
+    .select(
+      "id, project_id, tenant_id, name, file_path, file_url, mime_type, file_ext, file_size_bytes, uploaded_by_member_id, uploaded_at, updated_at, archived_at"
+    )
+    .single();
+
+  if (error && isMissingRelationError(error, "project_documents")) {
+    try {
+      await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).remove([filePath]);
+    } catch (cleanupError) {
+      console.warn("Failed to cleanup uploaded document after missing table error:", cleanupError);
+    }
+    throw new Error("Project documents table is not available. Run migration_045_project_documents.sql.");
+  }
+  if (error) {
+    try {
+      await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).remove([filePath]);
+    } catch (cleanupError) {
+      console.warn("Failed to cleanup uploaded document after insert error:", cleanupError);
+    }
+    console.error("Error creating project document record:", error);
+    throw error;
+  }
+
+  const { data: signedData, error: signedError } = await supabase.storage
+    .from(PROJECT_DOCUMENT_BUCKET)
+    .createSignedUrl(filePath, 60 * 60);
+  if (signedError) {
+    console.warn("Error creating signed URL for uploaded project document:", signedError);
+  }
+
+  return {
+    ...data,
+    download_url: signedData?.signedUrl || null,
+  };
+}
+
+export async function renameProjectDocument(documentId, name, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedDocumentId = String(documentId || "").trim();
+  if (!parsedDocumentId) {
+    throw new Error("Document id is required.");
+  }
+
+  const nextName = String(name || "").trim();
+  if (!nextName) {
+    throw new Error("Document name is required.");
+  }
+
+  let updateQuery = supabase
+    .from("project_documents")
+    .update({ name: nextName })
+    .eq("id", parsedDocumentId)
+    .select(
+      "id, project_id, tenant_id, name, file_path, file_url, mime_type, file_ext, file_size_bytes, uploaded_by_member_id, uploaded_at, updated_at, archived_at"
+    )
+    .single();
+  updateQuery = applyTenantFilter(updateQuery, tenantId);
+  const { data, error } = await updateQuery;
+
+  if (error && isMissingRelationError(error, "project_documents")) {
+    throw new Error("Project documents table is not available. Run migration_045_project_documents.sql.");
+  }
+  if (error) {
+    console.error("Error renaming project document:", error);
+    throw error;
+  }
+
+  const path = String(data?.file_path || "").trim();
+  let downloadUrl = null;
+  if (path) {
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from(PROJECT_DOCUMENT_BUCKET)
+      .createSignedUrl(path, 60 * 60);
+    if (signedError) {
+      console.warn("Error creating signed URL for renamed project document:", signedError);
+    } else {
+      downloadUrl = signedData?.signedUrl || null;
+    }
+  }
+
+  return {
+    ...data,
+    download_url: downloadUrl || null,
+  };
+}
+
+export async function deleteProjectDocument(documentId, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedDocumentId = String(documentId || "").trim();
+  if (!parsedDocumentId) {
+    throw new Error("Document id is required.");
+  }
+
+  let existingQuery = supabase
+    .from("project_documents")
+    .select("id, file_path")
+    .eq("id", parsedDocumentId)
+    .maybeSingle();
+  existingQuery = applyTenantFilter(existingQuery, tenantId);
+  const { data: existingDoc, error: existingError } = await existingQuery;
+
+  if (existingError && isMissingRelationError(existingError, "project_documents")) {
+    throw new Error("Project documents table is not available. Run migration_045_project_documents.sql.");
+  }
+  if (existingError) {
+    console.error("Error loading project document before delete:", existingError);
+    throw existingError;
+  }
+  if (!existingDoc) {
+    return true;
+  }
+
+  const path = String(existingDoc?.file_path || "").trim();
+  if (path) {
+    const { error: storageError } = await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).remove([path]);
+    if (storageError) {
+      const message = extractStorageMessage(storageError);
+      if (!message.includes("not found")) {
+        console.error("Error deleting project document file from storage:", storageError);
+        throw storageError;
+      }
+    }
+  }
+
+  let deleteQuery = supabase
+    .from("project_documents")
+    .delete()
+    .eq("id", parsedDocumentId);
+  deleteQuery = applyTenantFilter(deleteQuery, tenantId);
+  const { error: deleteError } = await deleteQuery;
+
+  if (deleteError) {
+    console.error("Error deleting project document record:", deleteError);
+    throw deleteError;
+  }
+
+  return true;
+}
+
+export async function createProjectMediaAssets(projectId, files = [], tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedProjectId = Number.parseInt(String(projectId), 10);
+  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    throw new Error("Invalid project id");
+  }
+
+  if (!Array.isArray(files) || files.length === 0) {
+    return { gallery: [], coverUrl: null };
+  }
+
+  const tenantSegment = sanitizeStorageSegment(tenantId, "global");
+  const folder = `tenants/${tenantSegment}/projects/${parsedProjectId}/media`;
+
+  let nextDisplayOrder = 0;
+  let orderQuery = supabase
+    .from("project_gallery")
+    .select("display_order")
+    .eq("project_id", parsedProjectId)
+    .order("display_order", { ascending: false })
+    .limit(1);
+  orderQuery = applyTenantFilter(orderQuery, tenantId);
+  const { data: existingRows } = await orderQuery;
+  if (existingRows?.length) {
+    nextDisplayOrder = Number(existingRows[0]?.display_order ?? -1) + 1;
+    if (!Number.isFinite(nextDisplayOrder) || nextDisplayOrder < 0) {
+      nextDisplayOrder = 0;
+    }
+  }
+
+  const uploadedFiles = [];
+  for (const file of files) {
+    if (!file) continue;
+    const uploaded = await uploadBirdPhoto(file, { folder });
+    uploadedFiles.push({
+      ...uploaded,
+      originalName: file.name || null,
+    });
+  }
+
+  if (!uploadedFiles.length) {
+    return { gallery: [], coverUrl: null };
+  }
+
+  const galleryPayload = uploadedFiles.map((file, index) => ({
+    project_id: parsedProjectId,
+    image_url: file.publicUrl || file.path,
+    caption: deriveCaptionFromFileName(file.originalName),
+    is_primary: index === 0 && nextDisplayOrder === 0,
+    display_order: nextDisplayOrder + index,
+    tenant_id: tenantId ?? null,
+  }));
+
+  const { data: galleryRows, error: galleryError } = await supabase
+    .from("project_gallery")
+    .insert(galleryPayload)
+    .select("id, image_url, caption, is_primary, display_order");
+
+  if (galleryError) {
+    const paths = uploadedFiles.map((file) => file.path).filter(Boolean);
+    if (paths.length) {
+      try {
+        await supabase.storage.from("birds").remove(paths);
+      } catch (cleanupError) {
+        console.warn("Failed to cleanup uploaded media after gallery insert error:", cleanupError);
+      }
+    }
+    console.error("Error creating project gallery records:", galleryError);
+    throw new Error("Failed to save project media entries");
+  }
+
+  const coverUrl = galleryPayload[0]?.image_url || null;
+  if (coverUrl) {
+    let updateQuery = supabase
+      .from("iga_projects")
+      .update({ image_url: coverUrl })
+      .eq("id", parsedProjectId);
+    updateQuery = applyTenantFilter(updateQuery, tenantId);
+    const { error: coverError } = await updateQuery;
+    if (coverError) {
+      console.error("Error updating project cover image:", coverError);
+      throw new Error("Media uploaded, but failed to update project cover image");
+    }
+  }
+
+  return {
+    gallery: galleryRows || [],
+    coverUrl,
+  };
+}
+
+export async function createJppBird(payload, tenantId, projectId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
@@ -1730,6 +4056,7 @@ export async function createJppBird(payload) {
   const insertPayload = {
     product_id: payload.product_id,
     batch_id: normalizeOptional(payload.batch_id),
+    project_id: payload?.project_id ?? projectId ?? null,
     tag_id: normalizeOptional(payload.tag_id),
     bird_name: normalizeOptional(payload.bird_name),
     sex: payload.sex || "unknown",
@@ -1746,6 +4073,7 @@ export async function createJppBird(payload) {
     pattern_label: normalizeOptional(payload.pattern_label),
     age_stage: payload.age_stage || "unknown",
     created_by: user?.auth_id || null,
+    tenant_id: tenantId ?? null,
   };
 
   const { data, error } = await supabase
@@ -1762,14 +4090,20 @@ export async function createJppBird(payload) {
   return data;
 }
 
-export async function createProjectExpense(projectRef, payload) {
+export async function createProjectExpense(projectRef, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const projectId = await resolveProjectId(projectRef);
-  const receipt =
+  const projectId = await resolveProjectId(projectRef, tenantId);
+  const paymentReference = normalizeOptional(payload.payment_reference ?? payload.paymentReference);
+  const explicitReceiptFlag =
     "receipt" in payload ? Boolean(payload.receipt) : Boolean(payload.receipt_available);
+  const receipt =
+    explicitReceiptFlag ||
+    Boolean(paymentReference) ||
+    Boolean(normalizeOptional(payload.receipt_file_path ?? payload.receiptFilePath)) ||
+    Boolean(normalizeOptional(payload.receipt_file_url ?? payload.receiptFileUrl));
 
   const insertPayload = {
     project_id: projectId,
@@ -1782,22 +4116,59 @@ export async function createProjectExpense(projectRef, payload) {
     receipt,
     approved_by: payload.approved_by ?? null,
     created_by: payload.created_by ?? null,
+    tenant_id: tenantId ?? null,
   };
+  if (paymentReference !== null) {
+    insertPayload.payment_reference = paymentReference;
+  }
+  const receiptPath = normalizeOptional(payload.receipt_file_path ?? payload.receiptFilePath);
+  if (receiptPath !== null) {
+    insertPayload.receipt_file_path = receiptPath;
+  }
+  const receiptUrl = normalizeOptional(payload.receipt_file_url ?? payload.receiptFileUrl);
+  if (receiptUrl !== null) {
+    insertPayload.receipt_file_url = receiptUrl;
+  }
+  const receiptMimeType = normalizeOptional(payload.receipt_mime_type ?? payload.receiptMimeType);
+  if (receiptMimeType !== null) {
+    insertPayload.receipt_mime_type = receiptMimeType;
+  }
+  const receiptFileSize = Number(payload.receipt_file_size_bytes ?? payload.receiptFileSizeBytes);
+  if (Number.isFinite(receiptFileSize) && receiptFileSize >= 0) {
+    insertPayload.receipt_file_size_bytes = receiptFileSize;
+  }
+  const receiptUploadedAt = normalizeOptional(payload.receipt_uploaded_at ?? payload.receiptUploadedAt);
+  if (receiptUploadedAt !== null) {
+    insertPayload.receipt_uploaded_at = receiptUploadedAt;
+  }
 
   const { data, error } = await supabase
     .from("project_expenses")
     .insert(insertPayload)
     .select();
 
+  if (
+    error &&
+    (isMissingColumnError(error, "payment_reference") ||
+      isMissingColumnError(error, "receipt_file_path") ||
+      isMissingColumnError(error, "receipt_file_url") ||
+      isMissingColumnError(error, "receipt_mime_type") ||
+      isMissingColumnError(error, "receipt_file_size_bytes") ||
+      isMissingColumnError(error, "receipt_uploaded_at"))
+  ) {
+    throw new Error("Project expense receipt columns are missing. Run migration_046_project_expense_receipts.sql.");
+  }
   if (error) {
     console.error("Error creating project expense:", error);
     throw error;
   }
 
+  await ensureProjectExpenseCategoryDefinition(projectId, payload?.category, tenantId);
+
   return data?.[0] || null;
 }
 
-export async function updateProjectExpense(expenseId, payload) {
+export async function updateProjectExpense(expenseId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
@@ -1814,8 +4185,54 @@ export async function updateProjectExpense(expenseId, payload) {
   if ("receipt_available" in payload) {
     updatePayload.receipt = Boolean(payload.receipt_available);
   }
+  if ("payment_reference" in payload || "paymentReference" in payload) {
+    updatePayload.payment_reference = normalizeOptional(
+      payload.payment_reference ?? payload.paymentReference
+    );
+  }
+  if ("receipt_file_path" in payload || "receiptFilePath" in payload) {
+    updatePayload.receipt_file_path = normalizeOptional(
+      payload.receipt_file_path ?? payload.receiptFilePath
+    );
+  }
+  if ("receipt_file_url" in payload || "receiptFileUrl" in payload) {
+    updatePayload.receipt_file_url = normalizeOptional(
+      payload.receipt_file_url ?? payload.receiptFileUrl
+    );
+  }
+  if ("receipt_mime_type" in payload || "receiptMimeType" in payload) {
+    updatePayload.receipt_mime_type = normalizeOptional(
+      payload.receipt_mime_type ?? payload.receiptMimeType
+    );
+  }
+  if ("receipt_file_size_bytes" in payload || "receiptFileSizeBytes" in payload) {
+    const receiptFileSize = Number(payload.receipt_file_size_bytes ?? payload.receiptFileSizeBytes);
+    updatePayload.receipt_file_size_bytes =
+      Number.isFinite(receiptFileSize) && receiptFileSize >= 0 ? receiptFileSize : null;
+  }
+  if ("receipt_uploaded_at" in payload || "receiptUploadedAt" in payload) {
+    updatePayload.receipt_uploaded_at = normalizeOptional(
+      payload.receipt_uploaded_at ?? payload.receiptUploadedAt
+    );
+  }
   if ("approved_by" in payload) updatePayload.approved_by = payload.approved_by;
   if ("created_by" in payload) updatePayload.created_by = payload.created_by;
+
+  if (
+    !("receipt" in payload) &&
+    !("receipt_available" in payload) &&
+    (("payment_reference" in payload || "paymentReference" in payload) ||
+      ("receipt_file_path" in payload || "receiptFilePath" in payload) ||
+      ("receipt_file_url" in payload || "receiptFileUrl" in payload))
+  ) {
+    const hasProof =
+      Boolean(normalizeOptional(payload.payment_reference ?? payload.paymentReference)) ||
+      Boolean(normalizeOptional(payload.receipt_file_path ?? payload.receiptFilePath)) ||
+      Boolean(normalizeOptional(payload.receipt_file_url ?? payload.receiptFileUrl));
+    if (hasProof) {
+      updatePayload.receipt = true;
+    }
+  }
 
   if (Object.keys(updatePayload).length === 0) {
     throw new Error("No fields to update");
@@ -1823,29 +4240,199 @@ export async function updateProjectExpense(expenseId, payload) {
 
   updatePayload.updated_at = new Date().toISOString();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("project_expenses")
     .update(updatePayload)
-    .eq("id", expenseId)
-    .select();
+    .eq("id", expenseId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select();
 
+  if (
+    error &&
+    (isMissingColumnError(error, "payment_reference") ||
+      isMissingColumnError(error, "receipt_file_path") ||
+      isMissingColumnError(error, "receipt_file_url") ||
+      isMissingColumnError(error, "receipt_mime_type") ||
+      isMissingColumnError(error, "receipt_file_size_bytes") ||
+      isMissingColumnError(error, "receipt_uploaded_at"))
+  ) {
+    throw new Error("Project expense receipt columns are missing. Run migration_046_project_expense_receipts.sql.");
+  }
   if (error) {
     console.error("Error updating project expense:", error);
     throw error;
   }
 
-  return data?.[0] || null;
+  const updatedRow = data?.[0] || null;
+  const categoryToSync = "category" in payload ? payload.category : updatedRow?.category;
+  if (updatedRow?.project_id && categoryToSync) {
+    await ensureProjectExpenseCategoryDefinition(updatedRow.project_id, categoryToSync, tenantId);
+  }
+
+  return updatedRow;
 }
 
-export async function deleteProjectExpense(expenseId) {
+export async function uploadProjectExpenseReceipt(expenseId, file, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { error } = await supabase
+  const parsedExpenseId = String(expenseId || "").trim();
+  if (!parsedExpenseId) {
+    throw new Error("Expense id is required.");
+  }
+  if (!file) {
+    throw new Error("Receipt file is required.");
+  }
+
+  const { isAllowed, mimeType, extension } = isAllowedExpenseReceiptType(file);
+  if (!isAllowed) {
+    throw new Error("Upload a receipt proof as .pdf or image.");
+  }
+
+  const fileSize = Number(file?.size || 0);
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    throw new Error("Invalid receipt file size.");
+  }
+  if (fileSize > PROJECT_EXPENSE_RECEIPT_MAX_SIZE_BYTES) {
+    throw new Error("Receipt file is too large. Maximum allowed size is 15 MB.");
+  }
+
+  let expenseQuery = supabase
+    .from("project_expenses")
+    .select("id, project_id, tenant_id, receipt_file_path")
+    .eq("id", parsedExpenseId)
+    .maybeSingle();
+  expenseQuery = applyTenantFilter(expenseQuery, tenantId);
+  const { data: expenseRow, error: expenseError } = await expenseQuery;
+
+  if (expenseError && isMissingColumnError(expenseError, "receipt_file_path")) {
+    throw new Error("Project expense receipt columns are missing. Run migration_046_project_expense_receipts.sql.");
+  }
+  if (expenseError) {
+    console.error("Error fetching expense for receipt upload:", expenseError);
+    throw expenseError;
+  }
+  if (!expenseRow) {
+    throw new Error("Expense not found.");
+  }
+
+  const projectId = Number.parseInt(String(expenseRow?.project_id ?? ""), 10);
+  if (!Number.isInteger(projectId) || projectId <= 0) {
+    throw new Error("Expense is missing a valid project.");
+  }
+
+  let effectiveTenantId = normalizeOptional(expenseRow?.tenant_id) || normalizeOptional(tenantId);
+  if (!effectiveTenantId) {
+    try {
+      const { data: projectRow, error: projectError } = await supabase
+        .from("iga_projects")
+        .select("tenant_id")
+        .eq("id", projectId)
+        .maybeSingle();
+      if (projectError) {
+        console.warn("Unable to resolve tenant for expense receipt upload:", projectError);
+      } else {
+        effectiveTenantId = normalizeOptional(projectRow?.tenant_id) || effectiveTenantId;
+      }
+    } catch (lookupError) {
+      console.warn("Project tenant lookup failed for expense receipt upload:", lookupError);
+    }
+  }
+
+  if (!effectiveTenantId) {
+    throw new Error("Project tenant is missing. Assign this project to a tenant, then try again.");
+  }
+
+  const safeExtension = extension || (mimeType.startsWith("image/") ? "jpg" : "pdf");
+  const tenantSegment = sanitizeStorageSegment(effectiveTenantId, "global");
+  const safeBaseName = sanitizeDocumentName(file?.name, "receipt");
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const timestamp = Date.now();
+  const fileName = `${timestamp}-${safeBaseName}-${suffix}.${safeExtension}`;
+  const filePath = `tenants/${tenantSegment}/projects/${projectId}/expenses/${parsedExpenseId}/receipts/${fileName}`;
+
+  const { error: uploadError } = await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).upload(filePath, file, {
+    cacheControl: "3600",
+    upsert: false,
+    contentType: file.type || undefined,
+  });
+
+  if (uploadError) {
+    console.error("Error uploading expense receipt:", uploadError);
+    throw uploadError;
+  }
+
+  const previousPath = String(expenseRow?.receipt_file_path || "").trim();
+  if (previousPath) {
+    const { error: removeError } = await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).remove([previousPath]);
+    if (removeError) {
+      const message = extractStorageMessage(removeError);
+      if (!message.includes("not found")) {
+        console.warn("Previous expense receipt cleanup failed:", removeError);
+      }
+    }
+  }
+
+  const { data: publicData } = supabase.storage.from(PROJECT_DOCUMENT_BUCKET).getPublicUrl(filePath);
+  const nowIso = new Date().toISOString();
+  const updatePayload = {
+    receipt: true,
+    receipt_file_path: filePath,
+    receipt_file_url: publicData?.publicUrl || null,
+    receipt_mime_type: mimeType || file.type || "application/octet-stream",
+    receipt_file_size_bytes: fileSize,
+    receipt_uploaded_at: nowIso,
+    updated_at: nowIso,
+  };
+
+  let updateQuery = supabase
+    .from("project_expenses")
+    .update(updatePayload)
+    .eq("id", parsedExpenseId);
+  updateQuery = applyTenantFilter(updateQuery, effectiveTenantId);
+  const { data: updatedRows, error: updateError } = await updateQuery.select();
+
+  if (
+    updateError &&
+    (isMissingColumnError(updateError, "receipt_file_path") ||
+      isMissingColumnError(updateError, "receipt_file_url") ||
+      isMissingColumnError(updateError, "receipt_mime_type") ||
+      isMissingColumnError(updateError, "receipt_file_size_bytes") ||
+      isMissingColumnError(updateError, "receipt_uploaded_at"))
+  ) {
+    throw new Error("Project expense receipt columns are missing. Run migration_046_project_expense_receipts.sql.");
+  }
+  if (updateError) {
+    console.error("Error saving expense receipt metadata:", updateError);
+    throw updateError;
+  }
+
+  const updatedExpense = updatedRows?.[0] || null;
+  const { data: signedData, error: signedError } = await supabase.storage
+    .from(PROJECT_DOCUMENT_BUCKET)
+    .createSignedUrl(filePath, 60 * 60);
+  if (signedError) {
+    console.warn("Error creating signed URL for expense receipt:", signedError);
+  }
+
+  return {
+    ...updatedExpense,
+    receipt_download_url: signedData?.signedUrl || null,
+  };
+}
+
+export async function deleteProjectExpense(expenseId, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  let query = supabase
     .from("project_expenses")
     .delete()
     .eq("id", expenseId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     console.error("Error deleting project expense:", error);
@@ -1855,12 +4442,12 @@ export async function deleteProjectExpense(expenseId) {
   return true;
 }
 
-export async function createProjectSale(projectRef, payload) {
+export async function createProjectSale(projectRef, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const projectId = await resolveProjectId(projectRef);
+  const projectId = await resolveProjectId(projectRef, tenantId);
 
   const insertPayload = {
     project_id: projectId,
@@ -1878,6 +4465,7 @@ export async function createProjectSale(projectRef, payload) {
     payment_method: normalizeOptional(payload.payment_method),
     notes: normalizeOptional(payload.notes),
     created_by: payload.created_by ?? null,
+    tenant_id: tenantId ?? null,
   };
 
   const { data, error } = await supabase
@@ -1893,7 +4481,7 @@ export async function createProjectSale(projectRef, payload) {
   return data?.[0] || null;
 }
 
-export async function updateProjectSale(saleId, payload) {
+export async function updateProjectSale(saleId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
@@ -1921,11 +4509,12 @@ export async function updateProjectSale(saleId, payload) {
 
   updatePayload.updated_at = new Date().toISOString();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("project_sales")
     .update(updatePayload)
-    .eq("id", saleId)
-    .select();
+    .eq("id", saleId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select();
 
   if (error) {
     console.error("Error updating project sale:", error);
@@ -1935,15 +4524,17 @@ export async function updateProjectSale(saleId, payload) {
   return data?.[0] || null;
 }
 
-export async function deleteProjectSale(saleId) {
+export async function deleteProjectSale(saleId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { error } = await supabase
+  let query = supabase
     .from("project_sales")
     .delete()
     .eq("id", saleId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     console.error("Error deleting project sale:", error);
@@ -1953,16 +4544,16 @@ export async function deleteProjectSale(saleId) {
   return true;
 }
 
-export async function createJppExpense(payload) {
-  return createProjectExpense("JPP", payload);
+export async function createJppExpense(payload, tenantId, projectId) {
+  return createProjectExpense(projectId ?? "jpp", payload, tenantId);
 }
 
-export async function updateJppExpense(expenseId, payload) {
-  return updateProjectExpense(expenseId, payload);
+export async function updateJppExpense(expenseId, payload, tenantId) {
+  return updateProjectExpense(expenseId, payload, tenantId);
 }
 
-export async function deleteJppExpense(expenseId) {
-  return deleteProjectExpense(expenseId);
+export async function deleteJppExpense(expenseId, tenantId) {
+  return deleteProjectExpense(expenseId, tenantId);
 }
 
 // ============================================
@@ -1972,7 +4563,7 @@ export async function deleteJppExpense(expenseId) {
 /**
  * Get JGF batches
  */
-export async function getJgfBatches() {
+export async function getJgfBatches(tenantId, projectId) {
   const mockBatches = [
     {
       id: 1,
@@ -2004,10 +4595,15 @@ export async function getJgfBatches() {
 
   if (!isSupabaseConfigured || !supabase) return mockBatches;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_batches")
     .select("*")
     .order("start_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching JGF batches:", error);
@@ -2020,7 +4616,7 @@ export async function getJgfBatches() {
 /**
  * Get JGF batch KPIs
  */
-export async function getJgfBatchKpis() {
+export async function getJgfBatchKpis(tenantId, projectId) {
   const mockKpis = [
     {
       id: 1,
@@ -2041,10 +4637,15 @@ export async function getJgfBatchKpis() {
 
   if (!isSupabaseConfigured || !supabase) return mockKpis;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_batch_kpis")
     .select("*")
     .order("start_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching JGF batch KPIs:", error);
@@ -2057,7 +4658,7 @@ export async function getJgfBatchKpis() {
 /**
  * Get JGF inventory
  */
-export async function getJgfInventory() {
+export async function getJgfInventory(tenantId, projectId) {
   const mockInventory = [
     { id: 1, item_type: "raw_material", item_name: "Raw Groundnuts", quantity: 150, unit: "kg", unit_cost: 150, reorder_level: 50 },
     { id: 2, item_type: "packaging", item_name: "Glass Jars 500g", quantity: 200, unit: "units", unit_cost: 45, reorder_level: 100 },
@@ -2066,10 +4667,15 @@ export async function getJgfInventory() {
 
   if (!isSupabaseConfigured || !supabase) return mockInventory;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_inventory")
     .select("*")
     .order("item_type", { ascending: true });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching JGF inventory:", error);
@@ -2082,7 +4688,7 @@ export async function getJgfInventory() {
 /**
  * Get JGF production logs
  */
-export async function getJgfProductionLogs() {
+export async function getJgfProductionLogs(tenantId, projectId) {
   const mockLogs = [
     {
       id: 1,
@@ -2100,10 +4706,15 @@ export async function getJgfProductionLogs() {
 
   if (!isSupabaseConfigured || !supabase) return mockLogs;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_production_logs")
     .select("*")
     .order("log_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching JGF production logs:", error);
@@ -2116,7 +4727,7 @@ export async function getJgfProductionLogs() {
 /**
  * Get JGF sales
  */
-export async function getJgfSales() {
+export async function getJgfSales(tenantId, projectId) {
   const mockSales = [
     {
       id: 1,
@@ -2134,13 +4745,13 @@ export async function getJgfSales() {
 
   if (!isSupabaseConfigured || !supabase) return mockSales;
 
-  return getProjectSales("JGF");
+  return getProjectSales(projectId ?? "jgf", tenantId);
 }
 
 /**
  * Get JGF expenses
  */
-export async function getJgfExpenses() {
+export async function getJgfExpenses(tenantId, projectId) {
   const mockExpenses = [
     {
       id: 1,
@@ -2156,7 +4767,7 @@ export async function getJgfExpenses() {
 
   if (!isSupabaseConfigured || !supabase) return mockExpenses;
 
-  const expenses = await getProjectExpenses("JGF");
+  const expenses = await getProjectExpenses(projectId ?? "jgf", tenantId);
   return expenses.map((expense) => ({
     ...expense,
     receipt_available: Boolean(expense.receipt),
@@ -2166,7 +4777,7 @@ export async function getJgfExpenses() {
 /**
  * Get JGF purchases
  */
-export async function getJgfPurchases() {
+export async function getJgfPurchases(tenantId, projectId) {
   const mockPurchases = [
     {
       id: 1,
@@ -2184,10 +4795,15 @@ export async function getJgfPurchases() {
 
   if (!isSupabaseConfigured || !supabase) return mockPurchases;
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_purchases")
     .select("*")
     .order("purchase_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching JGF purchases:", error);
@@ -2199,14 +4815,18 @@ export async function getJgfPurchases() {
 
 // JGF CRUD Operations
 
-export async function createJgfBatch(payload) {
+export async function createJgfBatch(payload, tenantId, projectId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
   const { data, error } = await supabase
     .from("jgf_batches")
-    .insert(payload)
+    .insert({
+      ...payload,
+      project_id: payload?.project_id ?? projectId ?? null,
+      tenant_id: tenantId ?? null,
+    })
     .select()
     .single();
 
@@ -2218,17 +4838,17 @@ export async function createJgfBatch(payload) {
   return data;
 }
 
-export async function updateJgfBatch(batchId, payload) {
+export async function updateJgfBatch(batchId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_batches")
     .update(payload)
-    .eq("id", batchId)
-    .select()
-    .single();
+    .eq("id", batchId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     console.error("Error updating JGF batch:", error);
@@ -2238,15 +4858,17 @@ export async function updateJgfBatch(batchId, payload) {
   return data;
 }
 
-export async function deleteJgfBatch(batchId) {
+export async function deleteJgfBatch(batchId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { error } = await supabase
+  let query = supabase
     .from("jgf_batches")
     .delete()
     .eq("id", batchId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     console.error("Error deleting JGF batch:", error);
@@ -2256,14 +4878,18 @@ export async function deleteJgfBatch(batchId) {
   return true;
 }
 
-export async function createJgfProductionLog(payload) {
+export async function createJgfProductionLog(payload, tenantId, projectId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
   const { data, error } = await supabase
     .from("jgf_production_logs")
-    .insert(payload)
+    .insert({
+      ...payload,
+      project_id: payload?.project_id ?? projectId ?? null,
+      tenant_id: tenantId ?? null,
+    })
     .select()
     .single();
 
@@ -2275,17 +4901,17 @@ export async function createJgfProductionLog(payload) {
   return data;
 }
 
-export async function updateJgfProductionLog(logId, payload) {
+export async function updateJgfProductionLog(logId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_production_logs")
     .update(payload)
-    .eq("id", logId)
-    .select()
-    .single();
+    .eq("id", logId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     console.error("Error updating JGF production log:", error);
@@ -2295,15 +4921,17 @@ export async function updateJgfProductionLog(logId, payload) {
   return data;
 }
 
-export async function deleteJgfProductionLog(logId) {
+export async function deleteJgfProductionLog(logId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { error } = await supabase
+  let query = supabase
     .from("jgf_production_logs")
     .delete()
     .eq("id", logId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     console.error("Error deleting JGF production log:", error);
@@ -2313,41 +4941,41 @@ export async function deleteJgfProductionLog(logId) {
   return true;
 }
 
-export async function createJgfSale(payload) {
-  return createProjectSale("JGF", payload);
+export async function createJgfSale(payload, tenantId, projectId) {
+  return createProjectSale(projectId ?? "jgf", payload, tenantId);
 }
 
-export async function updateJgfSale(saleId, payload) {
-  return updateProjectSale(saleId, payload);
+export async function updateJgfSale(saleId, payload, tenantId) {
+  return updateProjectSale(saleId, payload, tenantId);
 }
 
-export async function deleteJgfSale(saleId) {
-  return deleteProjectSale(saleId);
+export async function deleteJgfSale(saleId, tenantId) {
+  return deleteProjectSale(saleId, tenantId);
 }
 
-export async function createJgfExpense(payload) {
-  return createProjectExpense("JGF", payload);
+export async function createJgfExpense(payload, tenantId, projectId) {
+  return createProjectExpense(projectId ?? "jgf", payload, tenantId);
 }
 
-export async function updateJgfExpense(expenseId, payload) {
-  return updateProjectExpense(expenseId, payload);
+export async function updateJgfExpense(expenseId, payload, tenantId) {
+  return updateProjectExpense(expenseId, payload, tenantId);
 }
 
-export async function deleteJgfExpense(expenseId) {
-  return deleteProjectExpense(expenseId);
+export async function deleteJgfExpense(expenseId, tenantId) {
+  return deleteProjectExpense(expenseId, tenantId);
 }
 
-export async function updateJgfInventory(itemId, payload) {
+export async function updateJgfInventory(itemId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_inventory")
     .update(payload)
-    .eq("id", itemId)
-    .select()
-    .single();
+    .eq("id", itemId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     console.error("Error updating JGF inventory:", error);
@@ -2357,14 +4985,18 @@ export async function updateJgfInventory(itemId, payload) {
   return data;
 }
 
-export async function createJgfPurchase(payload) {
+export async function createJgfPurchase(payload, tenantId, projectId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
   const { data, error } = await supabase
     .from("jgf_purchases")
-    .insert(payload)
+    .insert({
+      ...payload,
+      project_id: payload?.project_id ?? projectId ?? null,
+      tenant_id: tenantId ?? null,
+    })
     .select()
     .single();
 
@@ -2376,17 +5008,17 @@ export async function createJgfPurchase(payload) {
   return data;
 }
 
-export async function updateJgfPurchase(purchaseId, payload) {
+export async function updateJgfPurchase(purchaseId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_purchases")
     .update(payload)
-    .eq("id", purchaseId)
-    .select()
-    .single();
+    .eq("id", purchaseId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     console.error("Error updating JGF purchase:", error);
@@ -2396,15 +5028,17 @@ export async function updateJgfPurchase(purchaseId, payload) {
   return data;
 }
 
-export async function deleteJgfPurchase(purchaseId) {
+export async function deleteJgfPurchase(purchaseId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Database not configured");
   }
 
-  const { error } = await supabase
+  let query = supabase
     .from("jgf_purchases")
     .delete()
     .eq("id", purchaseId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     console.error("Error deleting JGF purchase:", error);
@@ -2418,12 +5052,17 @@ export async function deleteJgfPurchase(purchaseId) {
 // JGF FARMING & LAND FUNCTIONS
 // ===================================
 
-export async function getJgfLandLeases() {
+export async function getJgfLandLeases(tenantId, projectId) {
   if (!isSupabaseConfigured) return [];
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_land_leases")
     .select("*")
     .order("start_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
   if (error) {
     console.error("Error fetching land leases:", error);
     return [];
@@ -2431,14 +5070,21 @@ export async function getJgfLandLeases() {
   return data;
 }
 
-export async function createJgfLandLease(lease) {
+export async function createJgfLandLease(lease, tenantId, projectId) {
   if (!isSupabaseConfigured) return null;
-  const user = await getCurrentMember(); 
+  const user = await getCurrentMember();
   if (!user) return null;
 
   const { data, error } = await supabase
     .from("jgf_land_leases")
-    .insert([{ ...lease, created_by: user.auth_id }]) 
+    .insert([
+      {
+        ...lease,
+        created_by: user.auth_id,
+        project_id: lease?.project_id ?? projectId ?? null,
+        tenant_id: tenantId ?? null,
+      },
+    ])
     .select()
     .single();
 
@@ -2446,35 +5092,42 @@ export async function createJgfLandLease(lease) {
   return data;
 }
 
-export async function updateJgfLandLease(id, updates) {
+export async function updateJgfLandLease(id, updates, tenantId) {
   if (!isSupabaseConfigured) return null;
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_land_leases")
     .update(updates)
-    .eq("id", id)
-    .select()
-    .single();
+    .eq("id", id);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) throw error;
   return data;
 }
 
-export async function deleteJgfLandLease(id) {
+export async function deleteJgfLandLease(id, tenantId) {
   if (!isSupabaseConfigured) return null;
-  const { error } = await supabase.from("jgf_land_leases").delete().eq("id", id);
+  let query = supabase.from("jgf_land_leases").delete().eq("id", id);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
   if (error) throw error;
   return true;
 }
 
-export async function getJgfCropCycles() {
+export async function getJgfCropCycles(tenantId, projectId) {
   if (!isSupabaseConfigured) return [];
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_crop_cycles")
     .select(`
       *,
       lease:lease_id (name, location)
     `)
     .order("start_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching crop cycles:", error);
@@ -2483,14 +5136,21 @@ export async function getJgfCropCycles() {
   return data;
 }
 
-export async function createJgfCropCycle(cycle) {
+export async function createJgfCropCycle(cycle, tenantId, projectId) {
   if (!isSupabaseConfigured) return null;
   const user = await getCurrentMember();
   if (!user) return null;
 
   const { data, error } = await supabase
     .from("jgf_crop_cycles")
-    .insert([{ ...cycle, created_by: user.auth_id }])
+    .insert([
+      {
+        ...cycle,
+        created_by: user.auth_id,
+        project_id: cycle?.project_id ?? projectId ?? null,
+        tenant_id: tenantId ?? null,
+      },
+    ])
     .select()
     .single();
 
@@ -2498,32 +5158,38 @@ export async function createJgfCropCycle(cycle) {
   return data;
 }
 
-export async function updateJgfCropCycle(id, updates) {
+export async function updateJgfCropCycle(id, updates, tenantId) {
   if (!isSupabaseConfigured) return null;
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_crop_cycles")
     .update(updates)
-    .eq("id", id)
-    .select()
-    .single();
+    .eq("id", id);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) throw error;
   return data;
 }
 
-export async function deleteJgfCropCycle(id) {
+export async function deleteJgfCropCycle(id, tenantId) {
   if (!isSupabaseConfigured) return null;
-  const { error } = await supabase.from("jgf_crop_cycles").delete().eq("id", id);
+  let query = supabase.from("jgf_crop_cycles").delete().eq("id", id);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
   if (error) throw error;
   return true;
 }
 
-export async function getJgfFarmingLogs(cycleId) {
+export async function getJgfFarmingLogs(cycleId, tenantId, projectId) {
   if (!isSupabaseConfigured) return [];
   let query = supabase
     .from("jgf_farming_activities")
     .select("*")
     .order("activity_date", { ascending: false });
+  if (projectId) {
+    query = query.eq("project_id", projectId);
+  }
+  query = applyTenantFilter(query, tenantId);
 
   if (cycleId) {
     query = query.eq("cycle_id", cycleId);
@@ -2537,14 +5203,21 @@ export async function getJgfFarmingLogs(cycleId) {
   return data;
 }
 
-export async function createJgfFarmingLog(log) {
+export async function createJgfFarmingLog(log, tenantId, projectId) {
   if (!isSupabaseConfigured) return null;
   const user = await getCurrentMember();
   if (!user) return null;
 
   const { data, error } = await supabase
     .from("jgf_farming_activities")
-    .insert([{ ...log, created_by: user.auth_id }])
+    .insert([
+      {
+        ...log,
+        created_by: user.auth_id,
+        project_id: log?.project_id ?? projectId ?? null,
+        tenant_id: tenantId ?? null,
+      },
+    ])
     .select()
     .single();
 
@@ -2552,22 +5225,24 @@ export async function createJgfFarmingLog(log) {
   return data;
 }
 
-export async function updateJgfFarmingLog(id, updates) {
+export async function updateJgfFarmingLog(id, updates, tenantId) {
   if (!isSupabaseConfigured) return null;
-  const { data, error } = await supabase
+  let query = supabase
     .from("jgf_farming_activities")
     .update(updates)
-    .eq("id", id)
-    .select()
-    .single();
+    .eq("id", id);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) throw error;
   return data;
 }
 
-export async function deleteJgfFarmingLog(id) {
+export async function deleteJgfFarmingLog(id, tenantId) {
   if (!isSupabaseConfigured) return null;
-  const { error } = await supabase.from("jgf_farming_activities").delete().eq("id", id);
+  let query = supabase.from("jgf_farming_activities").delete().eq("id", id);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
   if (error) throw error;
   return true;
 }
@@ -2575,14 +5250,16 @@ export async function deleteJgfFarmingLog(id) {
 /**
  * Get blog posts / news
  */
-export async function getNews() {
+export async function getNews(tenantId) {
   if (!isSupabaseConfigured || !supabase) return [];
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("blogs")
     .select("*")
     .eq("published", true)
     .order("date", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching news:", error);
@@ -2592,42 +5269,673 @@ export async function getNews() {
   return data || [];
 }
 
+export async function getOrganizationTemplates(tenantId) {
+  if (!isSupabaseConfigured || !supabase) return [];
+
+  const effectiveTenantId = normalizeOptional(tenantId);
+  const selectVariants = [
+    "id, template_key, tenant_id, name, category, format, description, sections, file_path, mime_type, file_ext, file_size_bytes, is_active, sort_order, created_at, updated_at",
+    "id, template_key, tenant_id, name, category, format, description, file_path, mime_type, file_ext, file_size_bytes, is_active, sort_order, created_at, updated_at",
+    "id, template_key, tenant_id, name, category, format, description, file_path, is_active, sort_order",
+    "id, tenant_id, name, category, format, description, file_path, is_active, sort_order",
+  ];
+
+  let data = null;
+  let error = null;
+  for (const selectColumns of selectVariants) {
+    let query = supabase
+      .from("organization_templates")
+      .select(selectColumns)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("name", { ascending: true });
+
+    if (effectiveTenantId) {
+      query = query.or(`tenant_id.is.null,tenant_id.eq.${effectiveTenantId}`);
+    } else {
+      query = query.is("tenant_id", null);
+    }
+
+    const result = await query;
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+  }
+
+  if (error && isMissingRelationError(error, "organization_templates")) {
+    throw new Error(
+      "Organization templates table is not available. Run migration_048_organization_templates.sql."
+    );
+  }
+
+  if (error) {
+    console.error("Error fetching organization templates:", error);
+    throw error;
+  }
+
+  return (Array.isArray(data) ? data : []).map((row) => {
+    const sections = Array.isArray(row?.sections)
+      ? row.sections.map((section) => String(section || "").trim()).filter(Boolean)
+      : [];
+    const filePath = normalizeOptional(row?.file_path);
+    const category = normalizeOptional(row?.category) || "General Templates";
+    const description = normalizeOptional(row?.description);
+
+    return {
+      ...row,
+      category,
+      description: description || "",
+      sections,
+      file_path: filePath || null,
+      format: getTemplateFormatFromMetadata(row),
+      can_download: Boolean(filePath),
+    };
+  });
+}
+
+export async function getOrganizationTemplateDownloadUrl(filePath) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const raw = String(filePath || "").trim();
+  if (!raw) {
+    throw new Error("Template file path is missing.");
+  }
+
+  const publicMarker = `/storage/v1/object/public/${ORGANIZATION_TEMPLATE_BUCKET}/`;
+  const signedMarker = `/storage/v1/object/sign/${ORGANIZATION_TEMPLATE_BUCKET}/`;
+  const privateMarker = `/storage/v1/object/${ORGANIZATION_TEMPLATE_BUCKET}/`;
+  let normalizedPath = raw;
+  if (raw.includes(publicMarker)) {
+    normalizedPath = raw.split(publicMarker)[1] || "";
+  } else if (raw.includes(signedMarker)) {
+    normalizedPath = raw.split(signedMarker)[1] || "";
+  } else if (raw.includes(privateMarker)) {
+    normalizedPath = raw.split(privateMarker)[1] || "";
+  }
+  normalizedPath = normalizedPath.replace(/\?.*$/, "").trim();
+  if (!normalizedPath) {
+    throw new Error("Template file path is invalid.");
+  }
+
+  const { data: signedData, error: signedError } = await supabase.storage
+    .from(ORGANIZATION_TEMPLATE_BUCKET)
+    .createSignedUrl(normalizedPath, 60 * 60);
+
+  if (signedError) {
+    const message = extractStorageMessage(signedError);
+    if (message.includes("not found")) {
+      throw new Error("Template file was not found in storage. Re-upload the template and try again.");
+    }
+    console.error("Error creating signed URL for organization template:", signedError);
+    throw signedError;
+  }
+
+  return signedData?.signedUrl || null;
+}
+
 /**
  * Get documents
  */
-export async function getDocuments() {
+export async function getDocuments(tenantId) {
   if (!isSupabaseConfigured || !supabase) return [];
 
-  const { data, error } = await supabase
-    .from("documents")
-    .select("*")
-    .order("uploaded_at", { ascending: false });
+  const looksLikeStoragePath = (value) => /^tenants\/[^/]+\/.+/.test(String(value || "").trim());
+  const resolveDocumentPath = (row) => {
+    const explicitPath = String(row?.file_path || "").trim();
+    if (explicitPath) return explicitPath;
+    const legacyFileUrl = String(row?.file_url || "").trim();
+    if (looksLikeStoragePath(legacyFileUrl)) return legacyFileUrl;
+    return "";
+  };
+
+  const selectVariants = [
+    "id, tenant_id, name, type, description, file_url, file_path, mime_type, file_ext, file_size_bytes, uploaded_by_member_id, uploaded_at",
+    "id, tenant_id, name, type, file_url, file_path, mime_type, file_ext, file_size_bytes, uploaded_by_member_id, uploaded_at",
+    "id, tenant_id, name, type, file_url, file_path, uploaded_at",
+    "id, tenant_id, name, type, file_url, uploaded_at",
+    "id, name, type, file_url, uploaded_at",
+  ];
+
+  let data = null;
+  let error = null;
+  for (const selectColumns of selectVariants) {
+    let query = supabase
+      .from("documents")
+      .select(selectColumns)
+      .order("uploaded_at", { ascending: false });
+    query = applyTenantFilter(query, tenantId);
+    const result = await query;
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+  }
 
   if (error) {
     console.error("Error fetching documents:", error);
     return [];
   }
 
-  return data || [];
+  const rows = Array.isArray(data) ? data : [];
+  const signedUrlMap = new Map();
+  const pathsToSign = Array.from(
+    new Set(
+      rows
+        .map((row) => resolveDocumentPath(row))
+        .filter(Boolean)
+    )
+  );
+
+  if (pathsToSign.length) {
+    await Promise.all(
+      pathsToSign.map(async (path) => {
+        const { data: signedData, error: signedError } = await supabase.storage
+          .from(PROJECT_DOCUMENT_BUCKET)
+          .createSignedUrl(path, 60 * 60);
+        if (signedError) {
+          console.warn("Error creating signed URL for organization document:", signedError);
+          return;
+        }
+        signedUrlMap.set(path, signedData?.signedUrl || null);
+      })
+    );
+  }
+
+  return rows.map((row) => {
+    const storagePath = resolveDocumentPath(row);
+    const legacyUrl = String(row?.file_url || "").trim();
+    const looksLikeUrl = /^https?:\/\//i.test(legacyUrl);
+    const downloadUrl = signedUrlMap.get(storagePath) || (looksLikeUrl ? legacyUrl : null);
+    return {
+      ...row,
+      file_path: storagePath || null,
+      download_url: downloadUrl,
+      file_url: downloadUrl || legacyUrl || null,
+    };
+  });
+}
+
+export async function uploadOrganizationDocument(file, options = {}, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+  const effectiveTenantId = normalizeOptional(tenantId);
+  if (!effectiveTenantId) {
+    throw new Error("Tenant is required to upload organization documents.");
+  }
+  if (!file) {
+    throw new Error("Document file is required.");
+  }
+
+  const { isAllowed, mimeType, extension } = isAllowedProjectDocumentType(file);
+  if (!isAllowed) {
+    throw new Error("Only .docx, .pdf, and image files are allowed.");
+  }
+
+  const fileSize = Number(file?.size || 0);
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    throw new Error("Invalid file size.");
+  }
+  if (fileSize > PROJECT_DOCUMENT_MAX_SIZE_BYTES) {
+    throw new Error("File is too large. Maximum allowed size is 25 MB.");
+  }
+
+  const safeExtension = extension || (mimeType.startsWith("image/") ? "jpg" : "bin");
+  const tenantSegment = sanitizeStorageSegment(effectiveTenantId, "global");
+  const safeBaseName = sanitizeDocumentName(file?.name || options?.name || "document");
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const timestamp = Date.now();
+  const fileName = `${timestamp}-${safeBaseName}-${suffix}.${safeExtension}`;
+  const filePath = `tenants/${tenantSegment}/organization/documents/${fileName}`;
+
+  const { error: uploadError } = await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).upload(filePath, file, {
+    cacheControl: "3600",
+    upsert: false,
+    contentType: file.type || undefined,
+  });
+
+  if (uploadError) {
+    console.error("Error uploading organization document:", uploadError);
+    throw uploadError;
+  }
+
+  const uploadedByMemberId = parseOptionalMemberId(options?.uploaded_by_member_id ?? options?.uploadedByMemberId);
+  const documentType =
+    normalizeOptional(options?.type || options?.documentType || options?.category) ||
+    (mimeType.startsWith("image/") ? "Image" : safeExtension.toUpperCase());
+  const documentName = normalizeOptional(options?.name) || file?.name || "Document";
+  const documentDescription = normalizeOptional(options?.description);
+
+  const insertVariants = [
+    {
+      tenant_id: effectiveTenantId,
+      name: documentName,
+      type: documentType,
+      description: documentDescription,
+      file_url: filePath,
+      file_path: filePath,
+      mime_type: mimeType || file.type || "application/octet-stream",
+      file_ext: safeExtension,
+      file_size_bytes: fileSize,
+      uploaded_by_member_id: uploadedByMemberId,
+      uploaded_at: new Date().toISOString(),
+    },
+    {
+      tenant_id: effectiveTenantId,
+      name: documentName,
+      type: documentType,
+      file_url: filePath,
+      file_path: filePath,
+      uploaded_at: new Date().toISOString(),
+    },
+    {
+      tenant_id: effectiveTenantId,
+      name: documentName,
+      type: documentType,
+      file_url: filePath,
+      uploaded_at: new Date().toISOString(),
+    },
+    {
+      name: documentName,
+      type: documentType,
+      file_url: filePath,
+      uploaded_at: new Date().toISOString(),
+    },
+  ];
+
+  let data = null;
+  let error = null;
+  for (const variant of insertVariants) {
+    const payload = Object.fromEntries(
+      Object.entries(variant).filter(([, value]) => value !== undefined)
+    );
+    const result = await supabase.from("documents").insert(payload).select("*").single();
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+  }
+
+  if (error) {
+    try {
+      await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).remove([filePath]);
+    } catch (cleanupError) {
+      console.warn("Failed to cleanup uploaded org document after insert error:", cleanupError);
+    }
+    console.error("Error creating organization document record:", error);
+    throw error;
+  }
+
+  const { data: signedData, error: signedError } = await supabase.storage
+    .from(PROJECT_DOCUMENT_BUCKET)
+    .createSignedUrl(filePath, 60 * 60);
+  if (signedError) {
+    console.warn("Error creating signed URL for uploaded org document:", signedError);
+  }
+
+  return {
+    ...data,
+    file_path: filePath,
+    download_url: signedData?.signedUrl || null,
+    file_url: signedData?.signedUrl || data?.file_url || null,
+  };
+}
+
+export async function renameOrganizationDocument(documentId, name, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedDocumentId = String(documentId || "").trim();
+  if (!parsedDocumentId) {
+    throw new Error("Document id is required.");
+  }
+
+  const nextName = String(name || "").trim();
+  if (!nextName) {
+    throw new Error("Document name is required.");
+  }
+
+  const updateVariants = [
+    { name: nextName },
+  ];
+  const selectVariants = [
+    "id, tenant_id, name, type, description, file_url, file_path, mime_type, file_ext, file_size_bytes, uploaded_by_member_id, uploaded_at",
+    "id, tenant_id, name, type, file_url, file_path, uploaded_at",
+    "id, tenant_id, name, type, file_url, uploaded_at",
+    "id, name, type, file_url, uploaded_at",
+  ];
+
+  let data = null;
+  let error = null;
+  for (const payload of updateVariants) {
+    for (const selectColumns of selectVariants) {
+      let query = supabase
+        .from("documents")
+        .update(payload)
+        .eq("id", parsedDocumentId)
+        .select(selectColumns)
+        .single();
+      query = applyTenantFilter(query, tenantId);
+      const result = await query;
+      data = result.data;
+      error = result.error;
+      if (!error) {
+        break;
+      }
+    }
+    if (!error) {
+      break;
+    }
+  }
+
+  if (error) {
+    console.error("Error renaming organization document:", error);
+    throw error;
+  }
+
+  const explicitPath = String(data?.file_path || "").trim();
+  const fallbackPath =
+    /^tenants\/[^/]+\/.+/.test(String(data?.file_url || "").trim()) ? String(data.file_url).trim() : "";
+  const path = explicitPath || fallbackPath;
+  let downloadUrl = null;
+  if (path) {
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from(PROJECT_DOCUMENT_BUCKET)
+      .createSignedUrl(path, 60 * 60);
+    if (signedError) {
+      console.warn("Error creating signed URL for renamed organization document:", signedError);
+    } else {
+      downloadUrl = signedData?.signedUrl || null;
+    }
+  }
+
+  return {
+    ...data,
+    file_path: path || null,
+    download_url: downloadUrl,
+    file_url: downloadUrl || data?.file_url || null,
+  };
+}
+
+export async function deleteOrganizationDocument(documentId, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedDocumentId = String(documentId || "").trim();
+  if (!parsedDocumentId) {
+    throw new Error("Document id is required.");
+  }
+
+  const looksLikeStoragePath = (value) => /^tenants\/[^/]+\/.+/.test(String(value || "").trim());
+
+  const selectVariants = [
+    "id, tenant_id, file_path, file_url",
+    "id, tenant_id, file_url",
+    "id, file_url",
+  ];
+
+  let existingDoc = null;
+  let existingError = null;
+  for (const selectColumns of selectVariants) {
+    let query = supabase
+      .from("documents")
+      .select(selectColumns)
+      .eq("id", parsedDocumentId)
+      .maybeSingle();
+    query = applyTenantFilter(query, tenantId);
+    const result = await query;
+    existingDoc = result.data;
+    existingError = result.error;
+    if (!existingError) {
+      break;
+    }
+  }
+
+  if (existingError) {
+    console.error("Error loading organization document before delete:", existingError);
+    throw existingError;
+  }
+  if (!existingDoc) {
+    return true;
+  }
+
+  const explicitPath = String(existingDoc?.file_path || "").trim();
+  const pathFromUrl = looksLikeStoragePath(existingDoc?.file_url) ? String(existingDoc?.file_url).trim() : "";
+  const storagePath = explicitPath || pathFromUrl;
+  if (storagePath) {
+    const { error: storageError } = await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).remove([storagePath]);
+    if (storageError) {
+      const message = extractStorageMessage(storageError);
+      if (!message.includes("not found")) {
+        console.error("Error deleting organization document file from storage:", storageError);
+        throw storageError;
+      }
+    }
+  }
+
+  let deleteQuery = supabase.from("documents").delete().eq("id", parsedDocumentId);
+  deleteQuery = applyTenantFilter(deleteQuery, tenantId);
+  const { error: deleteError } = await deleteQuery;
+  if (deleteError) {
+    console.error("Error deleting organization document record:", deleteError);
+    throw deleteError;
+  }
+
+  return true;
+}
+
+const MEETING_SELECT_VARIANTS = [
+  "id, tenant_id, date, type, agenda, minutes, attendees, title, description, notes, location, status, project_id, owner_member_id, start_at, end_at, created_at, updated_at",
+  "id, tenant_id, date, type, agenda, minutes, attendees, title, description, location, status, project_id, owner_member_id, created_at",
+  "id, tenant_id, date, type, agenda, minutes, attendees",
+];
+
+const normalizeMeetingDate = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  return text.slice(0, 10);
+};
+
+const normalizeMeetingStatus = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+    .replace(/-/g, "_");
+  if (!normalized) return "scheduled";
+  if (normalized === "inprogress") return "in_progress";
+  return normalized;
+};
+
+const parseOptionalInteger = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const normalizeMeetingAttendees = (value) => {
+  if (Array.isArray(value)) {
+    return Array.from(
+      new Set(
+        value
+          .map((item) => Number.parseInt(String(item), 10))
+          .filter((item) => Number.isInteger(item) && item > 0)
+      )
+    );
+  }
+  const text = String(value || "").trim();
+  if (!text) return [];
+  return Array.from(
+    new Set(
+      text
+        .split(/[,\n;]/)
+        .map((item) => Number.parseInt(String(item || "").trim(), 10))
+        .filter((item) => Number.isInteger(item) && item > 0)
+    )
+  );
+};
+
+const buildOrganizationActivityBasePayload = (payload = {}, tenantId) => {
+  const nextDate = normalizeMeetingDate(payload?.date) || new Date().toISOString().slice(0, 10);
+  return {
+    tenant_id: tenantId ?? normalizeOptional(payload?.tenant_id),
+    date: nextDate,
+    type: normalizeOptional(payload?.type) || "General",
+    agenda: normalizeOptional(payload?.agenda || payload?.title),
+    minutes: normalizeOptional(payload?.minutes),
+    attendees: normalizeMeetingAttendees(payload?.attendees),
+  };
+};
+
+const buildOrganizationActivityPayload = (payload = {}, tenantId) => {
+  const base = buildOrganizationActivityBasePayload(payload, tenantId);
+  return {
+    ...base,
+    title: normalizeOptional(payload?.title),
+    description: normalizeOptional(payload?.description),
+    notes: normalizeOptional(payload?.notes),
+    location: normalizeOptional(payload?.location),
+    status: normalizeMeetingStatus(payload?.status),
+    project_id: parseOptionalInteger(payload?.project_id),
+    owner_member_id: parseOptionalInteger(payload?.owner_member_id),
+    start_at: normalizeOptional(payload?.start_at),
+    end_at: normalizeOptional(payload?.end_at),
+  };
+};
+
+/**
+ * Create organization activity
+ */
+export async function createOrganizationActivity(payload = {}, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const fullPayload = buildOrganizationActivityPayload(payload, tenantId);
+  const basePayload = buildOrganizationActivityBasePayload(payload, tenantId);
+
+  let result = await supabase.from("meetings").insert(fullPayload).select("*").single();
+  if (result.error && isMissingColumnError(result.error, "title")) {
+    result = await supabase.from("meetings").insert(basePayload).select("*").single();
+  }
+  if (result.error) {
+    console.error("Error creating organization activity:", result.error);
+    if (String(result.error?.code || "") === "42501") {
+      throw new Error("You do not have permission to create activities for this organization.");
+    }
+    throw new Error(result.error?.message || "Failed to create organization activity.");
+  }
+  return result.data;
+}
+
+/**
+ * Update organization activity
+ */
+export async function updateOrganizationActivity(activityId, payload = {}, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedActivityId = Number.parseInt(String(activityId), 10);
+  if (!Number.isInteger(parsedActivityId) || parsedActivityId <= 0) {
+    throw new Error("Valid activity id is required.");
+  }
+
+  const fullPayload = buildOrganizationActivityPayload(payload, tenantId);
+  const basePayload = buildOrganizationActivityBasePayload(payload, tenantId);
+
+  let query = supabase.from("meetings").update(fullPayload).eq("id", parsedActivityId);
+  query = applyTenantFilter(query, tenantId);
+  let result = await query.select("*").single();
+
+  if (result.error && isMissingColumnError(result.error, "title")) {
+    let fallbackQuery = supabase
+      .from("meetings")
+      .update(basePayload)
+      .eq("id", parsedActivityId);
+    fallbackQuery = applyTenantFilter(fallbackQuery, tenantId);
+    result = await fallbackQuery.select("*").single();
+  }
+
+  if (result.error) {
+    console.error("Error updating organization activity:", result.error);
+    if (String(result.error?.code || "") === "42501") {
+      throw new Error("You do not have permission to update this activity.");
+    }
+    throw new Error(result.error?.message || "Failed to update organization activity.");
+  }
+
+  return result.data;
+}
+
+/**
+ * Delete organization activities
+ */
+export async function deleteOrganizationActivities(activityIds = [], tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const normalizedIds = Array.from(
+    new Set(
+      (Array.isArray(activityIds) ? activityIds : [activityIds])
+        .map((value) => Number.parseInt(String(value), 10))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    )
+  );
+  if (!normalizedIds.length) {
+    return 0;
+  }
+
+  let query = supabase.from("meetings").delete().in("id", normalizedIds);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
+
+  if (error) {
+    console.error("Error deleting organization activities:", error);
+    if (String(error?.code || "") === "42501") {
+      throw new Error("You do not have permission to delete the selected activities.");
+    }
+    throw new Error(error?.message || "Failed to delete organization activities.");
+  }
+
+  return normalizedIds.length;
 }
 
 /**
  * Get meetings
  */
-export async function getMeetings() {
+export async function getMeetings(tenantId) {
   if (!isSupabaseConfigured || !supabase) return [];
 
-  const { data, error } = await supabase
-    .from("meetings")
-    .select("*")
-    .order("date", { ascending: false });
+  for (const selectColumns of MEETING_SELECT_VARIANTS) {
+    let query = supabase
+      .from("meetings")
+      .select(selectColumns)
+      .order("date", { ascending: false });
+    query = applyTenantFilter(query, tenantId);
+    const { data, error } = await query;
 
-  if (error) {
-    console.error("Error fetching meetings:", error);
-    return [];
+    if (error) {
+      if (isMissingColumnError(error, "title")) {
+        continue;
+      }
+      console.error("Error fetching meetings:", error);
+      return [];
+    }
+
+    return data || [];
   }
 
-  return data || [];
+  return [];
 }
 
 /**
@@ -2675,58 +5983,70 @@ export async function updateMemberProfile(memberId, updates) {
 /**
  * Get dashboard overview stats for a member
  */
-export async function getDashboardStats(memberId) {
+export async function getDashboardStats(memberId, tenantId) {
   // Mock fallback data for development
   const mockStats = {
-    totalContributions: 1000, // 2 cycles × Ksh. 500
-    welfareBalance: 2000,     // Group welfare: 2 cycles × Ksh. 1,000
-    payoutTurn: 8,            // Timothy is #8
-    payoutDate: '2026-03-30', // March 30, 2026
-    currentCycle: 2,          // 2 cycles completed (Orpah, Shadrack)
-    totalMembers: 12,
-    nextRecipient: 'Ketty',
-    nextPayoutDate: '2026-01-15',
+    totalContributions: 0,
+    welfareBalance: 0,
+    payoutTurn: null,
+    payoutDate: null,
+    currentCycle: 0,
+    totalMembers: 0,
+    nextRecipient: null,
+    nextPayoutDate: null,
   };
 
   if (!isSupabaseConfigured || !supabase) return mockStats;
 
   try {
     // Get member's total contributions
-    const { data: contributions } = await supabase
+    let contributionsQuery = supabase
       .from("contributions")
       .select("amount")
       .eq("member_id", memberId);
+    contributionsQuery = applyTenantFilter(contributionsQuery, tenantId);
+    const { data: contributions } = await contributionsQuery;
 
     const totalContributions = contributions?.reduce((sum, c) => sum + Number(c.amount), 0) ?? 0;
 
     // Get member's payout info
-    const { data: payout } = await supabase
+    let payoutQuery = supabase
       .from("payouts")
       .select("cycle_number, date, amount")
-      .eq("member_id", memberId)
-      .maybeSingle();
+      .eq("member_id", memberId);
+    payoutQuery = applyTenantFilter(payoutQuery, tenantId);
+    const { data: payout } = await payoutQuery.maybeSingle();
 
     // Get current cycle from welfare_cycles (completed cycles)
     const today = new Date().toISOString().split('T')[0];
-    const { data: completedCycles } = await supabase
+    let cyclesQuery = supabase
       .from("welfare_cycles")
-      .select("id")
+      .select("id, total_contributed, total_disbursed, end_date")
       .lte("end_date", today);
+    cyclesQuery = applyTenantFilter(cyclesQuery, tenantId);
+    const { data: completedCycles } = await cyclesQuery;
 
     const currentCycle = completedCycles?.length ?? 0;
+    const latestCompleted = completedCycles?.[completedCycles.length - 1];
 
     // Get welfare balance (total group welfare)
-    const { data: welfareData } = await supabase
+    let balanceQuery = supabase
       .from("welfare_balances")
       .select("balance")
       .order("cycle_id", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    balanceQuery = applyTenantFilter(balanceQuery, tenantId);
+    const { data: welfareData } = await balanceQuery.maybeSingle();
 
-    const welfareBalance = welfareData?.balance ?? (currentCycle * 1000);
+    const welfareBalance =
+      welfareData?.balance ??
+      (latestCompleted
+        ? Number(latestCompleted.total_contributed || 0) -
+          Number(latestCompleted.total_disbursed || 0)
+        : 0);
 
     // Get next upcoming payout
-    const { data: nextPayout } = await supabase
+    let nextPayoutQuery = supabase
       .from("payouts")
       .select(`
         date,
@@ -2734,14 +6054,25 @@ export async function getDashboardStats(memberId) {
       `)
       .gt("date", today)
       .order("date", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    nextPayoutQuery = applyTenantFilter(nextPayoutQuery, tenantId);
+    const { data: nextPayout } = await nextPayoutQuery.maybeSingle();
 
     // Get total members count
-    const { count: totalMembers } = await supabase
-      .from("members")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "active");
+    let totalMembers = 0;
+    if (tenantId) {
+      const { count } = await supabase
+        .from("tenant_members")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId);
+      totalMembers = count ?? 0;
+    } else {
+      const { count } = await supabase
+        .from("members")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "active");
+      totalMembers = count ?? 0;
+    }
 
     return {
       totalContributions: totalContributions ?? 0,
@@ -2749,7 +6080,7 @@ export async function getDashboardStats(memberId) {
       payoutTurn: payout?.cycle_number ?? null,
       payoutDate: payout?.date ?? null,
       currentCycle: currentCycle ?? 0,
-      totalMembers: totalMembers ?? 0,
+      totalMembers,
       nextRecipient: nextPayout?.members?.name ?? null,
       nextPayoutDate: nextPayout?.date ?? null,
     };
@@ -2776,6 +6107,13 @@ function normalizeOptional(value) {
   }
   const trimmed = typeof value === "string" ? value.trim() : value;
   return trimmed === "" ? null : trimmed;
+}
+
+function applyTenantFilter(query, tenantId) {
+  if (!tenantId) {
+    return query;
+  }
+  return query.eq("tenant_id", tenantId);
 }
 
 function generateInviteCode() {
@@ -2809,23 +6147,220 @@ export function isAdminUser(user) {
   return ADMIN_ROLES.includes(role);
 }
 
-export async function getMembersAdmin() {
+export async function getMembersAdmin(tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
   }
 
-  const { data, error } = await supabase
-    .from("members")
-    .select(
-      "id, name, email, phone_number, role, status, join_date, auth_id, gender, national_id, occupation, address, county, sub_county, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship"
-    )
-    .order("name", { ascending: true });
+  const selectCore =
+    "id, name, email, phone_number, role, status, join_date, auth_id, gender, national_id, occupation, address, county, sub_county, emergency_contact_name, emergency_contact_phone, emergency_contact_relationship";
+  const selectWithAvatar = `${selectCore}, avatar_url`;
+  const selectWithAvatarAndBio = `${selectWithAvatar}, bio`;
+  const selectWithBio = `${selectCore}, bio`;
+  let memberIds = null;
+  if (tenantId) {
+    const { data: membershipRows, error: membershipError } = await supabase
+      .from("tenant_members")
+      .select("member_id")
+      .eq("tenant_id", tenantId);
+    if (membershipError) {
+      throw membershipError;
+    }
+    memberIds = (membershipRows || []).map((row) => row.member_id).filter(Boolean);
+    if (!memberIds.length) {
+      return [];
+    }
+  }
+
+  const runMemberQuery = (selectColumns) => {
+    let query = supabase.from("members").select(selectColumns).order("name", { ascending: true });
+    if (Array.isArray(memberIds)) {
+      query = query.in("id", memberIds);
+    }
+    return query;
+  };
+
+  const selectVariants = [selectWithAvatarAndBio, selectWithAvatar, selectWithBio, selectCore];
+  let data = null;
+  let error = null;
+  for (const columns of selectVariants) {
+    const result = await runMemberQuery(columns);
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+    const isRecoverableMissingColumn =
+      isMissingColumnError(error, "bio") || isMissingColumnError(error, "avatar_url");
+    if (!isRecoverableMissingColumn) {
+      break;
+    }
+  }
 
   if (error) {
     throw error;
   }
 
   return data || [];
+}
+
+export async function getProjectAssignableMembers(currentMemberId, tenantId) {
+  const parsedCurrentMemberId = Number.parseInt(String(currentMemberId), 10);
+
+  if (!isSupabaseConfigured || !supabase) {
+    if (Number.isInteger(parsedCurrentMemberId) && parsedCurrentMemberId > 0) {
+      return [
+        {
+          id: parsedCurrentMemberId,
+          name: "Current user",
+          email: null,
+          phone_number: null,
+          role: "member",
+        },
+      ];
+    }
+    return [];
+  }
+
+  try {
+    const members = await getMembersAdmin(tenantId);
+    return (members || [])
+      .map((member) => ({
+        id: member.id,
+        name: member.name || `Member #${member.id}`,
+        email: member.email || null,
+        phone_number: member.phone_number || null,
+        role: member.role || "member",
+      }))
+      .filter((member) => Number.isInteger(member.id))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  } catch (error) {
+    console.warn("Falling back to current member for assignable members:", error);
+  }
+
+  if (!Number.isInteger(parsedCurrentMemberId) || parsedCurrentMemberId <= 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("members")
+    .select("id, name, email, phone_number, role")
+    .eq("id", parsedCurrentMemberId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error fetching current member as fallback:", error);
+    return [];
+  }
+
+  if (!data) {
+    return [];
+  }
+
+  return [
+    {
+      id: data.id,
+      name: data.name || `Member #${data.id}`,
+      email: data.email || null,
+      phone_number: data.phone_number || null,
+      role: data.role || "member",
+    },
+  ];
+}
+
+export async function createProjectMemberAssignments(projectId, assignments = [], tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    return { created: [], skipped: [] };
+  }
+
+  const parsedProjectId = Number.parseInt(String(projectId), 10);
+  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    throw new Error("Project id is required.");
+  }
+
+  if (!Array.isArray(assignments) || assignments.length === 0) {
+    return { created: [], skipped: [] };
+  }
+
+  const seen = new Set();
+  const normalizedAssignments = assignments
+    .map((entry) => {
+      const memberId = Number.parseInt(String(entry?.member_id), 10);
+      if (!Number.isInteger(memberId) || memberId <= 0) {
+        return null;
+      }
+      if (seen.has(memberId)) {
+        return null;
+      }
+      seen.add(memberId);
+      return {
+        member_id: memberId,
+        role: normalizeOptional(entry?.role) || "Member",
+        term_start: normalizeOptional(entry?.term_start) || new Date().toISOString().slice(0, 10),
+      };
+    })
+    .filter(Boolean);
+
+  if (!normalizedAssignments.length) {
+    return { created: [], skipped: [] };
+  }
+
+  const created = [];
+  const skipped = [];
+  const errors = [];
+
+  for (const assignment of normalizedAssignments) {
+    let existsQuery = supabase
+      .from("iga_committee_members")
+      .select("id")
+      .eq("project_id", parsedProjectId)
+      .eq("member_id", assignment.member_id)
+      .maybeSingle();
+    existsQuery = applyTenantFilter(existsQuery, tenantId);
+    const { data: existing, error: existsError } = await existsQuery;
+
+    if (existsError) {
+      errors.push(existsError);
+      continue;
+    }
+
+    if (existing) {
+      skipped.push({ member_id: assignment.member_id, reason: "already_assigned" });
+      continue;
+    }
+
+    const { data, error } = await supabase
+      .from("iga_committee_members")
+      .insert({
+        project_id: parsedProjectId,
+        member_id: assignment.member_id,
+        role: assignment.role,
+        term_start: assignment.term_start,
+        tenant_id: tenantId ?? null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      errors.push(error);
+      continue;
+    }
+
+    created.push(data);
+  }
+
+  if (errors.length) {
+    const allPermissionErrors = errors.every((error) => String(error?.code || "") === "42501");
+    const combinedError = new Error(
+      allPermissionErrors
+        ? "Some selected members could not be assigned due to permission limits."
+        : "Failed to assign some project members."
+    );
+    combinedError.details = { created, skipped, errors };
+    throw combinedError;
+  }
+
+  return { created, skipped };
 }
 
 export async function createMemberAdmin(payload) {
@@ -2841,7 +6376,9 @@ export async function createMemberAdmin(payload) {
     role: normalizeOptional(payload.role) || "member",
     status: normalizeOptional(payload.status) || "active",
     join_date: normalizeOptional(payload.join_date) || new Date().toISOString().slice(0, 10),
-    auth_id: normalizeOptional(payload.auth_id),
+    // For admin-created members, explicitly set auth_id to null (not authenticated yet)
+    // The trigger members_self_write_guard() allows admins to create members with null auth_id
+    auth_id: null,
     password_hash: passwordHash || "admin_created",
     gender: normalizeOptional(payload.gender),
     national_id: normalizeOptional(payload.national_id),
@@ -2849,16 +6386,38 @@ export async function createMemberAdmin(payload) {
     address: normalizeOptional(payload.address),
     county: normalizeOptional(payload.county),
     sub_county: normalizeOptional(payload.sub_county),
+    avatar_url: normalizeOptional(payload.avatar_url),
+    bio: normalizeOptional(payload.bio),
     emergency_contact_name: normalizeOptional(payload.emergency_contact_name),
     emergency_contact_phone: normalizeOptional(payload.emergency_contact_phone),
     emergency_contact_relationship: normalizeOptional(payload.emergency_contact_relationship),
   };
 
-  const { data, error } = await supabase
-    .from("members")
-    .insert(insertPayload)
-    .select()
-    .single();
+  const insertVariants = [
+    insertPayload,
+    { ...insertPayload, bio: undefined },
+    { ...insertPayload, avatar_url: undefined },
+    { ...insertPayload, bio: undefined, avatar_url: undefined },
+  ];
+  let data = null;
+  let error = null;
+  for (const variant of insertVariants) {
+    const normalizedVariant = Object.fromEntries(
+      Object.entries(variant).filter(([, value]) => value !== undefined)
+    );
+    const result = await supabase.from("members").insert(normalizedVariant).select().single();
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+    const isRecoverableMissingColumn =
+      isMissingColumnError(error, "bio") || isMissingColumnError(error, "avatar_url");
+    if (!isRecoverableMissingColumn) {
+      console.error("createMemberAdmin error:", error);
+      break;
+    }
+  }
 
   if (error) {
     throw error;
@@ -2886,17 +6445,42 @@ export async function updateMemberAdmin(memberId, payload) {
     address: normalizeOptional(payload.address),
     county: normalizeOptional(payload.county),
     sub_county: normalizeOptional(payload.sub_county),
+    avatar_url: normalizeOptional(payload.avatar_url),
+    bio: normalizeOptional(payload.bio),
     emergency_contact_name: normalizeOptional(payload.emergency_contact_name),
     emergency_contact_phone: normalizeOptional(payload.emergency_contact_phone),
     emergency_contact_relationship: normalizeOptional(payload.emergency_contact_relationship),
   };
 
-  const { data, error } = await supabase
-    .from("members")
-    .update(updatePayload)
-    .eq("id", memberId)
-    .select()
-    .single();
+  const updateVariants = [
+    updatePayload,
+    { ...updatePayload, bio: undefined },
+    { ...updatePayload, avatar_url: undefined },
+    { ...updatePayload, bio: undefined, avatar_url: undefined },
+  ];
+  let data = null;
+  let error = null;
+  for (const variant of updateVariants) {
+    const normalizedVariant = Object.fromEntries(
+      Object.entries(variant).filter(([, value]) => value !== undefined)
+    );
+    const result = await supabase
+      .from("members")
+      .update(normalizedVariant)
+      .eq("id", memberId)
+      .select()
+      .single();
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+    const isRecoverableMissingColumn =
+      isMissingColumnError(error, "bio") || isMissingColumnError(error, "avatar_url");
+    if (!isRecoverableMissingColumn) {
+      break;
+    }
+  }
 
   if (error) {
     throw error;
@@ -2905,7 +6489,7 @@ export async function updateMemberAdmin(memberId, payload) {
   return data;
 }
 
-export async function getProjectMembersAdmin(projectId) {
+export async function getProjectMembersAdmin(projectId, tenantId) {
   if (!projectId) {
     return [];
   }
@@ -2931,20 +6515,24 @@ export async function getProjectMembersAdmin(projectId) {
     return mockMembers;
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("iga_committee_members")
     .select("id, project_id, member_id, role, term_start, members (id, name, email, phone_number, role, status)")
     .eq("project_id", projectId)
     .order("term_start", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (!error) {
     return data || [];
   }
 
-  const { data: membership, error: membershipError } = await supabase
+  let membershipQuery = supabase
     .from("iga_committee_members")
     .select("id, project_id, member_id, role, term_start")
     .eq("project_id", projectId);
+  membershipQuery = applyTenantFilter(membershipQuery, tenantId);
+  const { data: membership, error: membershipError } = await membershipQuery;
 
   if (membershipError) {
     throw membershipError;
@@ -2971,7 +6559,7 @@ export async function getProjectMembersAdmin(projectId) {
   }));
 }
 
-export async function addProjectMemberAdmin({ projectId, memberId, role, term_start }) {
+export async function addProjectMemberAdmin({ projectId, memberId, role, term_start, tenantId }) {
   if (!projectId || !memberId) {
     throw new Error("Project and member are required.");
   }
@@ -2986,12 +6574,14 @@ export async function addProjectMemberAdmin({ projectId, memberId, role, term_st
     };
   }
 
-  const { data: existing } = await supabase
+  let existingQuery = supabase
     .from("iga_committee_members")
     .select("id")
     .eq("project_id", projectId)
     .eq("member_id", memberId)
     .maybeSingle();
+  existingQuery = applyTenantFilter(existingQuery, tenantId);
+  const { data: existing } = await existingQuery;
 
   if (existing) {
     throw new Error("Member is already assigned to this project.");
@@ -3004,6 +6594,7 @@ export async function addProjectMemberAdmin({ projectId, memberId, role, term_st
       member_id: memberId,
       role: role || "Member",
       term_start: term_start || new Date().toISOString().slice(0, 10),
+      tenant_id: tenantId ?? null,
     })
     .select()
     .single();
@@ -3015,7 +6606,7 @@ export async function addProjectMemberAdmin({ projectId, memberId, role, term_st
   return data;
 }
 
-export async function removeProjectMemberAdmin(projectMemberId) {
+export async function removeProjectMemberAdmin(projectMemberId, tenantId) {
   if (!projectMemberId) {
     return false;
   }
@@ -3024,10 +6615,12 @@ export async function removeProjectMemberAdmin(projectMemberId) {
     return true;
   }
 
-  const { error } = await supabase
+  let query = supabase
     .from("iga_committee_members")
     .delete()
     .eq("id", projectMemberId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     throw error;
@@ -3036,7 +6629,7 @@ export async function removeProjectMemberAdmin(projectMemberId) {
   return true;
 }
 
-export async function updateProjectMemberAdmin(projectMemberId, payload) {
+export async function updateProjectMemberAdmin(projectMemberId, payload, tenantId) {
   if (!projectMemberId) {
     throw new Error("Project member id is required.");
   }
@@ -3053,12 +6646,12 @@ export async function updateProjectMemberAdmin(projectMemberId, payload) {
     term_start: normalizeOptional(payload.term_start),
   };
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("iga_committee_members")
     .update(updatePayload)
-    .eq("id", projectMemberId)
-    .select()
-    .single();
+    .eq("id", projectMemberId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     throw error;
@@ -3067,15 +6660,17 @@ export async function updateProjectMemberAdmin(projectMemberId, payload) {
   return data;
 }
 
-export async function getMemberInvites() {
+export async function getMemberInvites(tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("member_invites")
     .select("*")
     .order("created_at", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     throw error;
@@ -3101,6 +6696,7 @@ export async function createMemberInvite(payload) {
     code_hash: codeHash,
     code_prefix: codePrefix,
     created_by: payload.created_by || null,
+    tenant_id: normalizeOptional(payload.tenant_id),
     expires_at: payload.expires_at || null,
     notes: normalizeOptional(payload.notes),
   };
@@ -3128,59 +6724,19 @@ export async function verifyMemberInvite(code) {
     throw new Error("Invite code is required.");
   }
 
-  const normalized = trimmed.toUpperCase();
-  const compact = normalized.replace(/-/g, "");
-  const codeHash = await hashInviteCode(normalized);
-  let { data, error } = await supabase
-    .from("member_invites")
-    .select("*")
-    .eq("code_hash", codeHash)
-    .order("created_at", { ascending: false })
-    .limit(2);
+  const { data, error } = await supabase.rpc("verify_member_invite", {
+    code: trimmed,
+  });
 
   if (error) {
     throw error;
   }
 
-  if (!data?.length && compact.length >= 8) {
-    const prefix = compact.slice(0, 8);
-    const { data: candidates, error: prefixError } = await supabase
-      .from("member_invites")
-      .select("*")
-      .eq("code_prefix", prefix);
-    if (prefixError) {
-      throw prefixError;
-    }
-    if (Array.isArray(candidates)) {
-      data =
-        candidates.find((invite) => {
-          const stored = String(invite.code_hash || "");
-          return (
-            stored === codeHash ||
-            stored.toUpperCase() === normalized ||
-            stored.replace(/-/g, "").toUpperCase() === compact
-          );
-        }) || null;
-    }
-  }
-
-  const invite = Array.isArray(data) ? data[0] : data;
-  if (!invite) {
+  if (!data) {
     throw new Error("Invalid invite code.");
   }
 
-  if (invite.status && String(invite.status).toLowerCase() !== "pending") {
-    throw new Error("This invite code is no longer active.");
-  }
-
-  if (invite.expires_at) {
-    const expiresAt = new Date(invite.expires_at);
-    if (!Number.isNaN(expiresAt.getTime()) && expiresAt < new Date()) {
-      throw new Error("This invite code has expired.");
-    }
-  }
-
-  return invite;
+  return data;
 }
 
 export async function markInviteUsed(inviteId) {
@@ -3225,99 +6781,155 @@ export async function revokeMemberInvite(inviteId) {
   return data;
 }
 
-export async function getWelfareAccounts() {
-  const mockAccounts = [
-    { id: 1, name: "Main Welfare Fund", description: "Group welfare savings" },
-  ];
+// ─── Magic Link Invites ───────────────────────────────────────────────────
 
+function generateSimpleInviteNumber() {
+  // Generate a random 7-digit number like "8374629"
+  return String(Math.floor(Math.random() * 10000000)).padStart(7, "0");
+}
+
+export async function createMagicLinkInvite(payload) {
   if (!isSupabaseConfigured || !supabase) {
-    return mockAccounts;
+    throw new Error("Supabase not configured");
   }
 
+  const inviteNumber = generateSimpleInviteNumber();
+  const expiresAt = payload.expires_at || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // Default 7 days
+
+  const insertPayload = {
+    email: normalizeOptional(payload.email),
+    phone_number: normalizeOptional(payload.phone_number),
+    role: normalizeOptional(payload.role) || "member",
+    status: "pending",
+    invite_number: inviteNumber,
+    created_by: payload.created_by || null,
+    tenant_id: normalizeOptional(payload.tenant_id),
+    expires_at: expiresAt,
+    notes: normalizeOptional(payload.notes),
+  };
+
   const { data, error } = await supabase
+    .from("magic_link_invites")
+    .insert(insertPayload)
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return { invite: data, inviteNumber };
+}
+
+export async function verifyMagicLinkInvite(inviteNumber) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const trimmed = String(inviteNumber || "").trim();
+  if (!trimmed) {
+    throw new Error("Invite number is required.");
+  }
+
+  const { data, error } = await supabase.rpc("verify_magic_link_invite", {
+    p_invite_number: trimmed,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data || data.length === 0) {
+    throw new Error("Invalid or expired invite number.");
+  }
+
+  return data[0];
+}
+
+export async function markMagicLinkInviteUsed(inviteId, memberId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  if (!inviteId || !memberId) {
+    return null;
+  }
+
+  const { data, error } = await supabase.rpc("mark_magic_link_invite_used", {
+    p_invite_id: inviteId,
+    p_member_id: memberId,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data?.[0] || null;
+}
+
+export async function getWelfareAccounts(tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  let query = supabase
     .from("welfare_accounts")
     .select("id, name, description")
     .order("name", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching welfare accounts:", error);
-    return mockAccounts;
-  }
-
-  return data || mockAccounts;
-}
-
-export async function getWelfareCycles() {
-  const mockCycles = [
-    { id: 1, cycle_number: 1, start_date: "2025-12-15", end_date: "2025-12-29" },
-    { id: 2, cycle_number: 2, start_date: "2025-12-30", end_date: "2026-01-14" },
-  ];
-
-  if (!isSupabaseConfigured || !supabase) {
-    return mockCycles;
-  }
-
-  const { data, error } = await supabase
-    .from("welfare_cycles")
-    .select("id, cycle_number, start_date, end_date")
-    .order("cycle_number", { ascending: true });
-
-  if (error) {
-    console.error("Error fetching welfare cycles:", error);
-    return mockCycles;
-  }
-
-  return data || mockCycles;
-}
-
-export async function getWelfareTransactionsAdmin() {
-  const mockTransactions = [
-    {
-      id: 1,
-      welfare_account_id: 1,
-      cycle_id: 1,
-      member_id: 1,
-      member: { name: "Orpah Achieng" },
-      amount: 1000,
-      transaction_type: "contribution",
-      date: "2025-12-15",
-      description: "Cycle 1 welfare contribution",
-      status: "Completed",
-    },
-    {
-      id: 2,
-      welfare_account_id: 1,
-      cycle_id: 2,
-      member_id: null,
-      member: null,
-      amount: 1000,
-      transaction_type: "contribution",
-      date: "2025-12-30",
-      description: "Cycle 2 welfare contribution",
-      status: "Completed",
-    },
-  ];
-
-  if (!isSupabaseConfigured || !supabase) {
-    return mockTransactions;
-  }
-
-  const { data, error } = await supabase
-    .from("welfare_transactions")
-    .select(
-      "id, welfare_account_id, cycle_id, member_id, amount, transaction_type, date, description, status, member:members(name)"
-    )
-    .order("date", { ascending: false });
-
-  if (error) {
-    console.error("Error fetching welfare transactions:", error);
-    return mockTransactions;
+    return [];
   }
 
   return data || [];
 }
 
-export async function createWelfareTransaction(payload) {
+export async function getWelfareCycles(tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  let query = supabase
+    .from("welfare_cycles")
+    .select("id, cycle_number, start_date, end_date")
+    .order("cycle_number", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("Error fetching welfare cycles:", error);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function getWelfareTransactionsAdmin(tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  let query = supabase
+    .from("welfare_transactions")
+    .select(
+      "id, welfare_account_id, cycle_id, member_id, amount, transaction_type, date, description, status, member:members(name)"
+    )
+    .order("date", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("Error fetching welfare transactions:", error);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function createWelfareTransaction(payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
   }
@@ -3331,6 +6943,7 @@ export async function createWelfareTransaction(payload) {
     date: payload.date,
     description: normalizeOptional(payload.description),
     status: normalizeOptional(payload.status) || "Completed",
+    tenant_id: tenantId ?? null,
   };
 
   const { data, error } = await supabase
@@ -3347,7 +6960,7 @@ export async function createWelfareTransaction(payload) {
   return data;
 }
 
-export async function updateWelfareTransaction(transactionId, payload) {
+export async function updateWelfareTransaction(transactionId, payload, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
   }
@@ -3370,12 +6983,12 @@ export async function updateWelfareTransaction(transactionId, payload) {
     throw new Error("No fields to update");
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("welfare_transactions")
     .update(updatePayload)
-    .eq("id", transactionId)
-    .select()
-    .single();
+    .eq("id", transactionId);
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query.select().single();
 
   if (error) {
     console.error("Error updating welfare transaction:", error);
@@ -3385,12 +6998,14 @@ export async function updateWelfareTransaction(transactionId, payload) {
   return data;
 }
 
-export async function deleteWelfareTransaction(transactionId) {
+export async function deleteWelfareTransaction(transactionId, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
   }
 
-  const { error } = await supabase.from("welfare_transactions").delete().eq("id", transactionId);
+  let query = supabase.from("welfare_transactions").delete().eq("id", transactionId);
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
 
   if (error) {
     console.error("Error deleting welfare transaction:", error);
@@ -3405,7 +7020,7 @@ export async function deleteWelfareTransaction(transactionId) {
  */
 export async function signOut() {
   if (!isSupabaseConfigured || !supabase) return;
-  
+
   const { error } = await supabase.auth.signOut();
   if (error) {
     console.error("Error signing out:", error);
@@ -3416,13 +7031,13 @@ export async function signOut() {
 /**
  * Get all visible projects for volunteer page
  */
-export async function getPublicProjects() {
+export async function getPublicProjects(tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     console.warn("Supabase not configured, returning mock data");
     return getMockProjects();
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("iga_projects")
     .select(`
       id,
@@ -3443,6 +7058,8 @@ export async function getPublicProjects() {
     `)
     .eq("is_visible", true)
     .order("display_order", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Error fetching projects:", error);
@@ -3453,16 +7070,22 @@ export async function getPublicProjects() {
   const projectsWithDetails = await Promise.all(
     (data || []).map(async (project) => {
       const [goalsRes, rolesRes] = await Promise.all([
-        supabase
-          .from("project_goals")
-          .select("id, goal")
-          .eq("project_id", project.id)
-          .order("display_order"),
-        supabase
-          .from("project_volunteer_roles")
-          .select("id, role_description")
-          .eq("project_id", project.id)
-          .order("display_order"),
+        applyTenantFilter(
+          supabase
+            .from("project_goals")
+            .select("id, goal")
+            .eq("project_id", project.id)
+            .order("display_order"),
+          tenantId
+        ),
+        applyTenantFilter(
+          supabase
+            .from("project_volunteer_roles")
+            .select("id, role_description")
+            .eq("project_id", project.id)
+            .order("display_order"),
+          tenantId
+        ),
       ]);
 
       return {
@@ -3479,14 +7102,14 @@ export async function getPublicProjects() {
 /**
  * Get a single project by code
  */
-export async function getProjectByCode(code) {
+export async function getProjectByCode(code, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
     console.warn("Supabase not configured, returning mock data");
     const mockProjects = getMockProjects();
     return mockProjects.find((p) => p.code === code) || null;
   }
 
-  const { data: project, error } = await supabase
+  let query = supabase
     .from("iga_projects")
     .select(`
       id,
@@ -3510,6 +7133,8 @@ export async function getProjectByCode(code) {
     .eq("code", code)
     .eq("is_visible", true)
     .single();
+  query = applyTenantFilter(query, tenantId);
+  const { data: project, error } = await query;
 
   if (error) {
     console.error("Error fetching project:", error);
@@ -3519,36 +7144,54 @@ export async function getProjectByCode(code) {
 
   // Fetch all related data in parallel
   const [goalsRes, rolesRes, galleryRes, faqRes, activitiesRes, donationItemsRes] = await Promise.all([
-    supabase
-      .from("project_goals")
-      .select("id, goal")
-      .eq("project_id", project.id)
-      .order("display_order"),
-    supabase
-      .from("project_volunteer_roles")
-      .select("id, role_description")
-      .eq("project_id", project.id)
-      .order("display_order"),
-    supabase
-      .from("project_gallery")
-      .select("id, image_url, caption")
-      .eq("project_id", project.id)
-      .order("display_order"),
-    supabase
-      .from("project_faq")
-      .select("id, question, answer")
-      .eq("project_id", project.id)
-      .order("display_order"),
-    supabase
-      .from("project_activities")
-      .select("id, title, description, icon")
-      .eq("project_id", project.id)
-      .order("display_order"),
-    supabase
-      .from("project_donation_items")
-      .select("id, item, description, estimated_cost")
-      .eq("project_id", project.id)
-      .order("display_order"),
+    applyTenantFilter(
+      supabase
+        .from("project_goals")
+        .select("id, goal")
+        .eq("project_id", project.id)
+        .order("display_order"),
+      tenantId
+    ),
+    applyTenantFilter(
+      supabase
+        .from("project_volunteer_roles")
+        .select("id, role_description")
+        .eq("project_id", project.id)
+        .order("display_order"),
+      tenantId
+    ),
+    applyTenantFilter(
+      supabase
+        .from("project_gallery")
+        .select("id, image_url, caption")
+        .eq("project_id", project.id)
+        .order("display_order"),
+      tenantId
+    ),
+    applyTenantFilter(
+      supabase
+        .from("project_faq")
+        .select("id, question, answer")
+        .eq("project_id", project.id)
+        .order("display_order"),
+      tenantId
+    ),
+    applyTenantFilter(
+      supabase
+        .from("project_activities")
+        .select("id, title, description, icon")
+        .eq("project_id", project.id)
+        .order("display_order"),
+      tenantId
+    ),
+    applyTenantFilter(
+      supabase
+        .from("project_donation_items")
+        .select("id, item, description, estimated_cost")
+        .eq("project_id", project.id)
+        .order("display_order"),
+      tenantId
+    ),
   ]);
 
   return {
@@ -3628,4 +7271,424 @@ function getMockProjects() {
       ],
     },
   ];
+}
+
+// ===================================
+// TENANTS (MULTI-TENANT SAAS)
+// ===================================
+
+export async function createTenant(payload) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const name = normalizeOptional(payload?.name);
+  const slug = normalizeOptional(payload?.slug);
+
+  if (!name || !slug) {
+    throw new Error("Tenant name and slug are required");
+  }
+
+  const insertPayload = {
+    name,
+    slug: String(slug).toLowerCase(),
+    tagline: normalizeOptional(payload?.tagline),
+    contact_email: normalizeOptional(payload?.contact_email),
+    contact_phone: normalizeOptional(payload?.contact_phone),
+    location: normalizeOptional(payload?.location),
+    logo_url: normalizeOptional(payload?.logo_url),
+    site_data: payload?.site_data ?? null,
+    is_public: payload?.is_public ?? true,
+  };
+
+  const { data, error } = await supabase
+    .from("tenants")
+    .insert(insertPayload)
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+export async function getTenantBySlug(slug) {
+  if (!isSupabaseConfigured || !supabase) {
+    return null;
+  }
+
+  const cleanSlug = String(slug || "").trim().toLowerCase();
+  if (!cleanSlug) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("tenants")
+    .select("*")
+    .eq("slug", cleanSlug)
+    .eq("is_public", true)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error fetching tenant:", error);
+    return null;
+  }
+
+  return data || null;
+}
+
+export async function getTenantByContactEmail(email) {
+  if (!isSupabaseConfigured || !supabase) {
+    return null;
+  }
+
+  const cleanEmail = String(email || "").trim().toLowerCase();
+  if (!cleanEmail) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("tenants")
+    .select("*")
+    .ilike("contact_email", cleanEmail)
+    .eq("is_public", true)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error fetching tenant by contact email:", error);
+    return null;
+  }
+
+  return data || null;
+}
+
+export async function getTenantSiteTemplates() {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("tenant_site_templates")
+    .select("key, label, description, data, is_active")
+    .eq("is_active", true)
+    .order("label", { ascending: true });
+
+  if (error) {
+    console.error("Error fetching tenant site templates:", error);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function getTenantSiteTemplate(templateKey) {
+  if (!isSupabaseConfigured || !supabase) {
+    return null;
+  }
+
+  const cleanKey = String(templateKey || "").trim();
+  if (!cleanKey) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("tenant_site_templates")
+    .select("key, data, is_active")
+    .eq("key", cleanKey)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error fetching tenant site template:", error);
+    return null;
+  }
+
+  return data?.data ?? null;
+}
+
+export async function getTenantById(tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    return null;
+  }
+
+  if (!tenantId) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("tenants")
+    .select("*")
+    .eq("id", tenantId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Error fetching tenant:", error);
+    return null;
+  }
+
+  return data || null;
+}
+
+export async function updateTenant(tenantId, payload) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  if (!tenantId) {
+    throw new Error("Tenant ID is required");
+  }
+
+  const updatePayload = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "name")) {
+    updatePayload.name = normalizeOptional(payload?.name);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "tagline")) {
+    updatePayload.tagline = normalizeOptional(payload?.tagline);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "contact_email")) {
+    updatePayload.contact_email = normalizeOptional(payload?.contact_email);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "contact_phone")) {
+    updatePayload.contact_phone = normalizeOptional(payload?.contact_phone);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "location")) {
+    updatePayload.location = normalizeOptional(payload?.location);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "logo_url")) {
+    updatePayload.logo_url = normalizeOptional(payload?.logo_url);
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "site_data")) {
+    updatePayload.site_data = payload?.site_data ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "is_public")) {
+    updatePayload.is_public = payload?.is_public ?? true;
+  }
+
+  const { data, error } = await supabase
+    .from("tenants")
+    .update(updatePayload)
+    .eq("id", tenantId)
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+export async function createTenantMembership({ tenantId, memberId, role = "member" }) {
+  if (!shouldUseSupabase()) {
+    return null;
+  }
+
+  if (!tenantId || !memberId) {
+    throw new Error("Tenant and member are required");
+  }
+
+  const insertPayload = {
+    tenant_id: tenantId,
+    member_id: memberId,
+    role,
+    status: "active",
+  };
+
+  const { data, error } = await supabase
+    .from("tenant_members")
+    .insert(insertPayload)
+    .select()
+    .single();
+
+  if (error) {
+    markSupabaseUnavailable(error);
+    if (supabaseFallbackEnabled) {
+      return null;
+    }
+    throw error;
+  }
+
+  return data;
+}
+
+export async function getTenantMemberships(memberId) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  if (!memberId) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("tenant_members")
+    .select(
+      `
+      id,
+      tenant_id,
+      role,
+      status,
+      tenant:tenants (
+        id,
+        name,
+        slug,
+        tagline,
+        logo_url
+      )
+    `
+    )
+    .eq("member_id", memberId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    markSupabaseUnavailable(error);
+    console.error("Error fetching tenant memberships:", error);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function getTenantMembershipForSlug(memberId, slug) {
+  if (!shouldUseSupabase()) {
+    return null;
+  }
+
+  if (!memberId || !slug) {
+    return null;
+  }
+
+  const cleanSlug = String(slug).trim().toLowerCase();
+  if (!cleanSlug) {
+    return null;
+  }
+
+  // First, get the tenant ID from the slug
+  const { data: tenantData, error: tenantError } = await supabase
+    .from("tenants")
+    .select("id")
+    .eq("slug", cleanSlug)
+    .maybeSingle();
+
+  if (tenantError) {
+    markSupabaseUnavailable(tenantError);
+    console.error("Error fetching tenant by slug:", tenantError);
+    return null;
+  }
+
+  if (!tenantData) {
+    return null;
+  }
+
+  // Now get the membership for this member and tenant
+  const { data, error } = await supabase
+    .from("tenant_members")
+    .select(
+      `
+      id,
+      role,
+      status,
+      tenant:tenants (
+        id,
+        name,
+        slug,
+        tagline,
+        logo_url,
+        site_data,
+        contact_email,
+        contact_phone,
+        location
+      )
+    `
+    )
+    .eq("member_id", memberId)
+    .eq("tenant_id", tenantData.id)
+    .maybeSingle();
+
+  if (error) {
+    markSupabaseUnavailable(error);
+    console.error("Error fetching tenant membership:", error);
+    return null;
+  }
+
+  return data || null;
+}
+
+
+/**
+ * Get event subscribers for a tenant
+ */
+export async function getEventSubscribers(tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  if (!tenantId) {
+    throw new Error("Tenant ID is required");
+  }
+
+  let query = supabase
+    .from("newsletter_subscribers")
+    .select("id, name, email, contact, type, status, created_at")
+    .eq("tenant_id", tenantId)
+    .eq("type", "event_attendee")
+    .eq("status", "active")
+    .order("name", { ascending: true });
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("Error fetching event subscribers:", error);
+    throw error;
+  }
+
+  return data || [];
+}
+
+/**
+ * Create an event subscriber
+ */
+export async function createEventSubscriber(payload, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  if (!tenantId) {
+    throw new Error("Tenant ID is required");
+  }
+
+  const name = normalizeOptional(payload?.name);
+  const email = normalizeOptional(payload?.email);
+  const contact = normalizeOptional(payload?.contact);
+
+  if (!name || !email) {
+    throw new Error("Name and email are required for event subscribers");
+  }
+
+  const insertPayload = {
+    tenant_id: tenantId,
+    name,
+    email,
+    contact: contact || null,
+    type: "event_attendee",
+    status: "active",
+  };
+
+  const { data, error } = await supabase
+    .from("newsletter_subscribers")
+    .insert(insertPayload)
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Error creating event subscriber:", error);
+    throw error;
+  }
+
+  return data;
 }

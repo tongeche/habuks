@@ -1,41 +1,77 @@
-export default function DocumentsPage({ user }) {
-  const documents = [
-    { id: 1, name: "JONGOL Constitution", type: "Constitution", uploadedAt: "2025-08-01", fileUrl: "#" },
-    { id: 2, name: "Group Bylaws", type: "Bylaws", uploadedAt: "2025-08-01", fileUrl: "#" },
-    { id: 3, name: "Welfare Policy", type: "Policy", uploadedAt: "2025-09-15", fileUrl: "#" },
-    { id: 4, name: "Contribution Agreement Template", type: "Template", uploadedAt: "2025-10-10", fileUrl: "#" },
-    { id: 5, name: "Project Proposal Template", type: "Template", uploadedAt: "2025-11-05", fileUrl: "#" },
-  ];
+import { useEffect, useState } from "react";
+import { getDocuments } from "../../lib/dataService.js";
+
+export default function DocumentsPage({ user, tenantId }) {
+  const [documents, setDocuments] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadDocuments = async () => {
+      setLoading(true);
+      try {
+        const data = await getDocuments(tenantId);
+        setDocuments(data || []);
+      } catch (error) {
+        console.error("Error loading documents:", error);
+        setDocuments([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadDocuments();
+  }, [tenantId]);
+
+  if (loading) {
+    return <div className="documents-page loading">Loading documents...</div>;
+  }
 
   return (
     <div className="documents-page">
       <div className="documents-table-wrap">
-        <table className="documents-table">
-          <thead>
-            <tr>
-              <th>Document Name</th>
-              <th>Type</th>
-              <th>Uploaded</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {documents.map((doc) => (
-              <tr key={doc.id}>
-                <td>{doc.name}</td>
-                <td>
-                  <span className={`type-badge ${doc.type.toLowerCase()}`}>{doc.type}</span>
-                </td>
-                <td>{doc.uploadedAt}</td>
-                <td>
-                  <a href={doc.fileUrl} className="doc-download-btn" target="_blank" rel="noopener noreferrer">
-                    Download
-                  </a>
-                </td>
+        {documents.length ? (
+          <table className="documents-table">
+            <thead>
+              <tr>
+                <th>Document Name</th>
+                <th>Type</th>
+                <th>Uploaded</th>
+                <th>Action</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {documents.map((doc) => (
+                <tr key={doc.id}>
+                  <td>{doc.name}</td>
+                  <td>
+                    <span className={`type-badge ${(doc.type || "file").toLowerCase()}`}>
+                      {doc.type || "File"}
+                    </span>
+                  </td>
+                  <td>{doc.uploaded_at ? String(doc.uploaded_at).slice(0, 10) : "—"}</td>
+                  <td>
+                    {doc.file_url ? (
+                      <a
+                        href={doc.file_url}
+                        className="doc-download-btn"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Download
+                      </a>
+                    ) : (
+                      <span className="doc-download-btn is-disabled">Unavailable</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="no-data">
+            <p>No documents uploaded yet.</p>
+          </div>
+        )}
       </div>
     </div>
   );

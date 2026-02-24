@@ -26,6 +26,10 @@ import {
   updateWelfareTransaction,
   deleteWelfareTransaction,
   isAdminUser,
+  getTenantMemberships,
+  getTenantById,
+  updateTenant,
+  getTenantSiteTemplates,
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 
@@ -33,7 +37,6 @@ const initialMemberForm = {
   name: "",
   email: "",
   phone_number: "",
-  auth_id: "",
   role: "member",
   status: "active",
   join_date: new Date().toISOString().slice(0, 10),
@@ -49,6 +52,7 @@ const initialMemberForm = {
 };
 
 const initialInviteForm = {
+  tenant_id: "",
   email: "",
   phone_number: "",
   role: "member",
@@ -90,7 +94,114 @@ const initialSaleForm = {
   payment_status: "paid",
 };
 
+const DEFAULT_TENANT_THEME = {
+  sidebar: "#0b1226",
+  sidebarAlt: "#14203a",
+  sidebarAlt2: "#1b2b4f",
+  primary: "#1f7a8c",
+  primaryDark: "#0f5f63",
+  secondary: "#2dd4bf",
+  accent: "#f97316",
+  accentDark: "#ea580c",
+  ink: "#0f172a",
+  offWhite: "#f8fafc",
+};
+
+const DEFAULT_TENANT_FEATURES = {
+  welfare: true,
+  projects: true,
+  expenses: true,
+  reports: true,
+  news: true,
+  documents: true,
+  meetings: true,
+};
+
+const tenantConfigSteps = [
+  {
+    key: "template",
+    title: "Website Template",
+    description: "Choose a shared layout theme.",
+  },
+  {
+    key: "branding",
+    title: "Branding",
+    description: "Name, logo, and contact details.",
+  },
+  {
+    key: "theme",
+    title: "Theme",
+    description: "Choose colors for the tenant UI.",
+  },
+  {
+    key: "navigation",
+    title: "Navigation",
+    description: "Set header, footer, and social links.",
+  },
+  {
+    key: "features",
+    title: "Features & Bio",
+    description: "Toggle modules and update the org bio.",
+  },
+];
+
+const initialTenantConfig = {
+  templateKey: "",
+  name: "",
+  tagline: "",
+  logoUrl: "",
+  contact_email: "",
+  contact_phone: "",
+  location: "",
+  orgBio: "",
+  theme: { ...DEFAULT_TENANT_THEME },
+  navItems: [],
+  footerLinks: [],
+  socialLinks: [],
+  features: { ...DEFAULT_TENANT_FEATURES },
+};
+
+const normalizeLinkList = (items, fallback, extraKeys = []) => {
+  const source = Array.isArray(items) ? items : Array.isArray(fallback) ? fallback : [];
+  return source.map((item) => {
+    const base = {
+      label: typeof item?.label === "string" ? item.label : "",
+      href: typeof item?.href === "string" ? item.href : "",
+    };
+    extraKeys.forEach((key) => {
+      base[key] = typeof item?.[key] === "string" ? item[key] : "";
+    });
+    return base;
+  });
+};
+
+const sanitizeLinkList = (items, extraKeys = []) => {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items
+    .map((item) => {
+      const entry = {
+        label: String(item?.label || "").trim(),
+        href: String(item?.href || "").trim(),
+      };
+      extraKeys.forEach((key) => {
+        entry[key] = String(item?.[key] || "").trim();
+      });
+      return entry;
+    })
+    .filter((item) => item.label && item.href);
+};
+
 const adminModules = [
+  {
+    key: "tenant-config",
+    title: "Tenant Settings",
+    description: "Branding, navigation, and feature toggles.",
+    icon: "layers",
+    sections: ["tenant-config"],
+    tone: "indigo",
+  },
   {
     key: "members",
     title: "Members & Roles",
@@ -168,11 +279,30 @@ const adminModules = [
   },
 ];
 
-export default function AdminPage({ user }) {
+export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated }) {
+  const baseSiteData = useMemo(() => {
+    if (typeof window !== "undefined" && typeof window.siteData === "function") {
+      return window.siteData() || {};
+    }
+    return {};
+  }, []);
   const [members, setMembers] = useState([]);
   const [invites, setInvites] = useState([]);
   const [memberForm, setMemberForm] = useState(initialMemberForm);
   const [inviteForm, setInviteForm] = useState(initialInviteForm);
+  const [tenantOptions, setTenantOptions] = useState([]);
+  const [tenantConfig, setTenantConfig] = useState(initialTenantConfig);
+  const [tenantConfigLoading, setTenantConfigLoading] = useState(false);
+  const [tenantConfigSaving, setTenantConfigSaving] = useState(false);
+  const [tenantConfigStep, setTenantConfigStep] = useState(0);
+  const [tenantSiteData, setTenantSiteData] = useState({});
+  const [tenantRecord, setTenantRecord] = useState(null);
+  const [templateOptions, setTemplateOptions] = useState([]);
+  const [templateLoading, setTemplateLoading] = useState(false);
+
+  const selectedTemplate = useMemo(() => {
+    return templateOptions.find((template) => template.key === tenantConfig.templateKey);
+  }, [templateOptions, tenantConfig.templateKey]);
   const [welfareForm, setWelfareForm] = useState(initialWelfareForm);
   const [expenseForm, setExpenseForm] = useState(initialExpenseForm);
   const [saleForm, setSaleForm] = useState(initialSaleForm);
@@ -187,6 +317,7 @@ export default function AdminPage({ user }) {
   const [projectSearch, setProjectSearch] = useState("");
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [loadingInvites, setLoadingInvites] = useState(false);
+  const [loadingTenants, setLoadingTenants] = useState(false);
   const [loadingWelfare, setLoadingWelfare] = useState(false);
   const [loadingFinance, setLoadingFinance] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
@@ -216,7 +347,8 @@ export default function AdminPage({ user }) {
     term_start: new Date().toISOString().slice(0, 10),
   });
 
-  const isAdmin = isAdminUser(user);
+  const isAdmin =
+    isAdminUser(user) || ["admin", "superadmin"].includes(String(tenantRole || "").toLowerCase());
 
   const filteredMembers = useMemo(() => {
     if (!search.trim()) {
@@ -346,10 +478,13 @@ export default function AdminPage({ user }) {
     }
     loadMembers();
     loadInvites();
+    loadTenantOptions();
+    loadTenantConfig();
+    loadTenantTemplates();
     loadProjects();
     loadWelfareMeta();
     loadWelfareTransactions();
-  }, [isAdmin]);
+  }, [isAdmin, user?.id, tenantId]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -421,7 +556,7 @@ export default function AdminPage({ user }) {
   const loadMembers = async () => {
     setLoadingMembers(true);
     try {
-      const data = await getMembersWithTotalWelfare();
+      const data = await getMembersWithTotalWelfare(tenantId);
       setMembers(data);
     } catch (error) {
       setErrorMessage(error.message || "Failed to load members.");
@@ -433,7 +568,7 @@ export default function AdminPage({ user }) {
   const loadInvites = async () => {
     setLoadingInvites(true);
     try {
-      const data = await getMemberInvites();
+      const data = await getMemberInvites(tenantId);
       setInvites(data);
     } catch (error) {
       setErrorMessage(error.message || "Failed to load invites.");
@@ -442,10 +577,109 @@ export default function AdminPage({ user }) {
     }
   };
 
+  const loadTenantOptions = async () => {
+    if (!user?.id) {
+      setTenantOptions([]);
+      return;
+    }
+    setLoadingTenants(true);
+    try {
+      const memberships = await getTenantMemberships(user.id);
+      const options = (memberships || [])
+        .map((membership) => ({
+          id: membership.tenant?.id || membership.tenant_id,
+          name: membership.tenant?.name || "Tenant workspace",
+          slug: membership.tenant?.slug || "",
+        }))
+        .filter((tenant) => Boolean(tenant.id));
+      setTenantOptions(options);
+      setInviteForm((prev) => {
+        if (options.length === 1 && !prev.tenant_id) {
+          return { ...prev, tenant_id: options[0].id };
+        }
+        if (prev.tenant_id && !options.some((tenant) => tenant.id === prev.tenant_id)) {
+          return { ...prev, tenant_id: "" };
+        }
+        return prev;
+      });
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to load tenant workspaces.");
+    } finally {
+      setLoadingTenants(false);
+    }
+  };
+
+  const loadTenantConfig = async () => {
+    if (!tenantId) {
+      setTenantConfig(initialTenantConfig);
+      setTenantSiteData({});
+      setTenantRecord(null);
+      setTenantConfigStep(0);
+      return;
+    }
+    setTenantConfigLoading(true);
+    try {
+      const tenant = await getTenantById(tenantId);
+      const siteData = tenant?.site_data ?? {};
+      const baseTheme = baseSiteData?.theme ?? {};
+      const theme = {
+        ...DEFAULT_TENANT_THEME,
+        ...baseTheme,
+        ...(siteData?.theme ?? {}),
+      };
+      const features = {
+        ...DEFAULT_TENANT_FEATURES,
+        ...(baseSiteData?.features ?? {}),
+        ...(siteData?.features ?? {}),
+      };
+      const navItems = normalizeLinkList(siteData?.tenantNav, baseSiteData?.tenantNav ?? baseSiteData?.nav);
+      const footerLinks = normalizeLinkList(
+        siteData?.footer?.quickLinks,
+        baseSiteData?.footer?.quickLinks ?? baseSiteData?.nav
+      );
+      const socialLinks = normalizeLinkList(siteData?.socialLinks, baseSiteData?.socialLinks, ["icon"]);
+
+      setTenantRecord(tenant);
+      setTenantSiteData(siteData);
+      setTenantConfig({
+        templateKey: siteData?.templateKey ?? "",
+        name: siteData?.orgName ?? tenant?.name ?? "",
+        tagline: siteData?.orgTagline ?? tenant?.tagline ?? "",
+        logoUrl: siteData?.logoUrl ?? tenant?.logo_url ?? "",
+        contact_email: tenant?.contact_email ?? siteData?.contact?.email ?? "",
+        contact_phone: tenant?.contact_phone ?? siteData?.contact?.phone ?? "",
+        location: tenant?.location ?? siteData?.contact?.location ?? "",
+        orgBio: siteData?.orgBio ?? siteData?.aboutSection?.description ?? "",
+        theme,
+        navItems,
+        footerLinks,
+        socialLinks,
+        features,
+      });
+      setTenantConfigStep(0);
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to load tenant settings.");
+    } finally {
+      setTenantConfigLoading(false);
+    }
+  };
+
+  const loadTenantTemplates = async () => {
+    setTemplateLoading(true);
+    try {
+      const templates = await getTenantSiteTemplates();
+      setTemplateOptions(templates || []);
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to load website templates.");
+    } finally {
+      setTemplateLoading(false);
+    }
+  };
+
   const loadProjects = async () => {
     setLoadingProjects(true);
     try {
-      const data = await getProjects();
+      const data = await getProjects(tenantId);
       setProjects(data || []);
       if (!selectedProjectId && data?.length) {
         setSelectedProjectId(String(data[0].id));
@@ -464,7 +698,7 @@ export default function AdminPage({ user }) {
     }
     setLoadingProjectMembers(true);
     try {
-      const data = await getProjectMembersAdmin(projectId);
+      const data = await getProjectMembersAdmin(projectId, tenantId);
       setProjectMembers(data || []);
     } catch (error) {
       setErrorMessage(error.message || "Failed to load project members.");
@@ -476,7 +710,10 @@ export default function AdminPage({ user }) {
 
   const loadWelfareMeta = async () => {
     try {
-      const [accounts, cycles] = await Promise.all([getWelfareAccounts(), getWelfareCycles()]);
+      const [accounts, cycles] = await Promise.all([
+        getWelfareAccounts(tenantId),
+        getWelfareCycles(tenantId),
+      ]);
       setWelfareAccounts(accounts);
       setWelfareCycles(cycles);
     } catch (error) {
@@ -487,7 +724,7 @@ export default function AdminPage({ user }) {
   const loadWelfareTransactions = async () => {
     setLoadingWelfare(true);
     try {
-      const data = await getWelfareTransactionsAdmin();
+      const data = await getWelfareTransactionsAdmin(tenantId);
       setWelfareTransactions(data);
     } catch (error) {
       setErrorMessage(error.message || "Failed to load welfare transactions.");
@@ -506,8 +743,8 @@ export default function AdminPage({ user }) {
     try {
       const projectIds = projects.map((project) => project.id);
       const [expenseData, saleData] = await Promise.all([
-        getProjectExpensesForProjects(projectIds),
-        getProjectSalesForProjects(projectIds),
+        getProjectExpensesForProjects(projectIds, tenantId),
+        getProjectSalesForProjects(projectIds, tenantId),
       ]);
       setFinanceExpenses(expenseData || []);
       setFinanceSales(saleData || []);
@@ -585,6 +822,147 @@ export default function AdminPage({ user }) {
     resetMessages();
   };
 
+  const handleTenantConfigChange = (e) => {
+    const { name, value } = e.target;
+    setTenantConfig((prev) => ({ ...prev, [name]: value }));
+    resetMessages();
+  };
+
+  const handleTenantThemeChange = (key, value) => {
+    setTenantConfig((prev) => ({
+      ...prev,
+      theme: {
+        ...prev.theme,
+        [key]: value,
+      },
+    }));
+    resetMessages();
+  };
+
+  const handleTenantFeatureToggle = (key) => {
+    setTenantConfig((prev) => ({
+      ...prev,
+      features: {
+        ...prev.features,
+        [key]: !prev.features?.[key],
+      },
+    }));
+    resetMessages();
+  };
+
+  const updateLinkListItem = (listKey, index, field, value) => {
+    setTenantConfig((prev) => {
+      const list = Array.isArray(prev[listKey]) ? [...prev[listKey]] : [];
+      list[index] = { ...(list[index] || {}), [field]: value };
+      return { ...prev, [listKey]: list };
+    });
+    resetMessages();
+  };
+
+  const addLinkListItem = (listKey, extra = {}) => {
+    setTenantConfig((prev) => {
+      const list = Array.isArray(prev[listKey]) ? [...prev[listKey]] : [];
+      list.push({ label: "", href: "", ...extra });
+      return { ...prev, [listKey]: list };
+    });
+    resetMessages();
+  };
+
+  const removeLinkListItem = (listKey, index) => {
+    setTenantConfig((prev) => {
+      const list = Array.isArray(prev[listKey]) ? prev[listKey].filter((_, i) => i !== index) : [];
+      return { ...prev, [listKey]: list };
+    });
+    resetMessages();
+  };
+
+  const handleTenantConfigSave = async (event) => {
+    event.preventDefault();
+    resetMessages();
+
+    if (!tenantId) {
+      setErrorMessage("Tenant workspace not found.");
+      return;
+    }
+
+    try {
+      setTenantConfigSaving(true);
+      const nameValue = tenantConfig.name.trim() || tenantRecord?.name || "Tenant";
+      const taglineValue = tenantConfig.tagline.trim();
+      const logoValue = tenantConfig.logoUrl.trim();
+      const contactEmail = tenantConfig.contact_email.trim();
+      const contactPhone = tenantConfig.contact_phone.trim();
+      const locationValue = tenantConfig.location.trim();
+      const orgBioValue = tenantConfig.orgBio.trim();
+
+      const nextSiteData = {
+        ...(tenantSiteData || {}),
+        templateKey: tenantConfig.templateKey || null,
+        orgName: nameValue,
+        orgTagline: taglineValue || null,
+        logoUrl: logoValue || null,
+        orgBio: orgBioValue || null,
+        theme: { ...tenantConfig.theme },
+        tenantNav: sanitizeLinkList(tenantConfig.navItems),
+        socialLinks: sanitizeLinkList(tenantConfig.socialLinks, ["icon"]),
+        features: { ...(tenantConfig.features || {}) },
+        contact: {
+          ...(tenantSiteData?.contact ?? {}),
+          email: contactEmail || null,
+          phone: contactPhone || null,
+          location: locationValue || null,
+        },
+        footer: {
+          ...(tenantSiteData?.footer ?? {}),
+          quickLinks: sanitizeLinkList(tenantConfig.footerLinks),
+        },
+        aboutSection: {
+          ...(tenantSiteData?.aboutSection ?? {}),
+          description: orgBioValue || "",
+        },
+      };
+
+      const updated = await updateTenant(tenantId, {
+        name: nameValue,
+        tagline: taglineValue || null,
+        logo_url: logoValue || null,
+        contact_email: contactEmail || null,
+        contact_phone: contactPhone || null,
+        location: locationValue || null,
+        site_data: nextSiteData,
+      });
+
+      setTenantRecord(updated);
+      setTenantSiteData(updated?.site_data ?? nextSiteData);
+      if (typeof onTenantUpdated === "function") {
+        onTenantUpdated(updated);
+      }
+      setTenantConfig((prev) => ({
+        ...prev,
+        templateKey: tenantConfig.templateKey,
+        name: nameValue,
+        tagline: taglineValue,
+        logoUrl: logoValue,
+        contact_email: contactEmail,
+        contact_phone: contactPhone,
+        location: locationValue,
+        orgBio: orgBioValue,
+      }));
+      setStatusMessage("Tenant settings updated.");
+    } catch (error) {
+      setErrorMessage(error.message || "Failed to update tenant settings.");
+    } finally {
+      setTenantConfigSaving(false);
+    }
+  };
+
+  const handleTenantStepChange = (nextStep) => {
+    setTenantConfigStep((prev) => {
+      const clamped = Math.min(Math.max(nextStep, 0), tenantConfigSteps.length - 1);
+      return Number.isFinite(clamped) ? clamped : prev;
+    });
+  };
+
   const handleProjectMemberRoleChange = (projectMemberId, value) => {
     setProjectMemberRoleEdits((prev) => ({
       ...prev,
@@ -620,6 +998,7 @@ export default function AdminPage({ user }) {
         memberId: projectMemberForm.member_id,
         role: projectMemberForm.role,
         term_start: projectMemberForm.term_start,
+        tenantId,
       });
       setStatusMessage("Member added to project.");
       setProjectMemberForm((prev) => ({
@@ -667,10 +1046,10 @@ export default function AdminPage({ user }) {
       };
 
       if (selectedExpenseId) {
-        await updateProjectExpense(selectedExpenseId, payload);
+        await updateProjectExpense(selectedExpenseId, payload, tenantId);
         setStatusMessage("Expense updated.");
       } else {
-        await createProjectExpense(expenseForm.project_id, payload);
+        await createProjectExpense(expenseForm.project_id, payload, tenantId);
         setStatusMessage("Expense created.");
       }
 
@@ -716,7 +1095,7 @@ export default function AdminPage({ user }) {
     }
     resetMessages();
     try {
-      await deleteProjectExpense(expenseId);
+      await deleteProjectExpense(expenseId, tenantId);
       setStatusMessage("Expense deleted.");
       await loadFinanceData();
     } catch (error) {
@@ -728,7 +1107,7 @@ export default function AdminPage({ user }) {
     if (!expenseId) return;
     resetMessages();
     try {
-      await updateProjectExpense(expenseId, { approved_by: user?.id || null });
+      await updateProjectExpense(expenseId, { approved_by: user?.id || null }, tenantId);
       setStatusMessage("Expense approved.");
       await loadFinanceData();
     } catch (error) {
@@ -770,10 +1149,10 @@ export default function AdminPage({ user }) {
       };
 
       if (selectedSaleId) {
-        await updateProjectSale(selectedSaleId, payload);
+        await updateProjectSale(selectedSaleId, payload, tenantId);
         setStatusMessage("Sale updated.");
       } else {
-        await createProjectSale(saleForm.project_id, payload);
+        await createProjectSale(saleForm.project_id, payload, tenantId);
         setStatusMessage("Sale created.");
       }
 
@@ -820,7 +1199,7 @@ export default function AdminPage({ user }) {
     }
     resetMessages();
     try {
-      await deleteProjectSale(saleId);
+      await deleteProjectSale(saleId, tenantId);
       setStatusMessage("Sale deleted.");
       await loadFinanceData();
     } catch (error) {
@@ -838,7 +1217,7 @@ export default function AdminPage({ user }) {
     resetMessages();
     try {
       setRemovingProjectMemberId(projectMember.id);
-      await removeProjectMemberAdmin(projectMember.id);
+      await removeProjectMemberAdmin(projectMember.id, tenantId);
       setStatusMessage("Member removed from project.");
       await loadProjectMembers(selectedProjectId);
       setProjectMemberRoleEdits((prev) => {
@@ -865,7 +1244,7 @@ export default function AdminPage({ user }) {
     resetMessages();
     try {
       setSavingProjectMemberId(projectMember.id);
-      await updateProjectMemberAdmin(projectMember.id, { role: nextRole });
+      await updateProjectMemberAdmin(projectMember.id, { role: nextRole }, tenantId);
       setStatusMessage("Project role updated.");
       await loadProjectMembers(selectedProjectId);
       setProjectMemberRoleEdits((prev) => {
@@ -941,6 +1320,11 @@ export default function AdminPage({ user }) {
     e.preventDefault();
     resetMessages();
 
+    if (!inviteForm.tenant_id) {
+      setErrorMessage("Select a tenant workspace for this invite.");
+      return;
+    }
+
     if (!inviteForm.phone_number.trim()) {
       setErrorMessage("Phone number is required for invites.");
       return;
@@ -953,6 +1337,7 @@ export default function AdminPage({ user }) {
         : null;
 
       const { invite, code } = await createMemberInvite({
+        tenant_id: inviteForm.tenant_id,
         email: inviteForm.email,
         phone_number: inviteForm.phone_number,
         role: inviteForm.role,
@@ -962,7 +1347,10 @@ export default function AdminPage({ user }) {
       });
 
       setGeneratedInvite({ code, invite });
-      setInviteForm(initialInviteForm);
+      setInviteForm((prev) => ({
+        ...initialInviteForm,
+        tenant_id: prev.tenant_id,
+      }));
       setStatusMessage("Invite created. Share the code with the member.");
       await loadInvites();
     } catch (error) {
@@ -1025,10 +1413,10 @@ export default function AdminPage({ user }) {
 
     try {
       if (selectedWelfareId) {
-        await updateWelfareTransaction(selectedWelfareId, payload);
+        await updateWelfareTransaction(selectedWelfareId, payload, tenantId);
         setStatusMessage("Welfare transaction updated.");
       } else {
-        await createWelfareTransaction(payload);
+        await createWelfareTransaction(payload, tenantId);
         setStatusMessage("Welfare transaction recorded.");
       }
 
@@ -1081,7 +1469,7 @@ export default function AdminPage({ user }) {
     }
     resetMessages();
     try {
-      await deleteWelfareTransaction(transactionId);
+      await deleteWelfareTransaction(transactionId, tenantId);
       setStatusMessage("Welfare transaction deleted.");
       await loadWelfareTransactions();
       await loadMembers();
@@ -1242,8 +1630,7 @@ export default function AdminPage({ user }) {
                 </button>
               </div>
               <p className="admin-help">
-                Create a member profile after the auth account exists. Add the auth ID to link sign-in
-                access.
+                Create a member profile. Members can log in later using the invite link sent to their email.
               </p>
               <form className="admin-form" onSubmit={handleMemberSubmit}>
                 <div className="admin-form-grid">
@@ -1254,15 +1641,6 @@ export default function AdminPage({ user }) {
                       value={memberForm.name}
                       onChange={handleMemberChange}
                       placeholder="Full name"
-                    />
-                  </div>
-                  <div className="admin-form-field">
-                    <label>Auth ID</label>
-                    <input
-                      name="auth_id"
-                      value={memberForm.auth_id}
-                      onChange={handleMemberChange}
-                      placeholder="Supabase auth UUID"
                     />
                   </div>
                   <div className="admin-form-field">
@@ -1439,6 +1817,24 @@ export default function AdminPage({ user }) {
               </p>
               <form className="admin-form" onSubmit={handleInviteSubmit}>
                 <div className="admin-form-grid">
+                  <div className="admin-form-field">
+                    <label>Tenant Workspace *</label>
+                    <select
+                      name="tenant_id"
+                      value={inviteForm.tenant_id}
+                      onChange={handleInviteChange}
+                    >
+                      <option value="">
+                        {loadingTenants ? "Loading workspaces..." : "Select a workspace"}
+                      </option>
+                      {tenantOptions.map((tenant) => (
+                        <option key={tenant.id} value={tenant.id}>
+                          {tenant.name}
+                          {tenant.slug ? ` (${tenant.slug})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="admin-form-field">
                     <label>Email (optional)</label>
                     <input
@@ -1634,6 +2030,452 @@ export default function AdminPage({ user }) {
                 </div>
               </form>
             </div>
+          )}
+        </div>
+      )}
+
+      {activeSections.has("tenant-config") && (
+        <div className="admin-card" id="admin-tenant-config">
+          <div className="admin-card-header">
+            <h3>Tenant Configuration</h3>
+            <button
+              type="button"
+              className="link-button admin-card-dismiss"
+              onClick={() => setActiveModule(null)}
+            >
+              Back to console
+            </button>
+          </div>
+          <p className="admin-help">
+            Update branding, navigation, and feature access for this tenant workspace.
+          </p>
+          {tenantConfigLoading ? (
+            <p className="admin-help">Loading tenant settings...</p>
+          ) : (
+            <form className="admin-form" onSubmit={handleTenantConfigSave}>
+              <div className="admin-stepper">
+                {tenantConfigSteps.map((step, index) => {
+                  const isActive = index === tenantConfigStep;
+                  const isComplete = index < tenantConfigStep;
+                  return (
+                    <button
+                      key={step.key}
+                      type="button"
+                      className={`admin-step${isActive ? " is-active" : ""}${isComplete ? " is-complete" : ""}`}
+                      onClick={() => handleTenantStepChange(index)}
+                    >
+                      <span className="admin-step-index">{index + 1}</span>
+                      <span className="admin-step-text">
+                        <span className="admin-step-title">{step.title}</span>
+                        <span className="admin-step-desc">{step.description}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="admin-step-panel">
+                {tenantConfigStep === 0 && (
+                  <>
+                    <h4 className="admin-section-title">
+                      <Icon name="layers" size={16} /> Website Template
+                    </h4>
+                    <div className="admin-form-grid">
+                      <div className="admin-form-field admin-form-field--full">
+                        <label>Template</label>
+                        <select
+                          name="templateKey"
+                          value={tenantConfig.templateKey}
+                          onChange={handleTenantConfigChange}
+                        >
+                          <option value="">No template (custom)</option>
+                          {templateOptions.map((template) => (
+                            <option key={template.key} value={template.key}>
+                              {template.label}
+                            </option>
+                          ))}
+                        </select>
+                        {templateLoading ? (
+                          <p className="admin-help">Loading templates...</p>
+                        ) : selectedTemplate?.description ? (
+                          <p className="admin-help">{selectedTemplate.description}</p>
+                        ) : (
+                          <p className="admin-help">
+                            Choose a shared layout and override content per tenant.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {tenantConfigStep === 1 && (
+                  <>
+                    <h4 className="admin-section-title">
+                      <Icon name="layers" size={16} /> Branding
+                    </h4>
+                    <div className="admin-form-grid">
+                      <div className="admin-form-field">
+                        <label>Organization Name *</label>
+                        <input
+                          name="name"
+                          value={tenantConfig.name}
+                          onChange={handleTenantConfigChange}
+                          placeholder="Tenant name"
+                        />
+                      </div>
+                      <div className="admin-form-field">
+                        <label>Tagline</label>
+                        <input
+                          name="tagline"
+                          value={tenantConfig.tagline}
+                          onChange={handleTenantConfigChange}
+                          placeholder="Short tagline"
+                        />
+                      </div>
+                      <div className="admin-form-field">
+                        <label>Logo URL</label>
+                        <input
+                          name="logoUrl"
+                          value={tenantConfig.logoUrl}
+                          onChange={handleTenantConfigChange}
+                          placeholder="https://..."
+                        />
+                      </div>
+                      <div className="admin-form-field">
+                        <label>Contact Email</label>
+                        <input
+                          name="contact_email"
+                          type="email"
+                          value={tenantConfig.contact_email}
+                          onChange={handleTenantConfigChange}
+                          placeholder="hello@example.com"
+                        />
+                      </div>
+                      <div className="admin-form-field">
+                        <label>Contact Phone</label>
+                        <input
+                          name="contact_phone"
+                          value={tenantConfig.contact_phone}
+                          onChange={handleTenantConfigChange}
+                          placeholder="+254 700 000 000"
+                        />
+                      </div>
+                      <div className="admin-form-field">
+                        <label>Location</label>
+                        <input
+                          name="location"
+                          value={tenantConfig.location}
+                          onChange={handleTenantConfigChange}
+                          placeholder="City, Country"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {tenantConfigStep === 2 && (
+                  <>
+                    <h4 className="admin-section-title">
+                      <Icon name="target" size={16} /> Theme Colors
+                    </h4>
+                    <div className="admin-form-grid">
+                      {[
+                        { key: "sidebar", label: "Sidebar" },
+                        { key: "sidebarAlt", label: "Sidebar Alt" },
+                        { key: "sidebarAlt2", label: "Sidebar Alt 2" },
+                        { key: "primary", label: "Primary" },
+                        { key: "primaryDark", label: "Primary Dark" },
+                        { key: "secondary", label: "Secondary" },
+                        { key: "accent", label: "Accent" },
+                        { key: "accentDark", label: "Accent Dark" },
+                        { key: "ink", label: "Ink" },
+                        { key: "offWhite", label: "Off White" },
+                      ].map((item) => (
+                        <div className="admin-form-field admin-color-field" key={item.key}>
+                          <label>{item.label}</label>
+                          <div className="admin-color-control">
+                            <input
+                              type="color"
+                              value={tenantConfig.theme[item.key]}
+                              onChange={(e) => handleTenantThemeChange(item.key, e.target.value)}
+                            />
+                            <span className="admin-color-value">{tenantConfig.theme[item.key]}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {tenantConfigStep === 3 && (
+                  <>
+                    <h4 className="admin-section-title">
+                      <Icon name="menu" size={16} /> Navigation
+                    </h4>
+                    {tenantConfig.navItems.length ? (
+                      tenantConfig.navItems.map((item, index) => (
+                        <div className="admin-form-grid" key={`nav-${index}`}>
+                          <div className="admin-form-field">
+                            <label>Label</label>
+                            <input
+                              value={item.label}
+                              onChange={(e) =>
+                                updateLinkListItem("navItems", index, "label", e.target.value)
+                              }
+                              placeholder="Home"
+                            />
+                          </div>
+                          <div className="admin-form-field">
+                            <label>Link</label>
+                            <input
+                              value={item.href}
+                              onChange={(e) =>
+                                updateLinkListItem("navItems", index, "href", e.target.value)
+                              }
+                              placeholder="#about"
+                            />
+                          </div>
+                          <div className="admin-form-field">
+                            <label>Actions</label>
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => removeLinkListItem("navItems", index)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="admin-help">No navigation links yet.</p>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => addLinkListItem("navItems")}
+                    >
+                      Add navigation link
+                    </button>
+
+                    <h4 className="admin-section-title">
+                      <Icon name="tag" size={16} /> Footer Links
+                    </h4>
+                    {tenantConfig.footerLinks.length ? (
+                      tenantConfig.footerLinks.map((item, index) => (
+                        <div className="admin-form-grid" key={`footer-${index}`}>
+                          <div className="admin-form-field">
+                            <label>Label</label>
+                            <input
+                              value={item.label}
+                              onChange={(e) =>
+                                updateLinkListItem("footerLinks", index, "label", e.target.value)
+                              }
+                              placeholder="Contact"
+                            />
+                          </div>
+                          <div className="admin-form-field">
+                            <label>Link</label>
+                            <input
+                              value={item.href}
+                              onChange={(e) =>
+                                updateLinkListItem("footerLinks", index, "href", e.target.value)
+                              }
+                              placeholder="#contact"
+                            />
+                          </div>
+                          <div className="admin-form-field">
+                            <label>Actions</label>
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => removeLinkListItem("footerLinks", index)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="admin-help">No footer links yet.</p>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => addLinkListItem("footerLinks")}
+                    >
+                      Add footer link
+                    </button>
+
+                    <h4 className="admin-section-title">
+                      <Icon name="users" size={16} /> Social Links
+                    </h4>
+                    {tenantConfig.socialLinks.length ? (
+                      tenantConfig.socialLinks.map((item, index) => (
+                        <div className="admin-form-grid" key={`social-${index}`}>
+                          <div className="admin-form-field">
+                            <label>Label</label>
+                            <input
+                              value={item.label}
+                              onChange={(e) =>
+                                updateLinkListItem("socialLinks", index, "label", e.target.value)
+                              }
+                              placeholder="Facebook"
+                            />
+                          </div>
+                          <div className="admin-form-field">
+                            <label>Link</label>
+                            <input
+                              value={item.href}
+                              onChange={(e) =>
+                                updateLinkListItem("socialLinks", index, "href", e.target.value)
+                              }
+                              placeholder="https://..."
+                            />
+                          </div>
+                          <div className="admin-form-field">
+                            <label>Icon</label>
+                            <input
+                              value={item.icon || ""}
+                              onChange={(e) =>
+                                updateLinkListItem("socialLinks", index, "icon", e.target.value)
+                              }
+                              placeholder="facebook"
+                            />
+                          </div>
+                          <div className="admin-form-field">
+                            <label>Actions</label>
+                            <button
+                              type="button"
+                              className="link-button"
+                              onClick={() => removeLinkListItem("socialLinks", index)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="admin-help">No social links yet.</p>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => addLinkListItem("socialLinks", { icon: "" })}
+                    >
+                      Add social link
+                    </button>
+                  </>
+                )}
+
+                {tenantConfigStep === 4 && (
+                  <>
+                    <h4 className="admin-section-title">
+                      <Icon name="check-circle" size={16} /> Feature Access
+                    </h4>
+                    <div className="admin-form-grid">
+                      <label className="admin-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(tenantConfig.features.welfare)}
+                          onChange={() => handleTenantFeatureToggle("welfare")}
+                        />
+                        Welfare
+                      </label>
+                      <label className="admin-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(tenantConfig.features.projects)}
+                          onChange={() => handleTenantFeatureToggle("projects")}
+                        />
+                        Projects
+                      </label>
+                      <label className="admin-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(tenantConfig.features.expenses)}
+                          onChange={() => handleTenantFeatureToggle("expenses")}
+                        />
+                        Expenses
+                      </label>
+                      <label className="admin-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(tenantConfig.features.reports)}
+                          onChange={() => handleTenantFeatureToggle("reports")}
+                        />
+                        Reports
+                      </label>
+                      <label className="admin-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(tenantConfig.features.news)}
+                          onChange={() => handleTenantFeatureToggle("news")}
+                        />
+                        News
+                      </label>
+                      <label className="admin-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(tenantConfig.features.documents)}
+                          onChange={() => handleTenantFeatureToggle("documents")}
+                        />
+                        Documents
+                      </label>
+                      <label className="admin-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(tenantConfig.features.meetings)}
+                          onChange={() => handleTenantFeatureToggle("meetings")}
+                        />
+                        Meetings
+                      </label>
+                    </div>
+
+                    <h4 className="admin-section-title">
+                      <Icon name="feather" size={16} /> Organization Bio
+                    </h4>
+                    <div className="admin-form-grid">
+                      <div className="admin-form-field admin-form-field--full">
+                        <label>Bio</label>
+                        <textarea
+                          name="orgBio"
+                          value={tenantConfig.orgBio}
+                          onChange={handleTenantConfigChange}
+                          rows={4}
+                          placeholder="Describe the tenant so we can use it on the website and profile."
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="admin-step-actions">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => handleTenantStepChange(tenantConfigStep - 1)}
+                  disabled={tenantConfigStep === 0}
+                >
+                  Back
+                </button>
+                {tenantConfigStep < tenantConfigSteps.length - 1 ? (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => handleTenantStepChange(tenantConfigStep + 1)}
+                  >
+                    Next
+                  </button>
+                ) : (
+                  <button className="btn-primary" type="submit" disabled={tenantConfigSaving}>
+                    {tenantConfigSaving ? "Saving..." : "Save Settings"}
+                  </button>
+                )}
+              </div>
+            </form>
           )}
         </div>
       )}

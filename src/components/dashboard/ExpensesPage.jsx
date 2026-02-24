@@ -13,10 +13,10 @@ import {
 } from "../../lib/dataService.js";
 
 const EXPENSE_CONFIGS = {
-  JPP: {
+  jpp: {
     getBatches: getJppBatches,
   },
-  JGF: {
+  jgf: {
     getBatches: getJgfBatches,
   },
 };
@@ -28,7 +28,7 @@ const EXPENSE_RANGE_OPTIONS = [
   { label: "Custom", days: 0 },
 ];
 
-export default function ExpensesPage({ user }) {
+export default function ExpensesPage({ user, tenantId }) {
   const today = new Date().toISOString().slice(0, 10);
 
   const initialExpenseForm = {
@@ -76,7 +76,7 @@ export default function ExpensesPage({ user }) {
     }
     try {
       resetMessages();
-      const data = await getProjectExpensesForProjects(projectIds);
+      const data = await getProjectExpensesForProjects(projectIds, tenantId);
       setExpenses(data || []);
     } catch (error) {
       console.error("Error loading expense data:", error);
@@ -95,7 +95,7 @@ export default function ExpensesPage({ user }) {
       return;
     }
     try {
-      const data = await getProjectSalesForProjects(projectIds);
+      const data = await getProjectSalesForProjects(projectIds, tenantId);
       setSales(data || []);
     } catch (error) {
       console.error("Error loading project sales:", error);
@@ -114,45 +114,35 @@ export default function ExpensesPage({ user }) {
         baseMap[String(project.id)] = [];
       }
     });
-
-    const codeGroups = new Map();
-    projectList.forEach((project) => {
-      const code = project?.code ? String(project.code).trim().toUpperCase() : "";
-      const config = EXPENSE_CONFIGS[code];
+    const tasks = projectList.map((project) => {
+      const raw = project?.module_key || project?.code || "";
+      const moduleKey = String(raw).trim().toLowerCase();
+      const config = EXPENSE_CONFIGS[moduleKey];
       if (!config?.getBatches || !project?.id) {
-        return;
+        return Promise.resolve({ projectId: project?.id, list: [] });
       }
-      if (!codeGroups.has(code)) {
-        codeGroups.set(code, { projectIds: [], getBatches: config.getBatches });
-      }
-      codeGroups.get(code).projectIds.push(String(project.id));
+      return config
+        .getBatches(tenantId, project.id)
+        .then((list) => ({ projectId: project.id, list: list || [] }));
     });
-
-    if (codeGroups.size === 0) {
-      setBatchesByProject(baseMap);
-      return;
-    }
 
     setBatchesLoading(true);
     try {
-      const entries = Array.from(codeGroups.entries());
-      const results = await Promise.allSettled(
-        entries.map(([, group]) => group.getBatches())
-      );
+      const results = await Promise.allSettled(tasks);
       const nextMap = { ...baseMap };
       const errors = [];
-
-      entries.forEach(([, group], index) => {
-        const result = results[index];
-        const list = result.status === "fulfilled" ? result.value || [] : [];
-        if (result.status === "rejected") {
+      results.forEach((result, index) => {
+        const project = projectList[index];
+        if (!project?.id) {
+          return;
+        }
+        if (result.status === "fulfilled") {
+          nextMap[String(project.id)] = result.value.list || [];
+        } else {
+          nextMap[String(project.id)] = [];
           errors.push(result.reason?.message || "Failed to load batch data.");
         }
-        group.projectIds.forEach((projectId) => {
-          nextMap[String(projectId)] = list;
-        });
       });
-
       setBatchesByProject(nextMap);
       if (errors.length > 0) {
         setErrorMessage(errors.join(" "));
@@ -170,7 +160,7 @@ export default function ExpensesPage({ user }) {
     setProjectsLoading(true);
     try {
       resetMessages();
-      const data = await getProjectsWithMembership(user?.id);
+      const data = await getProjectsWithMembership(user?.id, tenantId);
       const accessibleProjects = (data || []).filter((project) => {
         if (canViewAllProjects) {
           return true;
@@ -191,7 +181,7 @@ export default function ExpensesPage({ user }) {
 
   useEffect(() => {
     loadProjects();
-  }, [user]);
+  }, [user, tenantId]);
 
   const projectLookup = useMemo(() => {
     return new Map(projects.map((project) => [String(project.id), project]));
@@ -246,10 +236,7 @@ export default function ExpensesPage({ user }) {
     if (!formProjectId) return null;
     return projectLookup.get(formProjectId) || null;
   }, [formProjectId, projectLookup]);
-  const formProjectCode = formProject?.code
-    ? String(formProject.code).trim().toUpperCase()
-    : "";
-  const categoryProjectRef = formProjectCode || formProjectId;
+  const categoryProjectRef = formProjectId;
   const formBatches = useMemo(() => {
     if (!formProjectId) return [];
     return batchesByProject[formProjectId] || [];
@@ -262,7 +249,7 @@ export default function ExpensesPage({ user }) {
     }
     setCategoriesLoading(true);
     try {
-      const categories = await getProjectExpenseCategories(projectRef);
+      const categories = await getProjectExpenseCategories(projectRef, tenantId);
       setExpenseCategories(categories);
     } catch (error) {
       console.error("Error loading expense categories:", error);
@@ -320,7 +307,7 @@ export default function ExpensesPage({ user }) {
   const getProjectLabel = (projectId) => {
     if (!projectId) return "";
     const project = projectLookup.get(String(projectId));
-    return project?.code || project?.name || "";
+    return project?.name || project?.code || project?.module_key || "";
   };
 
   const getMobileSubLabel = (expense) => {
@@ -707,10 +694,10 @@ export default function ExpensesPage({ user }) {
 
     try {
       if (editingExpenseId) {
-        await updateProjectExpense(editingExpenseId, payload);
+        await updateProjectExpense(editingExpenseId, payload, tenantId);
         setStatusMessage("Expense updated.");
       } else {
-        await createProjectExpense(activeProjectId, payload);
+        await createProjectExpense(activeProjectId, payload, tenantId);
         setStatusMessage("Expense logged.");
       }
       setExpenseForm({
@@ -750,7 +737,7 @@ export default function ExpensesPage({ user }) {
     }
     resetMessages();
     try {
-      await deleteProjectExpense(expenseId);
+      await deleteProjectExpense(expenseId, tenantId);
       setStatusMessage("Expense deleted.");
       setExpandedExpenseId(null);
       await loadExpenseData(accessibleProjectIds, false);
@@ -852,7 +839,7 @@ export default function ExpensesPage({ user }) {
                     <option value="">Select project</option>
                     {projects.map((project) => (
                       <option key={project.id} value={String(project.id)}>
-                        {project.name} ({project.code})
+                        {project.name} ({project.code || String(project.module_key || "").toUpperCase()})
                       </option>
                     ))}
                   </select>

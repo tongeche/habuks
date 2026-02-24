@@ -13,60 +13,152 @@ const ALL_PAGES = [
   "news",
   "documents",
   "meetings",
-  "profile",
+  "members",
+  "settings",
   "admin",
 ];
 
+const DEFAULT_FEATURES = {
+  welfare: true,
+  projects: true,
+  expenses: true,
+  reports: true,
+  news: true,
+  documents: true,
+  meetings: true,
+};
+
 const ensureSet = (items) => new Set(items.filter(Boolean));
 
-export const getRoleAccess = ({ role, projectCodes = [] }) => {
+const normalizeFeatures = (features) => ({
+  ...DEFAULT_FEATURES,
+  ...(features && typeof features === "object" ? features : {}),
+});
+
+const applyFeatureAccess = (pages, features) => {
+  const allowed = new Set(pages);
+  if (!features.welfare) {
+    allowed.delete("welfare");
+    allowed.delete("payouts");
+    allowed.delete("contributions");
+  }
+  if (!features.projects) {
+    allowed.delete("projects");
+    allowed.delete("projects-jpp");
+    allowed.delete("projects-jgf");
+  }
+  if (!features.expenses) {
+    allowed.delete("expenses");
+  }
+  if (!features.reports) {
+    allowed.delete("reports");
+  }
+  if (!features.news) {
+    allowed.delete("news");
+  }
+  if (!features.documents) {
+    allowed.delete("documents");
+  }
+  if (!features.meetings) {
+    allowed.delete("meetings");
+  }
+  return allowed;
+};
+
+const resolveDefaultPage = (preferred, allowedPages) => {
+  if (allowedPages.has(preferred)) {
+    return preferred;
+  }
+  if (allowedPages.has("overview")) {
+    return "overview";
+  }
+  return Array.from(allowedPages)[0] || "overview";
+};
+
+export const getRoleAccess = ({ role, projectModules = [], features }) => {
   const normalizedRole = String(role || "member").toLowerCase();
-  const allowedProjectCodes = new Set(projectCodes.map((code) => String(code).toUpperCase()));
+  const allowedProjectModules = new Set(
+    projectModules.map((moduleKey) => String(moduleKey).trim().toLowerCase())
+  );
+  const featureFlags = normalizeFeatures(features);
 
   if (ADMIN_ROLES.includes(normalizedRole)) {
+    let adminPages = new Set(ALL_PAGES);
+    if (!allowedProjectModules.has("jpp")) {
+      adminPages.delete("projects-jpp");
+    }
+    if (!allowedProjectModules.has("jgf")) {
+      adminPages.delete("projects-jgf");
+    }
+    adminPages = applyFeatureAccess(adminPages, featureFlags);
     return {
-      allowedPages: ensureSet(ALL_PAGES),
-      defaultPage: "overview",
-      allowedProjectCodes: new Set(["JPP", "JGF", ...allowedProjectCodes]),
+      allowedPages: adminPages,
+      defaultPage: resolveDefaultPage("overview", adminPages),
+      allowedProjectModules,
     };
   }
 
   if (normalizedRole === "supervisor") {
+    const supervisorPages = applyFeatureAccess(
+      ensureSet([
+        "reports",
+        "expenses",
+        "meetings",
+        "documents",
+        "members",
+        "settings",
+      ]),
+      featureFlags
+    );
     return {
-      allowedPages: ensureSet(["reports", "expenses", "meetings", "documents", "profile"]),
-      defaultPage: "reports",
-      allowedProjectCodes,
+      allowedPages: supervisorPages,
+      defaultPage: resolveDefaultPage("reports", supervisorPages),
+      allowedProjectModules,
     };
   }
 
   if (normalizedRole === "project_manager") {
     const projectPages = [];
-    if (allowedProjectCodes.has("JPP")) projectPages.push("projects-jpp");
-    if (allowedProjectCodes.has("JGF")) projectPages.push("projects-jgf");
+    if (allowedProjectModules.has("jpp")) projectPages.push("projects-jpp");
+    if (allowedProjectModules.has("jgf")) projectPages.push("projects-jgf");
+    const managerPages = applyFeatureAccess(
+      ensureSet([
+        "projects",
+        "members",
+        "settings",
+        ...projectPages,
+      ]),
+      featureFlags
+    );
     return {
-      allowedPages: ensureSet(["projects", "profile", ...projectPages]),
-      defaultPage: "projects",
-      allowedProjectCodes,
+      allowedPages: managerPages,
+      defaultPage: resolveDefaultPage("projects", managerPages),
+      allowedProjectModules,
     };
   }
 
   const memberProjectPages = [];
-  if (allowedProjectCodes.has("JPP")) memberProjectPages.push("projects-jpp");
-  if (allowedProjectCodes.has("JGF")) memberProjectPages.push("projects-jgf");
+  if (allowedProjectModules.has("jpp")) memberProjectPages.push("projects-jpp");
+  if (allowedProjectModules.has("jgf")) memberProjectPages.push("projects-jgf");
 
-  return {
-    allowedPages: ensureSet([
+  const memberPages = applyFeatureAccess(
+    ensureSet([
       "welfare",
       "payouts",
       "contributions",
       "meetings",
       "documents",
       "projects",
-      "profile",
+      "members",
+      "settings",
       ...memberProjectPages,
     ]),
-    defaultPage: "welfare",
-    allowedProjectCodes,
+    featureFlags
+  );
+  return {
+    allowedPages: memberPages,
+    defaultPage: resolveDefaultPage("welfare", memberPages),
+    allowedProjectModules,
   };
 };
 

@@ -1,396 +1,219 @@
-import { useState, useEffect, useMemo } from "react";
-import {
-  getDashboardStats,
-  getMemberContributions,
-  getContributionSplits,
-  getPayoutSchedule,
-  getProjects
-} from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 
-export default function DashboardOverview({ user }) {
-  const [stats, setStats] = useState({
-    totalContributions: 0,
-    welfareBalance: 0,
-    payoutTurn: null,
-    payoutDate: null,
-    currentCycle: 0,
-    totalMembers: 12,
-    nextRecipient: null,
-    nextPayoutDate: null,
-  });
-  const [recentContributions, setRecentContributions] = useState([]);
-  const [contributionSplits, setContributionSplits] = useState([]);
-  const [upcomingPayouts, setUpcomingPayouts] = useState([]);
-  const [payoutSchedule, setPayoutSchedule] = useState([]);
-  const [projects, setProjects] = useState([]);
-  const [transactionView, setTransactionView] = useState("summary");
-  const [loading, setLoading] = useState(true);
+const statCards = [
+  { label: "Agriculture", value: "$5,200", meta: "This month", icon: "trending-up", tone: "green" },
+  { label: "Members", value: "28", meta: "Active", icon: "users", tone: "purple" },
+  { label: "Contributions", value: "$18,990", meta: "Total", icon: "wallet", tone: "amber" },
+  { label: "Active projects", value: "4", meta: "Ongoing", icon: "briefcase", tone: "blue" },
+];
 
-  const buildContributionSplits = (contributions) => {
-    if (!Array.isArray(contributions)) return [];
-    return contributions.flatMap((contribution) => {
-      const total = Number(contribution.amount || 0);
-      if (!total) return [];
-      const welfareAmount = Number((total / 6).toFixed(2));
-      const lendingAmount = Number((total - welfareAmount).toFixed(2));
-      const cycle = contribution.cycle_number ?? "—";
-      const date = contribution.date;
-      return [
-        {
-          id: `${contribution.id}-lending`,
-          split_type: "lending_contribution",
-          amount: lendingAmount,
-          date,
-          cycle_number: String(cycle),
-        },
-        {
-          id: `${contribution.id}-welfare`,
-          split_type: "welfare_savings",
-          amount: welfareAmount,
-          date,
-          cycle_number: String(cycle),
-        },
-      ];
-    });
-  };
+const recentActivities = [
+  {
+    title: "Poultry Keeping Project",
+    subtitle: "4 egg sales logged",
+    date: "Sep 15",
+    avatar: "/assets/avatar-1.webp",
+  },
+  {
+    title: "Member Emma Green",
+    subtitle: "Profile updated",
+    date: "Sep 12",
+    avatar: "/assets/avatar-2.webp",
+  },
+  {
+    title: "Community Gardening",
+    subtitle: "10 members assigned",
+    date: "Sep 3",
+    avatar: "/assets/avatar-3.webp",
+  },
+  {
+    title: "Expense: Welfare Supplies",
+    subtitle: "2 receipts added",
+    date: "Aug 29",
+    avatar: "/assets/avatar-1.webp",
+  },
+  {
+    title: "Member David Lee joined",
+    subtitle: "Role: Member",
+    date: "Aug 22",
+    avatar: "/assets/avatar-2.webp",
+  },
+];
 
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const memberId = user?.id;
-        if (!memberId) {
-          setLoading(false);
-          return;
-        }
-        
-        const [statsData, contributions, splits, payouts, projectsData] = await Promise.all([
-          getDashboardStats(memberId),
-          getMemberContributions(memberId),
-          getContributionSplits(memberId),
-          getPayoutSchedule(),
-          getProjects(),
-        ]);
-        
-        setStats(statsData);
-        setRecentContributions(contributions.slice(0, 5));
-        setContributionSplits(
-          splits && splits.length > 0
-            ? splits
-            : buildContributionSplits(contributions)
-        );
-        
-        // Get upcoming payouts (not yet received)
-        const today = new Date();
-        const upcoming = payouts.filter(p => new Date(p.date) >= today).slice(0, 4);
-        setUpcomingPayouts(upcoming);
-        setPayoutSchedule(payouts);
-        setProjects(projectsData);
-      } catch (error) {
-        console.error("Error loading dashboard data:", error);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [user?.id]);
+const projectCards = [
+  {
+    title: "Community Fish Farming",
+    description: "Sustainable tilapia farming for local markets",
+    date: "Started: 1 Jun 2025",
+    members: "8 members",
+    progress: 50,
+    tag: "Agriculture",
+    image: "/assets/jpp_farm-bg.png",
+  },
+  {
+    title: "Community Gardening",
+    description: "Urban gardening initiative to improve food access",
+    date: "Started: 6 Nov 2025",
+    members: "9 members",
+    progress: 45,
+    tag: "Agriculture",
+    image: "/assets/highlight-1.png",
+  },
+];
 
-  const formatDate = (dateStr) => {
-    if (!dateStr) return "N/A";
-    return new Date(dateStr).toLocaleDateString("en-KE", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  };
-
-  const formatShortDate = (dateStr) => {
-    if (!dateStr) return "N/A";
-    return new Date(dateStr).toLocaleDateString("en-KE", {
-      day: "2-digit",
-      month: "short",
-    });
-  };
-
-  const formatCardDate = (dateStr) => {
-    if (!dateStr) return "JAN 2026";
-    const date = new Date(dateStr);
-    const month = date.toLocaleDateString("en-US", { month: "short" }).toUpperCase();
-    const year = date.getFullYear();
-    return `${month} ${year}`;
-  };
-
-  const formatCurrency = (value) => {
-    const amount = Number(value || 0);
-    const hasDecimals = Math.abs(amount % 1) > 0.001;
-    return amount.toLocaleString("en-KE", {
-      minimumFractionDigits: hasDecimals ? 2 : 0,
-      maximumFractionDigits: 2,
-    });
-  };
-
-  const payoutNameByCycle = useMemo(() => {
-    const map = new Map();
-    payoutSchedule.forEach((p) => {
-      if (p?.cycle_number == null) return;
-      map.set(String(p.cycle_number), p.members?.name || "Member");
-    });
-    return map;
-  }, [payoutSchedule]);
-
-  const displayTransactions = useMemo(() => {
-    if (transactionView === "contributions") {
-      return contributionSplits.map((split) => ({
-        id: split.id || `${split.contribution_id}-${split.split_type}`,
-        title:
-          split.split_type === "lending_contribution"
-            ? `Payment to ${payoutNameByCycle.get(String(split.cycle_number || "")) || "member"}`
-            : `Welfare savings · Cycle ${split.cycle_number || "—"}`,
-        date: split.date,
-        amount: split.amount,
-        kind: split.split_type,
-        direction: "outflow",
-      }));
-    }
-
-    if (transactionView === "earnings") {
-      return payoutSchedule
-        .filter((p) => p.member_id === user?.id)
-        .map((p) => ({
-          id: p.id,
-          title: `Payout received · Cycle ${p.cycle_number}`,
-          date: p.date,
-          amount: p.amount,
-          kind: "earning",
-          direction: "inflow",
-        }))
-        .slice(0, 5);
-    }
-
-    return recentContributions.map((c) => ({
-      id: c.id,
-      title: `Contribution - Cycle ${c.cycle_number}`,
-      date: c.date,
-      amount: c.amount,
-      kind: "summary",
-      direction: "outflow",
-    }));
-  }, [transactionView, contributionSplits, recentContributions, payoutNameByCycle, payoutSchedule, user?.id]);
-
-  // Calculate days until next group payout
-  const getDaysUntilNextPayout = () => {
-    const payoutDate = stats.nextPayoutDate || stats.payoutDate;
-    if (!payoutDate) return null;
-    const today = new Date();
-    const nextDate = new Date(payoutDate);
-    const diffTime = nextDate - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays > 0 ? diffDays : 0;
-  };
-
-  if (loading) {
-    return (
-      <div className="dashboard-overview loading">
-        <div className="loading-spinner"></div>
-        <p>Loading your dashboard...</p>
-      </div>
-    );
-  }
-
-  const daysUntilNext = getDaysUntilNextPayout();
-
+export default function DashboardOverview() {
   return (
-    <div className="dashboard-overview-modern">
-      <div className="dashboard-row-4col">
-        <div className="member-debit-card">
-          <div className="debit-card-bg">
-            <div className="debit-stripe debit-stripe-1"></div>
-            <div className="debit-stripe debit-stripe-2"></div>
-            <div className="debit-stripe debit-stripe-3"></div>
-          </div>
-          <div className="debit-card-content">
-            <div className="debit-card-header">
-              <div className="debit-card-logo">
-                <span className="logo-text">JONGOL</span>
-                <span className="logo-sub">FOUNDATION</span>
-              </div>
-              <span className="debit-card-type">MEMBER</span>
-            </div>
-            <div className="debit-card-chip">
-              <div className="chip-lines">
-                <span></span>
-                <span></span>
-                <span></span>
-                <span></span>
-              </div>
-            </div>
-            <div className="debit-card-number">
-              <span>JNG</span>
-              <span>{String(user?.id || 8).padStart(4, "0")}</span>
-              <span>{user?.national_id?.slice(0, 4) || "••••"}</span>
-              <span>{user?.national_id?.slice(4, 8) || "••••"}</span>
-            </div>
-            <div className="debit-card-details">
-              <div className="debit-detail">
-                <span className="debit-label">MEMBER SINCE</span>
-                <span className="debit-value">{formatCardDate(user?.join_date)}</span>
-              </div>
-              <div className="debit-detail">
-                <span className="debit-label">PAYOUT #</span>
-                <span className="debit-value">
-                  {String(stats.payoutTurn || 8).padStart(2, "0")}
-                </span>
-              </div>
-            </div>
-            <div className="debit-card-holder">
-              <span className="holder-name">{user?.name?.toUpperCase() || "MEMBER NAME"}</span>
-              <span className="holder-phone">{user?.phone_number || user?.email}</span>
-            </div>
-            <div className="debit-card-footer">
-              <div className="debit-status">
-                <span className={`status-dot ${user?.status || "active"}`}></span>
-                <span>{user?.status?.toUpperCase() || "ACTIVE"}</span>
-              </div>
-              <div className="debit-logo-icon">
-                <Icon name="users" size={20} />
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="overview-v2">
+      <section className="overview-v2-intro">
+        <h2>Overview</h2>
+        <p>Welcome to your collective operations dashboard.</p>
+      </section>
 
-        <div className="transactions-card">
-          <div className="card-header">
-            <h3><Icon name="receipt" size={20} /> Transaction History</h3>
-            <a href="#" className="view-all-link">View All</a>
+      <section className="overview-v2-stats">
+        {statCards.map((card) => (
+          <article key={card.label} className={`overview-v2-stat-card tone-${card.tone}`}>
+            <div className="overview-v2-stat-head">
+              <span>{card.label}</span>
+              <Icon name={card.icon} size={15} />
+            </div>
+            <div className="overview-v2-stat-value">{card.value}</div>
+            <p>{card.meta}</p>
+          </article>
+        ))}
+      </section>
+
+      <section className="overview-v2-mid">
+        <article className="overview-v2-card overview-v2-income">
+          <div className="overview-v2-card-head">
+            <h3>Income Progress</h3>
+            <button type="button">Last 6 Months</button>
           </div>
-          <div className="transaction-toggle">
-            <button
-              type="button"
-              className={`toggle-btn ${transactionView === "summary" ? "is-active" : ""}`}
-              onClick={() => setTransactionView("summary")}
-            >
-              Summary
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn ${transactionView === "contributions" ? "is-active" : ""}`}
-              onClick={() => setTransactionView("contributions")}
-            >
-              Contributions
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn ${transactionView === "earnings" ? "is-active" : ""}`}
-              onClick={() => setTransactionView("earnings")}
-            >
-              Earnings
+          <div className="overview-v2-chart">
+            <svg viewBox="0 0 640 230" preserveAspectRatio="none" aria-hidden="true">
+              <path
+                d="M0 170 L640 170"
+                stroke="rgba(125,145,180,0.35)"
+                strokeWidth="1"
+                strokeDasharray="6 6"
+                fill="none"
+              />
+              <path
+                d="M0 55 L640 55"
+                stroke="rgba(125,145,180,0.2)"
+                strokeWidth="1"
+                strokeDasharray="6 6"
+                fill="none"
+              />
+              <polyline
+                points="40,170 170,120 300,108 430,76 560,72"
+                fill="none"
+                stroke="#7bc6b2"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+              <polyline
+                points="40,170 170,146 300,127 430,96 560,86"
+                fill="none"
+                stroke="#7bc6b2"
+                strokeOpacity="0.45"
+                strokeWidth="2"
+                strokeDasharray="7 6"
+                strokeLinecap="round"
+              />
+              <circle cx="560" cy="72" r="5.5" fill="#66bca7" />
+            </svg>
+            <span className="overview-v2-chart-value">$5,200</span>
+          </div>
+          <div className="overview-v2-income-foot">
+            <div>
+              <strong>Total Income Year To Date</strong>
+              <span>$78,400 / $90,000</span>
+            </div>
+            <div className="overview-v2-progress">
+              <span style={{ width: "87%" }} />
+            </div>
+            <button type="button" className="overview-v2-primary-btn">
+              Open Project
             </button>
           </div>
-          <div className="transactions-list">
-            {displayTransactions.length > 0 ? (
-              displayTransactions.map((transaction) => (
-                <div className="transaction-item" key={transaction.id}>
-                  <div
-                    className={`transaction-icon ${
-                      transaction.kind === "lending_contribution"
-                        ? "transaction-icon--lending"
-                        : transaction.kind === "welfare_savings"
-                        ? "transaction-icon--welfare"
-                        : transaction.kind === "earning"
-                        ? "transaction-icon--earning"
-                        : "transaction-icon--outflow"
-                    }`}
-                  >
-                    <Icon
-                      name={
-                        transaction.kind === "lending_contribution"
-                          ? "coins"
-                        : transaction.kind === "welfare_savings"
-                          ? "heart"
-                          : transaction.kind === "earning"
-                          ? "arrow-left"
-                          : "arrow-right"
-                      }
-                      size={18}
-                    />
-                  </div>
-                  <div className="transaction-details">
-                    <span className="transaction-title">{transaction.title}</span>
-                    <span className="transaction-date">{formatDate(transaction.date)}</span>
-                  </div>
-                  <div
-                    className={`transaction-amount ${
-                      transaction.direction === "inflow"
-                        ? "transaction-amount--positive"
-                        : "transaction-amount--negative"
-                    }`}
-                  >
-                    {transaction.direction === "inflow" ? "+" : "-"}Ksh.{" "}
-                    {formatCurrency(transaction.amount)}
-                  </div>
+        </article>
+
+        <article className="overview-v2-card overview-v2-activity">
+          <h3>Recent Activity</h3>
+          <div className="overview-v2-activity-list">
+            {recentActivities.map((item) => (
+              <div key={`${item.title}-${item.date}`} className="overview-v2-activity-item">
+                <img src={item.avatar} alt="" />
+                <div>
+                  <strong>{item.title}</strong>
+                  <p>{item.subtitle}</p>
                 </div>
-              ))
-            ) : (
-              <div className="no-transactions">
-                <Icon name="wallet" size={32} />
-                <p>No transactions yet</p>
+                <span>{item.date}</span>
               </div>
-            )}
+            ))}
           </div>
-        </div>
+        </article>
+      </section>
 
-        <div className="upcoming-payouts-card">
-          <div className="card-header">
-            <h3><Icon name="users" size={20} /> Upcoming Payouts</h3>
+      <section className="overview-v2-bottom">
+        <article className="overview-v2-card overview-v2-projects">
+          <div className="overview-v2-card-head">
+            <h3>Active Projects</h3>
+            <button type="button">View All Projects</button>
           </div>
-          <div className="upcoming-list">
-            {upcomingPayouts.length > 0 ? (
-              upcomingPayouts.map((p) => (
-                <div
-                  className={`upcoming-item ${p.member_id === user?.id ? "upcoming-item--me" : ""}`}
-                  key={p.id}
-                >
-                  <div className="upcoming-rank">#{p.cycle_number}</div>
-                  <div className="upcoming-info">
-                    <span className="upcoming-name">
-                      {p.member_id === user?.id ? "You" : p.members?.name || "Member"}
-                    </span>
-                    <span className="upcoming-date">{formatShortDate(p.date)}</span>
-                  </div>
-                  <div className="upcoming-amount">Ksh. {p.amount}</div>
+          <div className="overview-v2-project-grid">
+            {projectCards.map((project) => (
+              <article key={project.title} className="overview-v2-project-card">
+                <div className="overview-v2-project-image">
+                  <img src={project.image} alt={project.title} loading="lazy" />
+                  <span>{project.tag}</span>
                 </div>
-              ))
-            ) : (
-              <p className="no-data-small">No upcoming payouts</p>
-            )}
-          </div>
-        </div>
-
-        <div className="projects-overview-card">
-          <div className="card-header">
-            <h3><Icon name="briefcase" size={20} /> IGA Projects</h3>
-          </div>
-          <div className="projects-mini-grid">
-            {projects.length > 0 ? (
-              projects.map((project) => (
-                <div className="project-mini-card" key={project.id}>
-                  <div
-                    className={`project-mini-icon ${project.status === "active" ? "active" : "dev"}`}
-                  >
-                    {project.name.includes("Poultry") ? "🐔" : "🥜"}
+                <div className="overview-v2-project-body">
+                  <h4>{project.title}</h4>
+                  <p>{project.description}</p>
+                  <small>
+                    {project.date} · {project.members}
+                  </small>
+                  <div className="overview-v2-project-foot">
+                    <button type="button" className="overview-v2-primary-btn">
+                      Open Project
+                    </button>
+                    <span>{project.progress}%</span>
                   </div>
-                  <div className="project-mini-info">
-                    <span className="project-mini-name">{project.name.split("–")[0].trim()}</span>
-                    <span className={`project-mini-status ${project.status}`}>{project.status}</span>
+                  <div className="overview-v2-progress">
+                    <span style={{ width: `${project.progress}%` }} />
                   </div>
                 </div>
-              ))
-            ) : (
-              <p className="no-data-small">No active projects</p>
-            )}
+              </article>
+            ))}
           </div>
-        </div>
-      </div>
+        </article>
+
+        <article className="overview-v2-card overview-v2-members">
+          <div className="overview-v2-card-head">
+            <h3>Members Activity</h3>
+            <button type="button">View All</button>
+          </div>
+          <div className="overview-v2-members-wrap">
+            <div className="overview-v2-members-stats">
+              <p>
+                <span className="dot active" />
+                Active <strong>28</strong>
+              </p>
+              <p>
+                <span className="dot inactive" />
+                Inactive <strong>7</strong>
+              </p>
+            </div>
+            <div className="overview-v2-donut" aria-hidden="true">
+              <span>50%</span>
+            </div>
+          </div>
+          <button type="button" className="overview-v2-primary-btn overview-v2-members-btn">
+            View All Projects
+          </button>
+        </article>
+      </section>
     </div>
   );
 }

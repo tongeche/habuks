@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { getMemberContributions } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 
-export default function ContributionsPage({ user }) {
+export default function ContributionsPage({ user, tenantId }) {
   const [contributions, setContributions] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -11,7 +11,7 @@ export default function ContributionsPage({ user }) {
       if (!user?.id) return;
       
       try {
-        const data = await getMemberContributions(user.id);
+        const data = await getMemberContributions(user.id, tenantId);
         setContributions(data);
       } catch (error) {
         console.error("Error loading contributions:", error);
@@ -20,10 +20,32 @@ export default function ContributionsPage({ user }) {
       }
     }
     loadContributions();
-  }, [user?.id]);
+  }, [user?.id, tenantId]);
 
   const totalContributed = contributions.reduce((sum, c) => sum + c.amount, 0);
   const contributionCount = contributions.length;
+  const contributionAmounts = contributions
+    .map((c) => Number(c.amount))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  const getMostCommonAmount = (values) => {
+    if (!values.length) return null;
+    const counts = new Map();
+    values.forEach((value) => {
+      counts.set(value, (counts.get(value) || 0) + 1);
+    });
+    let bestValue = values[0];
+    let bestCount = 0;
+    counts.forEach((count, value) => {
+      if (count > bestCount) {
+        bestCount = count;
+        bestValue = value;
+      }
+    });
+    return bestValue;
+  };
+
+  const contributionAmount = getMostCommonAmount(contributionAmounts);
 
   const formatDate = (dateStr) => {
     return new Date(dateStr).toLocaleDateString("en-KE", {
@@ -31,6 +53,21 @@ export default function ContributionsPage({ user }) {
       month: "short",
       day: "numeric",
     });
+  };
+
+  const getCadenceLabel = () => {
+    if (contributions.length < 2) return "—";
+    const sorted = [...contributions].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
+    const latest = new Date(sorted[0].date);
+    const previous = new Date(sorted[1].date);
+    const diffDays = Math.round((latest - previous) / (1000 * 60 * 60 * 24));
+    if (!Number.isFinite(diffDays) || diffDays <= 0) return "—";
+    if (diffDays === 7) return "Weekly";
+    if (diffDays === 14) return "Every 2 weeks";
+    if (diffDays === 30) return "Monthly";
+    return `Every ${diffDays} days`;
   };
 
   // Calculate next due date (2 weeks from last contribution or from join date)
@@ -66,8 +103,10 @@ export default function ContributionsPage({ user }) {
           </div>
           <div className="summary-card-content">
             <span className="summary-label">Contribution Amount</span>
-            <span className="summary-value">Ksh. 500</span>
-            <span className="summary-subtext">Every 2 weeks</span>
+            <span className="summary-value">
+              {contributionAmount ? `Ksh. ${contributionAmount.toLocaleString("en-KE")}` : "—"}
+            </span>
+            <span className="summary-subtext">{getCadenceLabel()}</span>
           </div>
         </div>
         <div className="summary-card summary-card--due">

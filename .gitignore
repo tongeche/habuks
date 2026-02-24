@@ -45,6 +45,13 @@ brand.txt
 about.txt
 poltry_brief.txt
 content.md
-
+migration.md
+cookie-policy.md
+privacy-policy.md
 # Local Netlify folder
 .netlify
+
+# Local template upload staging files
+template-uploads/organization-templates/*
+!template-uploads/organization-templates/.gitkeep
+!template-uploads/organization-templates/README.md

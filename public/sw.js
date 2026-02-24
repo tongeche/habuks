@@ -1,8 +1,9 @@
-const CACHE_NAME = "jongol-runtime-v1";
+const CACHE_NAME = "habuks-runtime-v5";
 const CORE_ASSETS = [
   "/",
   "/index.html",
   "/manifest.webmanifest",
+  "/landing-data.js",
   "/icons/icon-180.png",
   "/icons/icon-192.png",
   "/icons/icon-512.png",

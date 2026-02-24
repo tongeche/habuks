@@ -1,132 +1,248 @@
 window.siteData = () => ({
-  orgName: "JONGOL FOUNDATION",
-  groupName: "JONGOL SELF HELP GROUP",
-  orgTagline: "",
-  heroHeadline: "Building Sustainable Livelihoods Through Community Action",
-  heroIntro: [],
+  orgName: "Habuks",
+  groupName: "Habuks Platform",
+  orgTagline: "Collective Operations SaaS",
+  theme: {
+    sidebar: "#0b1226",
+    sidebarAlt: "#14203a",
+    sidebarAlt2: "#1b2b4f",
+    primary: "#1f7a8c",
+    primaryDark: "#0f5f63",
+    secondary: "#2dd4bf",
+    accent: "#f97316",
+    accentDark: "#ea580c",
+    ink: "#0f172a",
+    offWhite: "#f8fafc"
+  },
+  heroHeadline: "Run every collective on one platform",
+  heroIntro: [
+    "Habuks is a multi-tenant operations platform for community organizations, cooperatives, and micro-enterprises.",
+    "Create secure workspaces for each group, track projects and IGAs, and keep contributions, welfare, and records in one place.",
+    "Launch quickly with role-based access and clear audit trails."
+  ],
   heroImages: [
     {
-      src: "/assets/hero-1.png",
-      alt: "Community members working together in green fields."
+      src: "/assets/hero-saas-1.svg",
+      alt: "Habuks workspace overview."
     },
     {
-      src: "/assets/hero-2.webp",
-      alt: "Hands holding seedlings representing sustainable livelihoods."
+      src: "/assets/hero-saas-2.svg",
+      alt: "Multi-tenant operations dashboard."
     },
     {
-      src: "/assets/hero-3.webp",
-      alt: "Rural landscape with farms and hills at sunrise."
+      src: "/assets/hero-saas-3.svg",
+      alt: "Activity timelines and reports."
     }
   ],
   heroIntervalMs: 2000,
+  impactStrip: {
+    id: "impact",
+    kicker: "IMPACT",
+    title: "Community impact at a glance",
+    description:
+      "Quick metrics that show how collectives are growing their programs and member support.",
+    items: [
+      { value: "28", label: "Active workspaces" },
+      { value: "340+", label: "Members supported" },
+      { value: "6", label: "Income programs" },
+      { value: "KSh 1.2M", label: "Tracked contributions" }
+    ]
+  },
+  programsSection: {
+    id: "programs",
+    kicker: "PROGRAMS",
+    title: "Programs inside every tenant workspace",
+    description:
+      "Each tenant can launch multiple projects with unique goals, budgets, and impact targets.",
+    items: [
+      {
+        title: "Poultry Incubation Initiative",
+        description:
+          "A flagship income-generating activity focused on incubation, brooding, and poultry sales.",
+        tag: "Income-Generating Activity",
+        status: "Active",
+        highlights: [
+          "Incubation and brooder management",
+          "Egg production tracking",
+          "Market-ready poultry sales"
+        ],
+        cta: { label: "See poultry plan", href: "#contact" }
+      },
+      {
+        title: "Jongol Groundnut Foods",
+        description:
+          "A community agribusiness initiative covering cultivation, processing, and branded sales.",
+        tag: "Value Addition",
+        status: "Scaling",
+        highlights: [
+          "Groundnut aggregation",
+          "Peanut butter processing",
+          "Local market distribution"
+        ],
+        cta: { label: "Explore the roadmap", href: "#contact" }
+      }
+    ]
+  },
+  objectivesSection: {
+    id: "about",
+    kicker: "OBJECTIVES & GOALS",
+    title: "What we are building toward",
+    description:
+      "Tenant workspaces align their projects with clear objectives and measurable community goals.",
+    objectivesTitle: "Objectives",
+    goalsTitle: "Goals",
+    objectives: [
+      "Create reliable income streams for members",
+      "Document project performance consistently",
+      "Improve transparency for partners and donors"
+    ],
+    goals: [
+      "Grow member savings and welfare funds",
+      "Expand local market access",
+      "Build sustainable community enterprises"
+    ],
+    image: {
+      src: "/assets/about-saas.svg",
+      alt: "Community objectives and goals."
+    }
+  },
+  testimonialsSection: {
+    id: "testimonials",
+    kicker: "STORIES",
+    title: "What members are saying",
+    description: "Highlights from members and leaders using Habuks workspaces.",
+    items: [
+      {
+        quote: "Habuks keeps our poultry program organized and transparent for every member.",
+        name: "Mary Akinyi",
+        role: "Project Lead"
+      },
+      {
+        quote: "We can finally track welfare cycles without spreadsheets or confusion.",
+        name: "John Ochieng",
+        role: "Treasurer"
+      },
+      {
+        quote: "The dashboard gives us confidence when reporting to partners.",
+        name: "Grace Atieno",
+        role: "Committee Member"
+      }
+    ]
+  },
   highlight: {
     id: "highlights",
-    kicker: "WE ARE GUIDED BY",
-    title: "Our Fundamental Principles",
+    kicker: "BUILT FOR MULTI-TENANT",
+    title: "Separate workspaces, shared oversight",
     description:
-      "Our group is guided by shared values that shape how we build livelihoods and sustainable enterprise.",
+      "Give every group its own workspace while keeping global visibility for admins, partners, and support teams.",
     image: {
-      src: "/assets/highlight-1.png",
-      alt: "Community members collaborating on livelihoods initiatives."
+      src: "/assets/highlight-saas.svg",
+      alt: "Shared oversight across tenant workspaces."
     },
     badge: {
       number: "01",
-      label: "Fundamental Principles"
+      label: "Multi-tenant Core"
     },
     cta: {
-      label: "Learn More",
-      href: "/about"
+      label: "See how it works",
+      href: "#what-we-do"
     },
-    items: []
+    items: [
+      "Isolated data per workspace",
+      "Role-based access by tenant",
+      "Audit-ready activity logs",
+      "Templates for fast setup"
+    ]
   },
   whatWeDoSection: {
     id: "what-we-do",
-    kicker: "WHAT WE DO",
-    title: "Building Livelihoods Through Community Enterprise",
+    kicker: "FEATURES",
+    title: "Everything teams need to run operations",
     description:
-      "We focus on practical, community-owned initiatives that grow income, improve nutrition, and strengthen local resilience.",
+      "From member records to project and IGA tracking, Habuks keeps daily work organized across tenants.",
     items: [
       {
-        title: "Poultry Incubation Initiative (JPP)",
+        title: "Workspace and member management",
         description:
-          "Our flagship poultry project builds incubation capacity, layers, and broilers to grow member income and improve local protein supply.",
+          "Create tenants, invite members, assign roles, and manage access with clear permissions.",
         image: {
-          src: "/assets/what-we-do-1.png",
-          alt: "Poultry incubation project supporting sustainable livelihoods."
+          src: "/assets/feature-workspaces.svg",
+          alt: "Workspace and member management."
         },
         cta: {
-          label: "Read More",
-          href: "#projects"
+          label: "Explore features",
+          href: "#highlights"
         }
       },
       {
-        title: "Farming and Value Addition",
+        title: "Projects, IGAs, and finance tracking",
         description:
-          "Community-led farming and value addition through processing and branding, creating new income streams and healthier diets.",
+          "Log activities, expenses, sales, contributions, and welfare cycles with structured, searchable records.",
         image: {
-          src: "/assets/what-we-do-2.png",
-          alt: "Groundnut processing and community enterprise work."
+          src: "/assets/feature-ops.svg",
+          alt: "Project and finance tracking."
         },
         cta: {
-          label: "Read More",
-          href: "#projects"
+          label: "View modules",
+          href: "#volunteer"
         }
       }
     ]
   },
   volunteerSection: {
     id: "volunteer",
-    kicker: "JOIN JONGOL FOUNDATION",
-    title: "Become a Member or a Volunteer",
-    description: "",
+    kicker: "WHO IT IS FOR",
+    title: "Built for collectives that share responsibility",
+    description:
+      "Habuks helps groups manage operations without spreadsheets or scattered WhatsApp threads.",
     image: {
-      src: "/assets/volunteer-1.png",
-      alt: "Volunteer supporting community action."
+      src: "/assets/tenants-saas.svg",
+      alt: "Teams coordinating across tenant workspaces."
     },
     items: [
       {
-        icon: "volunteer",
-        title: "Volunteer",
+        icon: "users",
+        title: "Self-help groups and cooperatives",
         description:
-          "A volunteer is anyone willing to offer their time, skills, or resources to support community action."
+          "Run contributions, welfare, and projects in one place with shared visibility."
       },
       {
-        icon: "member",
-        title: "Member",
+        icon: "folder",
+        title: "NGOs and community programs",
         description:
-          "A member is one who has joined the group and supports its mission through shared responsibility."
+          "Support multiple partner groups with clear oversight and consistent reporting."
       }
     ],
     cta: {
-      label: "Get Started",
+      label: "Talk to us",
       href: "#contact"
     },
     stats: [
-      { value: "00", label: "County Branches" },
-      { value: "00", label: "Regional Offices" },
-      { value: "00", label: "Members and Volunteers" },
-      { value: "00", label: "Beneficiaries Supported" }
+      { value: "Multi-tenant", label: "Separate workspaces" },
+      { value: "Role-based", label: "Access control" },
+      { value: "Audit-ready", label: "Activity records" },
+      { value: "Mobile-first", label: "On any device" }
     ]
   },
   aboutSection: {
     id: "about",
-    kicker: "ABOUT US",
-    title: "We Build Sustainable Livelihoods Together",
+    kicker: "WHY HABUKS",
+    title: "Operational clarity for every tenant",
     description:
-      "We are a member-led organisation in Kosele, Rachuonyo that strengthens food security and incomes through well-governed, community-owned enterprise.",
+      "Designed for low-resource environments and teams that need accountability without complexity.",
     image: {
-      src: "/assets/about-1.png",
-      alt: "Community support and livelihoods in action."
+      src: "/assets/about-saas.svg",
+      alt: "Habuks product overview."
     },
     cards: [
-      { title: "Our Mission", icon: "mission" },
-      { title: "Our Vision", icon: "vision" },
-      { title: "Core Values", icon: "values" },
-      { title: "Our History", icon: "history" }
+      { title: "Multi-tenant workspaces", icon: "mission" },
+      { title: "Role-based permissions", icon: "vision" },
+      { title: "Structured data model", icon: "values" },
+      { title: "Scales with you", icon: "history" }
     ],
     stats: {
-      value: "1k+",
-      label: "Community Voices",
+      value: "Built with operators",
+      label: "Community-first product",
       avatars: [
         { src: "/assets/avatar-1.webp", alt: "Community member" },
         { src: "/assets/avatar-2.webp", alt: "Community member" },
@@ -136,85 +252,94 @@ window.siteData = () => ({
   },
   updatesSection: {
     id: "updates",
-    kicker: "LATEST UPDATES",
-    title: "Read Our Impact Stories",
-    description: "",
+    kicker: "LATEST FROM HABUKS",
+    title: "Product updates and rollout notes",
+    description: "What we are building for multi-tenant operations.",
     items: [
       {
-        title: "Closing the Gap in Poultry Incubation Skills",
+        title: "Tenant setup in minutes",
         description:
-          "Training and mentorship for members to expand incubation capacity and improve poultry production.",
+          "Spin up new workspaces with templates, roles, and default modules.",
         image: {
-          src: "/assets/updates-1.webp",
-          alt: "Community members attending a training session."
+          src: "/assets/update-templates.svg",
+          alt: "Workspace setup screens."
         },
         link: {
-          label: "Read Article",
-          href: "#projects"
+          label: "Learn more",
+          href: "#contact"
         }
       },
       {
-        title: "New Groundnut Processing Steps Rolled Out",
+        title: "IGA tracking that stays consistent",
         description:
-          "Improved processing, packaging, and hygiene standards to increase incomes and market reach.",
+          "Standardize project, expense, and sales logs across all tenants.",
         image: {
-          src: "/assets/updates-2.webp",
-          alt: "Community-led groundnut processing work."
+          src: "/assets/update-iga.svg",
+          alt: "Consistent project tracking."
         },
         link: {
-          label: "Read Article",
-          href: "#projects"
+          label: "Learn more",
+          href: "#contact"
         }
       },
       {
-        title: "Member Welfare Fund Supports More Families",
+        title: "Audit-friendly reporting",
         description:
-          "Collective savings and support systems strengthening resilience across the group.",
+          "Exportable records and clear histories for partners and committees.",
         image: {
-          src: "/assets/updates-3.webp",
-          alt: "Group meeting focused on member welfare."
+          src: "/assets/update-audit.svg",
+          alt: "Reports and audit trails."
         },
         link: {
-          label: "Read Article",
-          href: "#volunteer"
+          label: "Learn more",
+          href: "#contact"
         }
       }
     ]
   },
   ctaBanner: {
-    id: "volunteer-cta",
-    kicker: "JOIN OUR COMMUNITY",
-    title: "Volunteer With Us",
+    id: "get-involved",
+    kicker: "GET STARTED",
+    title: "Get involved with the collective",
     description:
-      "Offer your time, skills, or resources to strengthen livelihoods and community-led enterprise.",
+      "Support the mission, join a program, or partner with us on the next initiative.",
     backgroundImage: "",
     cta: {
-      label: "Become a Volunteer",
-      href: "#volunteer"
+      label: "Donate / Join / Partner",
+      href: "#contact"
     }
   },
   nav: [
-    { label: "About Us", href: "/about" },
-    { label: "Highlights", href: "#highlights" },
-    { label: "What We Do", href: "#what-we-do" },
-    { label: "Volunteer", href: "#volunteer" },
-    { label: "Contact Us", href: "#contact" }
+    { label: "Platform", href: "#what-we-do" },
+    { label: "Multi-tenant", href: "#highlights" },
+    { label: "Who It's For", href: "#volunteer" },
+    { label: "Security", href: "#about" },
+    { label: "Contact", href: "#contact" }
   ],
+  tenantNav: [
+    { label: "Home", href: "#top" },
+    { label: "About", href: "#about" },
+    { label: "Programs", href: "#programs" },
+    { label: "Impacts", href: "#impact" },
+    { label: "Get involved", href: "#get-involved" },
+    { label: "Contact us", href: "#contact" }
+  ],
+  tenantCta: { label: "Donate / Join / Partner", href: "#get-involved" },
   cta: [
-    { label: "About Us", href: "/about", style: "primary" },
-    { label: "What We Do", href: "#what-we-do", style: "ghost" }
+    { label: "Request a demo", href: "#contact", style: "primary" },
+    { label: "View features", href: "#what-we-do", style: "ghost" }
   ],
   header: {
-    topEmails: ["info@jongol.com"],
-    donate: { label: "Volunteer", href: "/volunteer" },
+    topEmails: ["hello@habuks.com"],
+    donate: { label: "Request Demo", href: "#contact" },
     menuLabel: "Menu",
     nav: [
       { label: "Home", href: "#top" },
-      { label: "About Us", href: "/about" },
-      { label: "Highlights", href: "#highlights" },
-      { label: "What We Do", href: "#what-we-do" },
-      { label: "Volunteer", href: "/volunteer" },
-      { label: "Contact Us", href: "#contact" }
+      { label: "Platform", href: "#what-we-do" },
+      { label: "Multi-tenant", href: "#highlights" },
+      { label: "Who It's For", href: "#volunteer" },
+      { label: "Security", href: "#about" },
+      { label: "Contact", href: "#contact" }
     ]
   },
   socialLinks: [
@@ -224,9 +349,14 @@ window.siteData = () => ({
     { label: "LinkedIn", href: "https://linkedin.com", icon: "linkedin" },
     { label: "YouTube", href: "https://youtube.com", icon: "youtube" }
   ],
-  whatWeDoTitle: "",
+  whatWeDoTitle: "Core modules",
   whatWeDoIntro: "",
-  whatWeDo: [],
+  whatWeDo: [
+    "Member management",
+    "Projects and IGAs",
+    "Contributions and welfare",
+    "Reports and documents"
+  ],
   about: {
     title: "About Us",
     whoTitle: "Who We Are",
@@ -339,26 +469,34 @@ window.siteData = () => ({
     ]
   },
   contact: {
-    title: "Contact Us",
-    intro: "Reach out to partner with us or learn more about our projects.",
-    location: "Oyugis, Rachuonyo - Homa Bay County, Kenya",
-    phone: "[Add contact]",
-    email: "info@jongol.com"
+    title: "Contact Habuks",
+    intro: "Tell us about your organization and the workspaces you want to support.",
+    kicker: "CONTACT US",
+    panelTitle: "Ready to get started?",
+    panelDescription: "Share your goals and we will help you set up the right workspace.",
+    location: "Remote-first",
+    phone: "",
+    email: "hello@habuks.com",
+    actions: [
+      { label: "Email us", href: "mailto:hello@habuks.com", style: "primary" },
+      { label: "Member Login", href: "/login", style: "ghost" }
+    ]
   },
   footer: {
-    blurb: "Community-led livelihoods and sustainable enterprise.",
+    blurb: "Multi-tenant operations for community organizations.",
     quickLinksTitle: "Quick Links",
     quickLinks: [
-      { label: "About Us", href: "/about" },
-      { label: "What We Do", href: "#what-we-do" },
-      { label: "Volunteer", href: "#volunteer" },
-      { label: "Contact Us", href: "#contact" }
+      { label: "About", href: "#about" },
+      { label: "Programs", href: "#programs" },
+      { label: "Impacts", href: "#impact" },
+      { label: "Get involved", href: "#get-involved" },
+      { label: "Contact us", href: "#contact" }
     ],
     contactTitle: "Contact",
     socialTitle: "Follow Us",
-    legal: "Jongol Foundation. All rights reserved."
+    legal: "Habuks. All rights reserved."
   },
-  footerNote: "Community-led livelihoods and sustainable enterprise.",
+  footerNote: "Multi-tenant operations for community organizations.",
   year: new Date().getFullYear(),
   get phoneIsPlaceholder() {
     return !this.contact.phone || this.contact.phone.includes("Add");

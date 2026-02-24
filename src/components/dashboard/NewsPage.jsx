@@ -1,43 +1,71 @@
-export default function NewsPage({ user }) {
-  const news = [
-    {
-      id: 1,
-      title: "JPP Poultry Project Reaches 500 Chicks Milestone",
-      date: "2026-01-06",
-      excerpt: "Our poultry incubation initiative has successfully hatched its 500th chick, marking a major achievement for the group.",
-      type: "News",
-    },
-    {
-      id: 2,
-      title: "Monthly Meeting Scheduled for January 12",
-      date: "2026-01-04",
-      excerpt: "All members are invited to attend the monthly general meeting. Agenda includes welfare review and project updates.",
-      type: "Update",
-    },
-    {
-      id: 3,
-      title: "Groundnut Processing Training Completed",
-      date: "2025-12-20",
-      excerpt: "Members completed a 3-day training on peanut butter processing and hygiene standards.",
-      type: "Blog",
-    },
-  ];
+import { useEffect, useState } from "react";
+import { getNews } from "../../lib/dataService.js";
+
+export default function NewsPage({ user, tenantId }) {
+  const [news, setNews] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadNews = async () => {
+      setLoading(true);
+      try {
+        const data = await getNews(tenantId);
+        setNews(data || []);
+      } catch (error) {
+        console.error("Error loading news:", error);
+        setNews([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadNews();
+  }, [tenantId]);
+
+  if (loading) {
+    return <div className="news-page loading">Loading updates...</div>;
+  }
 
   return (
     <div className="news-page">
-      <div className="news-list">
-        {news.map((item) => (
-          <div className="news-card" key={item.id}>
-            <div className="news-meta">
-              <span className={`news-type ${item.type.toLowerCase()}`}>{item.type}</span>
-              <span className="news-date">{item.date}</span>
+      {news.length ? (
+        <div className="news-list">
+          {news.map((item) => {
+            const type = item.type || item.category || "News";
+            const date = item.date || item.date_posted || item.created_at;
+            const rawExcerpt = item.excerpt || item.summary || item.content || "";
+            const excerpt =
+              rawExcerpt && String(rawExcerpt).length > 180
+                ? `${String(rawExcerpt).slice(0, 177)}...`
+                : rawExcerpt;
+            return (
+            <div className="news-card" key={item.id}>
+              <div className="news-meta">
+                <span className={`news-type ${String(type).toLowerCase()}`}>
+                  {type}
+                </span>
+                <span className="news-date">{date ? String(date).slice(0, 10) : "—"}</span>
+              </div>
+              <h3 className="news-title">{item.title}</h3>
+              {excerpt ? <p className="news-excerpt">{excerpt}</p> : null}
+              {item.link ? (
+                <a className="news-read-more" href={item.link}>
+                  Read more →
+                </a>
+              ) : (
+                <button className="news-read-more" type="button" disabled>
+                  Read more →
+                </button>
+              )}
             </div>
-            <h3 className="news-title">{item.title}</h3>
-            <p className="news-excerpt">{item.excerpt}</p>
-            <button className="news-read-more">Read more →</button>
-          </div>
-        ))}
-      </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="no-data">
+          <p>No updates yet.</p>
+        </div>
+      )}
     </div>
   );
 }

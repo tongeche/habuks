@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "templates:upload": "node scripts/upload-organization-templates.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.90.0",

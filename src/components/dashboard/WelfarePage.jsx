@@ -7,7 +7,7 @@ import {
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 
-export default function WelfarePage({ user, initialTab = "overview" }) {
+export default function WelfarePage({ user, initialTab = "overview", tenantId }) {
   const [summary, setSummary] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [payoutSchedule, setPayoutSchedule] = useState([]);
@@ -23,10 +23,10 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
     async function loadWelfare() {
       try {
         const [summaryData, txns, schedule, memberPayout] = await Promise.all([
-          getWelfareSummary(),
-          getWelfareTransactions(user?.id),
-          getPayoutSchedule(),
-          user?.id ? getMemberPayout(user.id) : Promise.resolve(null),
+          getWelfareSummary(tenantId),
+          getWelfareTransactions(user?.id, tenantId),
+          getPayoutSchedule(tenantId),
+          user?.id ? getMemberPayout(user.id, tenantId) : Promise.resolve(null),
         ]);
         setSummary(summaryData);
         setTransactions(txns);
@@ -39,7 +39,7 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
       }
     }
     loadWelfare();
-  }, [user?.id]);
+  }, [user?.id, tenantId]);
 
   const formatDate = (dateStr) => {
     if (!dateStr) return "N/A";
@@ -75,8 +75,10 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
     );
   }
 
-  const progressPercent = summary ? (summary.completedCycles / summary.totalCycles) * 100 : 0;
-  const remainingCycles = (summary?.totalCycles || 12) - (summary?.completedCycles || 0);
+  const totalCycles = summary?.totalCycles ?? 0;
+  const completedCycles = summary?.completedCycles ?? 0;
+  const progressPercent = totalCycles > 0 ? (completedCycles / totalCycles) * 100 : 0;
+  const remainingCycles = Math.max(totalCycles - completedCycles, 0);
 
   return (
     <div className="welfare-page-modern">
@@ -88,7 +90,10 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
         </div>
         <div className="welfare-hero-content">
           <span className="hero-balance-label">BALANCE</span>
-          <h2 className="hero-balance-amount">{formatCurrency(summary?.currentBalance || 0).replace('Ksh. ', '')}<span className="hero-currency">KES</span></h2>
+          <h2 className="hero-balance-amount">
+            {formatCurrency(summary?.currentBalance ?? 0).replace("Ksh. ", "")}
+            <span className="hero-currency">KES</span>
+          </h2>
           <div className="hero-quick-actions">
             <button className="hero-action-btn">
               <div className="hero-action-icon">
@@ -129,10 +134,10 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
               <Icon name="arrow-right" size={14} />
             </div>
           </div>
-          <div className="welfare-card-value">{formatCurrency(summary?.currentBalance || 0)}</div>
+          <div className="welfare-card-value">{formatCurrency(summary?.currentBalance ?? 0)}</div>
           <div className="welfare-card-change positive">
             <Icon name="trending-up" size={12} />
-            <span>+{formatCurrency(summary?.contributionPerCycle || 1000)} per cycle</span>
+            <span>+{formatCurrency(summary?.contributionPerCycle ?? 0)} per cycle</span>
           </div>
         </div>
 
@@ -144,7 +149,7 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
               <Icon name="arrow-right" size={14} />
             </div>
           </div>
-          <div className="welfare-card-value">{summary?.completedCycles || 0} Cycles</div>
+          <div className="welfare-card-value">{completedCycles} Cycles</div>
           <div className="welfare-card-change neutral">
             <span>{remainingCycles} remaining</span>
           </div>
@@ -158,7 +163,7 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
               <Icon name="arrow-right" size={14} />
             </div>
           </div>
-          <div className="welfare-card-value">{formatCurrency(summary?.finalAmount || 12000)}</div>
+          <div className="welfare-card-value">{formatCurrency(summary?.finalAmount ?? 0)}</div>
           <div className="welfare-card-change neutral">
             <span>After all cycles</span>
           </div>
@@ -172,7 +177,7 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
               <Icon name="arrow-right" size={14} />
             </div>
           </div>
-          <div className="welfare-card-value">{formatCurrency(summary?.contributionPerCycle || 1000)}</div>
+          <div className="welfare-card-value">{formatCurrency(summary?.contributionPerCycle ?? 0)}</div>
           <div className="welfare-card-change neutral">
             <span>From each payout</span>
           </div>
@@ -187,7 +192,7 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
           </div>
           <div className="mobile-stat-content">
             <span className="mobile-stat-label">Completed</span>
-            <span className="mobile-stat-value">{summary?.completedCycles || 0} Cycles</span>
+            <span className="mobile-stat-value">{completedCycles} Cycles</span>
           </div>
           <span className="mobile-stat-sub">{remainingCycles} remaining</span>
         </div>
@@ -197,7 +202,7 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
           </div>
           <div className="mobile-stat-content">
             <span className="mobile-stat-label">Target</span>
-            <span className="mobile-stat-value">{formatCurrency(summary?.finalAmount || 12000)}</span>
+            <span className="mobile-stat-value">{formatCurrency(summary?.finalAmount ?? 0)}</span>
           </div>
           <span className="mobile-stat-sub">After all cycles</span>
         </div>
@@ -207,7 +212,7 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
           </div>
           <div className="mobile-stat-content">
             <span className="mobile-stat-label">Per Cycle</span>
-            <span className="mobile-stat-value">{formatCurrency(summary?.contributionPerCycle || 1000)}</span>
+            <span className="mobile-stat-value">{formatCurrency(summary?.contributionPerCycle ?? 0)}</span>
           </div>
           <span className="mobile-stat-sub">From each payout</span>
         </div>
@@ -274,7 +279,7 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
               </div>
               <div className="summary-content">
                 <span className="summary-label">Total Saved</span>
-                <span className="summary-value">{formatCurrency(summary?.currentBalance || 0)}</span>
+                <span className="summary-value">{formatCurrency(summary?.currentBalance ?? 0)}</span>
               </div>
             </div>
             <div className="summary-item">
@@ -283,7 +288,9 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
               </div>
               <div className="summary-content">
                 <span className="summary-label">Completed</span>
-                <span className="summary-value">{summary?.completedCycles || 0} / {summary?.totalCycles || 12}</span>
+                <span className="summary-value">
+                  {completedCycles} / {totalCycles}
+                </span>
               </div>
             </div>
             <div className="summary-item">
@@ -301,7 +308,7 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
               </div>
               <div className="summary-content">
                 <span className="summary-label">Final Target</span>
-                <span className="summary-value">{formatCurrency(summary?.finalAmount || 12000)}</span>
+                <span className="summary-value">{formatCurrency(summary?.finalAmount ?? 0)}</span>
               </div>
             </div>
           </div>
@@ -319,7 +326,9 @@ export default function WelfarePage({ user, initialTab = "overview" }) {
             </div>
             <div className="payout-highlight">
               <span className="payout-highlight-label">Amount</span>
-              <span className="payout-highlight-value">Ksh. {myPayout?.amount || 500}</span>
+              <span className="payout-highlight-value">
+                {myPayout?.amount ? `Ksh. ${myPayout.amount}` : "—"}
+              </span>
             </div>
           </div>
 

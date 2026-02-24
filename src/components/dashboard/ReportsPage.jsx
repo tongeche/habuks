@@ -27,7 +27,17 @@ const formatLabel = (value) => {
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
 
-export default function ReportsPage({ user, setActivePage }) {
+const resolveModuleKey = (project) => {
+  const raw = project?.module_key || project?.code || "";
+  const lower = String(raw).trim().toLowerCase();
+  if (lower === "jpp" || lower === "jgf") return lower;
+  const upper = String(raw).trim().toUpperCase();
+  if (upper === "JPP") return "jpp";
+  if (upper === "JGF") return "jgf";
+  return "";
+};
+
+export default function ReportsPage({ user, setActivePage, tenantId }) {
   const [projects, setProjects] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [sales, setSales] = useState([]);
@@ -43,7 +53,7 @@ export default function ReportsPage({ user, setActivePage }) {
     const loadProjects = async () => {
       setLoading(true);
       try {
-        const data = await getProjectsWithMembership(user?.id);
+        const data = await getProjectsWithMembership(user?.id, tenantId);
         const accessible = (data || []).filter((project) => {
           if (canViewAllProjects) return true;
           return Boolean(project.membership) || project.project_leader === user?.id;
@@ -56,15 +66,15 @@ export default function ReportsPage({ user, setActivePage }) {
       }
     };
     loadProjects();
-  }, [user, canViewAllProjects]);
+  }, [user, canViewAllProjects, tenantId]);
 
   const filteredProjects = useMemo(() => {
     if (filterKey === "all") return projects;
     if (filterKey === "poultry") {
-      return projects.filter((project) => String(project.code || "").toUpperCase() === "JPP");
+      return projects.filter((project) => resolveModuleKey(project) === "jpp");
     }
     if (filterKey === "groundnuts") {
-      return projects.filter((project) => String(project.code || "").toUpperCase() === "JGF");
+      return projects.filter((project) => resolveModuleKey(project) === "jgf");
     }
     if (filterKey === "mine" && canViewAllProjects) {
       return projects.filter(
@@ -88,8 +98,8 @@ export default function ReportsPage({ user, setActivePage }) {
     const loadData = async () => {
       try {
         const [expenseData, salesData] = await Promise.all([
-          getProjectExpensesForProjects(filteredProjectIds),
-          getProjectSalesForProjects(filteredProjectIds),
+          getProjectExpensesForProjects(filteredProjectIds, tenantId),
+          getProjectSalesForProjects(filteredProjectIds, tenantId),
         ]);
         setExpenses(expenseData || []);
         setSales(salesData || []);
@@ -100,7 +110,7 @@ export default function ReportsPage({ user, setActivePage }) {
       }
     };
     loadData();
-  }, [filteredProjectIds]);
+  }, [filteredProjectIds, tenantId]);
 
   const toNumber = (value) => {
     const parsed = Number(value);
