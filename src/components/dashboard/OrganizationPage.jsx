@@ -617,6 +617,82 @@ const getDocumentType = (document) => {
   );
 };
 
+const formatFileSize = (bytes) => {
+  const parsed = Number(bytes);
+  if (!Number.isFinite(parsed) || parsed <= 0) return "";
+  if (parsed >= 1024 * 1024 * 1024) return `${(parsed / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (parsed >= 1024 * 1024) return `${(parsed / (1024 * 1024)).toFixed(1)} MB`;
+  if (parsed >= 1024) return `${Math.round(parsed / 1024)} KB`;
+  return `${parsed} B`;
+};
+
+const getFileExtension = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw || !raw.includes(".")) return "file";
+  const extension = raw.split(".").pop();
+  return String(extension || "file")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "") || "file";
+};
+
+const getFileTone = (extension) => {
+  const ext = String(extension || "").toLowerCase();
+  if (ext === "pdf") return "pdf";
+  if (ext === "doc" || ext === "docx") return "doc";
+  if (ext === "xls" || ext === "xlsx" || ext === "csv") return "sheet";
+  if (ext === "ppt" || ext === "pptx") return "slide";
+  if (ext === "jpg" || ext === "jpeg" || ext === "png" || ext === "webp" || ext === "gif") return "image";
+  return "file";
+};
+
+const getPermissionTone = (permissionLabel) => {
+  const normalized = String(permissionLabel || "")
+    .trim()
+    .toLowerCase();
+  if (normalized.includes("admin")) return "admin";
+  if (normalized.includes("editor")) return "editor";
+  return "view";
+};
+
+const FILE_PERMISSION_FILTER_LABELS = {
+  all: "All files",
+  editor: "Editor",
+  view: "View only",
+};
+
+const FILE_PERMISSION_FILTER_ORDER = ["all", "editor", "view"];
+
+const TEMPLATE_AVAILABILITY_FILTER_LABELS = {
+  all: "All templates",
+  downloadable: "Downloadable",
+  missing: "Missing file",
+};
+
+const TEMPLATE_AVAILABILITY_FILTER_ORDER = ["all", "downloadable", "missing"];
+
+const getDocumentPermissionLabel = (document) => {
+  const hasDownloadUrl = Boolean(String(document?.download_url || document?.file_url || "").trim());
+  return (
+    String(
+      document?.access_level ||
+        document?.permission ||
+        document?.visibility ||
+        (hasDownloadUrl ? "Editor" : "View Only")
+    ).trim() || (hasDownloadUrl ? "Editor" : "View Only")
+  );
+};
+
+const getTemplatePermissionLabel = (template) => {
+  return (
+    String(
+      template?.permission ||
+        template?.access_level ||
+        (template?.can_download ? "Administrator" : "View Only")
+    ).trim() || (template?.can_download ? "Administrator" : "View Only")
+  );
+};
+
 const getMemberAvatarUrl = (member) => {
   return String(member?.avatar_url || member?.photo_url || member?.image_url || "").trim();
 };
@@ -667,11 +743,14 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
   const [memberSearch, setMemberSearch] = useState("");
   const [documentSearch, setDocumentSearch] = useState("");
+  const [templateSearch, setTemplateSearch] = useState("");
   const [meetingSearch, setMeetingSearch] = useState("");
   const [meetingStatusFilter, setMeetingStatusFilter] = useState("all");
   const [meetingTypeFilter, setMeetingTypeFilter] = useState("all");
   const [partnerSearch, setPartnerSearch] = useState("");
   const [templateView, setTemplateView] = useState("table");
+  const [documentPermissionFilter, setDocumentPermissionFilter] = useState("all");
+  const [templateAvailabilityFilter, setTemplateAvailabilityFilter] = useState("all");
   const [organizationOverviewRange, setOrganizationOverviewRange] = useState(
     DEFAULT_ORGANIZATION_OVERVIEW_RANGE
   );
@@ -751,6 +830,8 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const memberAvatarInputRef = useRef(null);
   const memberImportInputRef = useRef(null);
   const organizationDocumentInputRef = useRef(null);
+  const documentSearchInputRef = useRef(null);
+  const templateSearchInputRef = useRef(null);
   const partnerLogoInputRef = useRef(null);
 
   useEffect(() => {
@@ -1198,14 +1279,18 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
   const documentRows = useMemo(() => {
     const query = documentSearch.trim().toLowerCase();
-    if (!query) return documents;
     return documents.filter((doc) => {
+      if (documentPermissionFilter !== "all") {
+        const permissionTone = getPermissionTone(getDocumentPermissionLabel(doc));
+        if (permissionTone !== documentPermissionFilter) return false;
+      }
+      if (!query) return true;
       const text = [getDocumentName(doc), getDocumentType(doc), doc?.uploaded_by]
         .map((value) => String(value || "").toLowerCase())
         .join(" ");
       return text.includes(query);
     });
-  }, [documents, documentSearch]);
+  }, [documents, documentSearch, documentPermissionFilter]);
 
   const meetingTypeOptions = useMemo(() => {
     const options = new Set(ACTIVITY_TYPE_OPTIONS);
@@ -2847,6 +2932,37 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     }
   };
 
+  const cycleDocumentPermissionFilter = useCallback(() => {
+    setDocumentPermissionFilter((current) => {
+      const currentIndex = FILE_PERMISSION_FILTER_ORDER.indexOf(current);
+      const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+      return FILE_PERMISSION_FILTER_ORDER[(safeIndex + 1) % FILE_PERMISSION_FILTER_ORDER.length];
+    });
+    documentSearchInputRef.current?.focus();
+  }, []);
+
+  const cycleTemplateAvailabilityFilter = useCallback(() => {
+    setTemplateAvailabilityFilter((current) => {
+      const currentIndex = TEMPLATE_AVAILABILITY_FILTER_ORDER.indexOf(current);
+      const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+      return TEMPLATE_AVAILABILITY_FILTER_ORDER[(safeIndex + 1) % TEMPLATE_AVAILABILITY_FILTER_ORDER.length];
+    });
+    templateSearchInputRef.current?.focus();
+  }, []);
+
+  const handleQuickAddOrganizationDocument = useCallback(() => {
+    setDocumentMode("upload");
+    triggerOrganizationDocumentPicker();
+  }, [triggerOrganizationDocumentPicker]);
+
+  const handleTemplateAddHint = useCallback(() => {
+    setNotice({
+      type: "warning",
+      message:
+        "Add templates in storage first, then map them into organization_templates for this tenant.",
+    });
+  }, []);
+
   const memberAllSelected =
     memberRowIds.length > 0 && memberRowIds.every((id) => selectedMemberIds.includes(id));
   const documentAllSelected =
@@ -3367,10 +3483,41 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   );
 
   const renderDocumentsTab = () => (
-    <article className="org-shell-panel org-shell-panel--table">
-      <div className="project-detail-section-head">
-        <h4>Organization Documents</h4>
+    <article className="org-shell-panel org-shell-panel--table org-file-manager-card">
+      <div className="project-detail-section-head org-file-manager-head">
+        <div className="org-file-manager-heading">
+          <h4>Organization Documents</h4>
+          <span className="org-file-manager-count">{documents.length} total</span>
+        </div>
         <div className="project-detail-section-head-actions">
+          <div className="org-file-manager-head-quick-actions">
+            <button
+              type="button"
+              className="org-file-manager-head-btn is-icon"
+              onClick={handleQuickAddOrganizationDocument}
+              title="Upload document"
+              aria-label="Upload document"
+              disabled={
+                uploadingOrganizationDocument ||
+                deletingOrganizationDocuments ||
+                emittingOrganizationDocument ||
+                renamingOrganizationDocument
+              }
+            >
+              <Icon name="plus" size={15} />
+            </button>
+            <button
+              type="button"
+              className="org-file-manager-head-btn is-filter"
+              onClick={cycleDocumentPermissionFilter}
+              title={`Filter: ${FILE_PERMISSION_FILTER_LABELS[documentPermissionFilter] || "All files"}`}
+              aria-label="Cycle file filter"
+            >
+              <Icon name="filter" size={14} />
+              <span>Filter</span>
+              <small>{FILE_PERMISSION_FILTER_LABELS[documentPermissionFilter] || "All files"}</small>
+            </button>
+          </div>
           <div className="project-documents-mode" role="tablist" aria-label="Organization document mode">
             <button
               type="button"
@@ -3519,10 +3666,11 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         <p className="project-detail-expense-error">{organizationDocumentsError}</p>
       ) : null}
 
-      <div className="org-shell-toolbar">
+      <div className="org-shell-toolbar org-file-manager-toolbar">
         <label className="org-shell-search">
           <Icon name="search" size={15} />
           <input
+            ref={documentSearchInputRef}
             type="text"
             placeholder="Search by name, type"
             value={documentSearch}
@@ -3537,7 +3685,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       </div>
 
       <div className="projects-table-wrap project-expenses-table-wrap">
-        <table className="projects-table-view project-expenses-table project-documents-table">
+        <table className="projects-table-view project-expenses-table project-documents-table org-file-manager-table">
           <thead>
             <tr>
               <th className="projects-table-check">
@@ -3549,10 +3697,12 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
                   }
                 />
               </th>
-              <th>Document</th>
-              <th>Type</th>
-              <th>Uploaded</th>
-              <th>Access</th>
+              <th>File Name</th>
+              <th>Last Modified</th>
+              <th>Size</th>
+              <th>File Permission</th>
+              <th>Action</th>
+              <th className="org-file-menu-col" aria-label="More actions" />
             </tr>
           </thead>
           <tbody>
@@ -3560,6 +3710,23 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
               documentRows.map((document) => {
                 const documentId = String(document?.id || "");
                 const documentUrl = getDocumentDownloadUrl(document);
+                const fileName = getDocumentName(document);
+                const fileExtensionFromName = getFileExtension(fileName);
+                const rawFileExtension =
+                  fileExtensionFromName !== "file"
+                    ? fileExtensionFromName
+                    : getFileExtension(document?.file_path || document?.file_url || document?.file_ext || "");
+                const fileExtension =
+                  rawFileExtension === "file" && String(document?.mime_type || "").includes("/")
+                    ? String(document?.mime_type || "").split("/")[1]
+                    : rawFileExtension;
+                const fileTone = getFileTone(fileExtension);
+                const fileMeta = [getDocumentType(document), String(document?.description || "").trim()]
+                  .filter(Boolean)
+                  .join(" • ");
+                const fileSize = formatFileSize(document?.file_size_bytes);
+                const permissionLabel = getDocumentPermissionLabel(document);
+                const permissionTone = getPermissionTone(permissionLabel);
                 return (
                   <tr key={documentId || getDocumentName(document)}>
                     <td className="projects-table-check">
@@ -3570,32 +3737,57 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
                       />
                     </td>
                     <td>
-                      <div className="projects-table-main-copy">
-                        <strong>{getDocumentName(document)}</strong>
-                        <p>
-                          {document?.description ||
-                            String(document?.file_path || "").split("/").pop() ||
-                            "Organization file"}
-                        </p>
+                      <div className="org-file-manager-file-cell">
+                        <span className={`org-file-manager-icon is-${fileTone}`}>{String(fileExtension).slice(0, 3)}</span>
+                        <div className="projects-table-main-copy">
+                          <strong>{fileName}</strong>
+                          <p>
+                            {fileMeta ||
+                              String(document?.file_path || "").split("/").pop() ||
+                              "Organization file"}
+                          </p>
+                        </div>
                       </div>
                     </td>
-                    <td>{getDocumentType(document)}</td>
                     <td>{formatDate(document?.uploaded_at || document?.created_at)}</td>
+                    <td className="org-file-size">{fileSize || "—"}</td>
+                    <td>
+                      <span className={`org-file-permission is-${permissionTone}`}>{toDisplayLabel(permissionLabel)}</span>
+                    </td>
                     <td>
                       {documentUrl ? (
-                        <a href={documentUrl} target="_blank" rel="noreferrer" className="org-shell-link-btn">
+                        <a href={documentUrl} target="_blank" rel="noreferrer" className="org-file-action-btn">
                           Open
                         </a>
                       ) : (
                         <span className="org-shell-muted">Unavailable</span>
                       )}
                     </td>
+                    <td className="org-file-menu-col">
+                      <button
+                        type="button"
+                        className="org-file-row-menu-btn"
+                        aria-label={`More actions for ${fileName}`}
+                        onClick={() => {
+                          if (documentUrl) {
+                            window.open(documentUrl, "_blank", "noopener,noreferrer");
+                            return;
+                          }
+                          setNotice({
+                            type: "warning",
+                            message: `${fileName} is not available for download yet.`,
+                          });
+                        }}
+                      >
+                        <Icon name="more-horizontal" size={16} />
+                      </button>
+                    </td>
                   </tr>
                 );
               })
             ) : (
               <tr>
-                <td colSpan={5}>
+                <td colSpan={7}>
                   <div className="org-shell-empty">No documents found for this query.</div>
                 </td>
               </tr>
@@ -3900,16 +4092,35 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
   const renderTemplatesTab = () => {
     const templateRows = Array.isArray(organizationTemplates) ? organizationTemplates : [];
-    const hasTemplates = templateRows.length > 0;
+    const normalizedTemplateQuery = templateSearch.trim().toLowerCase();
+    const filteredTemplateRows = templateRows.filter((template) => {
+      if (templateAvailabilityFilter === "downloadable" && !template?.can_download) return false;
+      if (templateAvailabilityFilter === "missing" && template?.can_download) return false;
+      if (!normalizedTemplateQuery) return true;
+      const sections = Array.isArray(template?.sections) ? template.sections : [];
+      const text = [
+        template?.name,
+        template?.category,
+        template?.format,
+        template?.description,
+        sections.join(" "),
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+      return text.includes(normalizedTemplateQuery);
+    });
+    const hasTemplates = filteredTemplateRows.length > 0;
     const emptyMessage =
       templatesError ||
       "No templates available yet. Upload template files to storage and map them in organization templates.";
 
     return (
-      <article className="org-shell-panel org-shell-panel--table">
-        <div className="org-shell-panel-head">
-          <h3>Template Library</h3>
-          <span>{templateRows.length} templates</span>
+      <article className="org-shell-panel org-shell-panel--table org-file-manager-card">
+        <div className="org-shell-panel-head org-file-manager-head">
+          <div className="org-file-manager-heading">
+            <h3>Template Library</h3>
+            <span className="org-file-manager-count">{templateRows.length} total</span>
+          </div>
         </div>
         <p className="org-shell-muted-copy">
           Download approved templates from secure storage for faster organization workflows.
@@ -3932,49 +4143,125 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
               </button>
             ))}
           </div>
+          <div className="org-file-manager-toolbar-controls">
+            <label className="org-shell-search org-file-manager-inline-search">
+              <Icon name="search" size={15} />
+              <input
+                ref={templateSearchInputRef}
+                type="text"
+                placeholder="Search templates"
+                value={templateSearch}
+                onChange={(event) => setTemplateSearch(event.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="org-file-manager-head-btn is-icon"
+              onClick={handleTemplateAddHint}
+              title="Add template guidance"
+              aria-label="Add template guidance"
+            >
+              <Icon name="plus" size={15} />
+            </button>
+            <button
+              type="button"
+              className="org-file-manager-head-btn is-filter"
+              onClick={cycleTemplateAvailabilityFilter}
+              title={`Filter: ${
+                TEMPLATE_AVAILABILITY_FILTER_LABELS[templateAvailabilityFilter] || "All templates"
+              }`}
+              aria-label="Cycle template filter"
+            >
+              <Icon name="filter" size={14} />
+              <span>Filter</span>
+              <small>{TEMPLATE_AVAILABILITY_FILTER_LABELS[templateAvailabilityFilter] || "All templates"}</small>
+            </button>
+          </div>
+        </div>
+
+        <div className="project-expenses-selection-note">
+          Showing {filteredTemplateRows.length} of {templateRows.length} templates.
         </div>
 
         {templateView === "table" ? (
-          <div className="projects-table-wrap">
-            <table className="projects-table-view">
+          <div className="projects-table-wrap project-expenses-table-wrap">
+            <table className="projects-table-view org-file-manager-table">
               <thead>
                 <tr>
-                  <th>Template</th>
-                  <th>Category</th>
-                  <th>Format</th>
-                  <th>Use case</th>
+                  <th>File Name</th>
+                  <th>Last Modified</th>
+                  <th>Size</th>
+                  <th>File Permission</th>
                   <th>Action</th>
+                  <th className="org-file-menu-col" aria-label="More actions" />
                 </tr>
               </thead>
               <tbody>
                 {hasTemplates ? (
-                  templateRows.map((template) => {
+                  filteredTemplateRows.map((template) => {
                     const sections = Array.isArray(template.sections) ? template.sections : [];
-                    const sectionPreview = sections.slice(0, 3).join(" • ");
-                    const purpose = String(template?.description || "").trim();
+                    const fileName = resolveTemplateDownloadName(template);
+                    const derivedTemplateExtension = resolveTemplateDownloadExtension(template);
+                    const fileExtensionFromName = getFileExtension(fileName);
+                    const fileExtension =
+                      fileExtensionFromName !== "file"
+                        ? fileExtensionFromName
+                        : getFileExtension(`file.${derivedTemplateExtension}`);
+                    const fileTone = getFileTone(fileExtension);
+                    const fileMeta = [
+                      String(template?.category || "").trim(),
+                      String(template?.format || "").trim(),
+                    ]
+                      .filter(Boolean)
+                      .join(" • ");
+                    const fileSize = formatFileSize(template?.file_size_bytes);
+                    const permissionLabel = getTemplatePermissionLabel(template);
+                    const permissionTone = getPermissionTone(permissionLabel);
+                    const sectionPreview = sections.slice(0, 2).join(" • ");
                     return (
                       <tr key={template.id}>
                         <td>
-                          <div className="projects-table-main-copy">
-                            <strong>{template.name}</strong>
-                            <p>{sectionPreview || purpose || "Template sections are not configured yet."}</p>
+                          <div className="org-file-manager-file-cell">
+                            <span className={`org-file-manager-icon is-${fileTone}`}>{String(fileExtension).slice(0, 3)}</span>
+                            <div className="projects-table-main-copy">
+                              <strong>{template.name}</strong>
+                              <p>{fileMeta || sectionPreview || "Template metadata unavailable."}</p>
+                            </div>
                           </div>
                         </td>
+                        <td>{formatDate(template?.updated_at || template?.created_at)}</td>
+                        <td className="org-file-size">{fileSize || "—"}</td>
                         <td>
-                          <span className="org-shell-template-category">{template.category}</span>
+                          <span className={`org-file-permission is-${permissionTone}`}>{toDisplayLabel(permissionLabel)}</span>
                         </td>
-                        <td>{template.format}</td>
-                        <td>{purpose || "—"}</td>
                         <td>
                           <button
                             type="button"
-                            className="project-detail-action ghost org-shell-template-download"
+                            className="org-file-action-btn"
                             onClick={() => handleDownloadOrganizationTemplate(template)}
                             disabled={!template.can_download}
                             title={template.can_download ? "Download template" : "No file uploaded yet"}
                           >
-                            <Icon name="download" size={15} />
-                            <span>Download</span>
+                            {template.can_download ? "Download" : "Unavailable"}
+                          </button>
+                        </td>
+                        <td className="org-file-menu-col">
+                          <button
+                            type="button"
+                            className="org-file-row-menu-btn"
+                            aria-label={`More actions for ${template.name}`}
+                            onClick={() => {
+                              if (template?.can_download) {
+                                handleDownloadOrganizationTemplate(template);
+                                return;
+                              }
+                              setNotice({
+                                type: "warning",
+                                message: `${template.name} does not have an uploaded file yet.`,
+                              });
+                            }}
+                          >
+                            <Icon name="more-horizontal" size={16} />
                           </button>
                         </td>
                       </tr>
@@ -3982,7 +4269,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
                   })
                 ) : (
                   <tr>
-                    <td colSpan={5}>
+                    <td colSpan={6}>
                       <div className="org-shell-empty">{emptyMessage}</div>
                     </td>
                   </tr>
@@ -3995,7 +4282,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         {templateView === "grid" ? (
           hasTemplates ? (
             <div className="org-shell-template-grid">
-              {templateRows.map((template) => {
+              {filteredTemplateRows.map((template) => {
                 const sections = Array.isArray(template.sections) ? template.sections : [];
                 const tone = getTemplateFormatTone(template.format);
                 return (
@@ -4038,7 +4325,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         {templateView === "list" ? (
           hasTemplates ? (
             <div className="org-shell-template-list">
-              {templateRows.map((template) => {
+              {filteredTemplateRows.map((template) => {
                 const sections = Array.isArray(template.sections) ? template.sections : [];
                 const purpose = String(template?.description || "").trim();
                 return (

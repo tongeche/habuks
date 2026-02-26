@@ -342,9 +342,38 @@ const TASK_STATUS_LABELS = {
   cancelled: "Cancelled",
 };
 
+const TASK_STATUS_GROUP_ORDER = ["open", "in_progress", "done", "cancelled"];
+
+const TASK_STATUS_GROUP_LABELS = {
+  open: "To-do",
+  in_progress: "On Progress",
+  done: "Completed",
+  cancelled: "Cancelled",
+};
+
 const NOTE_VISIBILITY_LABELS = {
   project_team: "Project team",
   admins_only: "Admins only",
+};
+
+const NOTE_VISIBILITY_GROUP_ORDER = ["project_team", "admins_only"];
+
+const toReadableLabel = (value, fallback = "Unknown") => {
+  const normalized = String(value || "")
+    .trim()
+    .replace(/[_-]+/g, " ");
+  if (!normalized) return fallback;
+  return normalized.replace(/\b\w/g, (character) => character.toUpperCase());
+};
+
+const getInitials = (value, fallback = "NA") => {
+  const parts = String(value || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  if (!parts.length) return fallback;
+  return parts.map((part) => part.charAt(0).toUpperCase()).join("");
 };
 
 const PROJECT_DOCUMENT_ACCEPT =
@@ -4095,6 +4124,47 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     });
   }, [sortedProjectTasks, taskSearchQuery, taskStatusFilter, taskAssigneeFilter]);
 
+  const groupedTaskRows = useMemo(() => {
+    const buckets = new Map();
+    TASK_STATUS_GROUP_ORDER.forEach((statusKey) => {
+      buckets.set(statusKey, []);
+    });
+    const customBuckets = new Map();
+
+    filteredProjectTasks.forEach((task) => {
+      const safeStatus = String(task?.status || "open")
+        .trim()
+        .toLowerCase();
+      const statusKey = safeStatus || "open";
+      if (buckets.has(statusKey)) {
+        buckets.get(statusKey).push(task);
+        return;
+      }
+      if (!customBuckets.has(statusKey)) {
+        customBuckets.set(statusKey, []);
+      }
+      customBuckets.get(statusKey).push(task);
+    });
+
+    const lanes = TASK_STATUS_GROUP_ORDER.map((statusKey) => ({
+      key: statusKey,
+      label: TASK_STATUS_GROUP_LABELS[statusKey] || TASK_STATUS_LABELS[statusKey] || toReadableLabel(statusKey),
+      rows: buckets.get(statusKey) || [],
+    })).filter((lane) => lane.rows.length > 0);
+
+    Array.from(customBuckets.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .forEach(([statusKey, rows]) => {
+        lanes.push({
+          key: statusKey,
+          label: TASK_STATUS_LABELS[statusKey] || toReadableLabel(statusKey),
+          rows,
+        });
+      });
+
+    return lanes;
+  }, [filteredProjectTasks]);
+
   const taskRowIds = useMemo(
     () =>
       filteredProjectTasks
@@ -4141,28 +4211,30 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     taskStatusFilter !== "all" ||
     taskAssigneeFilter !== "all";
 
+  const openTaskModalForStatus = useCallback(
+    (status = "open") => {
+      const normalizedStatus =
+        TASK_STATUS_LABELS[String(status || "").trim().toLowerCase()] ? String(status).trim().toLowerCase() : "open";
+      const defaultAssignee = parseMemberId(user?.id);
+      setEditingTaskId(null);
+      setTaskForm({
+        ...createInitialTaskForm(),
+        assigneeId: defaultAssignee ? String(defaultAssignee) : "",
+        dueDate: new Date().toISOString().slice(0, 10),
+        status: normalizedStatus,
+      });
+      setTaskFormError("");
+      setShowTaskModal(true);
+    },
+    [user?.id]
+  );
+
   const openTaskModal = () => {
-    const defaultAssignee = parseMemberId(user?.id);
-    setEditingTaskId(null);
-    setTaskForm({
-      ...createInitialTaskForm(),
-      assigneeId: defaultAssignee ? String(defaultAssignee) : "",
-      dueDate: new Date().toISOString().slice(0, 10),
-    });
-    setTaskFormError("");
-    setShowTaskModal(true);
+    openTaskModalForStatus("open");
   };
 
-  const closeTaskModal = () => {
-    if (savingTask) return;
-    setShowTaskModal(false);
-    setTaskFormError("");
-    setEditingTaskId(null);
-  };
-
-  const openEditSelectedTaskModal = () => {
-    if (selectedTasks.length !== 1) return;
-    const task = selectedTasks[0];
+  const openTaskEditorForRow = useCallback((task) => {
+    if (!task) return;
     setEditingTaskId(String(task?.id ?? ""));
     setTaskForm({
       title: String(task?.title || ""),
@@ -4174,6 +4246,18 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     });
     setTaskFormError("");
     setShowTaskModal(true);
+  }, []);
+
+  const openEditSelectedTaskModal = () => {
+    if (selectedTasks.length !== 1) return;
+    openTaskEditorForRow(selectedTasks[0]);
+  };
+
+  const closeTaskModal = () => {
+    if (savingTask) return;
+    setShowTaskModal(false);
+    setTaskFormError("");
+    setEditingTaskId(null);
   };
 
   const requestDeleteSelectedTasks = () => {
@@ -4333,6 +4417,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     }
   };
 
+
   const sortedProjectNotes = useMemo(() => {
     return [...projectNotes].sort((a, b) => {
       const aTime = Date.parse(String(a?.created_at || ""));
@@ -4362,6 +4447,47 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
       return haystack.includes(normalizedSearch);
     });
   }, [sortedProjectNotes, noteSearchQuery, noteVisibilityFilter]);
+
+  const groupedNoteRows = useMemo(() => {
+    const buckets = new Map();
+    NOTE_VISIBILITY_GROUP_ORDER.forEach((visibilityKey) => {
+      buckets.set(visibilityKey, []);
+    });
+    const customBuckets = new Map();
+
+    filteredProjectNotes.forEach((note) => {
+      const safeVisibility = String(note?.visibility || "project_team")
+        .trim()
+        .toLowerCase();
+      const visibilityKey = safeVisibility || "project_team";
+      if (buckets.has(visibilityKey)) {
+        buckets.get(visibilityKey).push(note);
+        return;
+      }
+      if (!customBuckets.has(visibilityKey)) {
+        customBuckets.set(visibilityKey, []);
+      }
+      customBuckets.get(visibilityKey).push(note);
+    });
+
+    const lanes = NOTE_VISIBILITY_GROUP_ORDER.map((visibilityKey) => ({
+      key: visibilityKey,
+      label: NOTE_VISIBILITY_LABELS[visibilityKey] || toReadableLabel(visibilityKey),
+      rows: buckets.get(visibilityKey) || [],
+    })).filter((lane) => lane.rows.length > 0);
+
+    Array.from(customBuckets.entries())
+      .sort(([left], [right]) => left.localeCompare(right))
+      .forEach(([visibilityKey, rows]) => {
+        lanes.push({
+          key: visibilityKey,
+          label: NOTE_VISIBILITY_LABELS[visibilityKey] || toReadableLabel(visibilityKey),
+          rows,
+        });
+      });
+
+    return lanes;
+  }, [filteredProjectNotes]);
 
   const noteRowIds = useMemo(
     () =>
@@ -4407,11 +4533,22 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   const hasActiveNoteFilters =
     String(noteSearchQuery || "").trim().length > 0 || noteVisibilityFilter !== "all";
 
-  const openNoteModal = () => {
+  const openNoteModalForVisibility = useCallback((visibility = "project_team") => {
+    const normalizedVisibility =
+      NOTE_VISIBILITY_LABELS[String(visibility || "").trim().toLowerCase()]
+        ? String(visibility).trim().toLowerCase()
+        : "project_team";
     setEditingNoteId(null);
-    setNoteForm(createInitialNoteForm());
+    setNoteForm({
+      ...createInitialNoteForm(),
+      visibility: normalizedVisibility,
+    });
     setNoteFormError("");
     setShowNoteModal(true);
+  }, []);
+
+  const openNoteModal = () => {
+    openNoteModalForVisibility("project_team");
   };
 
   const closeNoteModal = () => {
@@ -4421,9 +4558,8 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     setEditingNoteId(null);
   };
 
-  const openEditSelectedNoteModal = () => {
-    if (selectedNotes.length !== 1) return;
-    const note = selectedNotes[0];
+  const openNoteEditorForRow = useCallback((note) => {
+    if (!note) return;
     setEditingNoteId(String(note?.id ?? ""));
     setNoteForm({
       title: String(note?.title || ""),
@@ -4432,6 +4568,11 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     });
     setNoteFormError("");
     setShowNoteModal(true);
+  }, []);
+
+  const openEditSelectedNoteModal = () => {
+    if (selectedNotes.length !== 1) return;
+    openNoteEditorForRow(selectedNotes[0]);
   };
 
   const requestDeleteSelectedNotes = () => {
@@ -6086,77 +6227,149 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                         <div className="project-expenses-selection-note">
                           Showing {filteredProjectTasks.length} of {projectTasks.length} tasks.
                         </div>
-                        <div className="projects-table-wrap project-expenses-table-wrap">
-                          <table className="projects-table-view project-expenses-table project-tasks-table">
-                            <thead>
-                              <tr>
-                                <th className="projects-table-check">
-                                  <input
-                                    type="checkbox"
-                                    checked={allTasksSelected}
-                                    onChange={handleToggleSelectAllTasks}
-                                    aria-label="Select all project tasks"
-                                  />
-                                </th>
-                                <th>Task details</th>
-                                <th>Assignee</th>
-                                <th>Due date</th>
-                                <th>Priority</th>
-                                <th>Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {filteredProjectTasks.map((task) => {
-                                const taskId = String(task?.id ?? "");
-                                const isChecked = selectedTaskIds.includes(taskId);
-                                const safePriority = String(task?.priority || "normal")
-                                  .trim()
-                                  .toLowerCase();
-                                const safeStatus = String(task?.status || "open")
-                                  .trim()
-                                  .toLowerCase();
-                                const priorityLabel = TASK_PRIORITY_LABELS[safePriority] || "Normal";
-                                const statusLabel = TASK_STATUS_LABELS[safeStatus] || "Open";
-                                const assignee =
-                                  task?.assignee_name ||
-                                  (task?.assignee_member_id ? `Member #${task.assignee_member_id}` : "Unassigned");
-                                return (
-                                  <tr key={taskId || `${task?.title || "task"}-${task?.due_date || ""}`}>
-                                    <td className="projects-table-check">
-                                      <input
-                                        type="checkbox"
-                                        checked={isChecked}
-                                        onChange={() => handleToggleTaskSelection(taskId)}
-                                        aria-label={`Select task ${task?.title || taskId}`}
-                                      />
-                                    </td>
-                                    <td>
-                                      <div className="project-expense-detail project-task-detail">
-                                        <strong>{task?.title || "Untitled task"}</strong>
-                                        {task?.details ? <p>{task.details}</p> : null}
-                                      </div>
-                                    </td>
-                                    <td>{assignee}</td>
-                                    <td>{formatDate(task?.due_date)}</td>
-                                    <td>
-                                      <span
-                                        className={`project-task-badge is-priority-${safePriority.replace(/[^a-z_]+/g, "")}`}
-                                      >
-                                        {priorityLabel}
-                                      </span>
-                                    </td>
-                                    <td>
-                                      <span
-                                        className={`project-task-badge is-status-${safeStatus.replace(/[^a-z_]+/g, "")}`}
-                                      >
-                                        {statusLabel}
-                                      </span>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                        <label className="project-group-select-all">
+                          <input
+                            type="checkbox"
+                            checked={allTasksSelected}
+                            onChange={handleToggleSelectAllTasks}
+                            aria-label="Select all visible project tasks"
+                          />
+                          <span>Select all visible tasks</span>
+                        </label>
+                        <div className="project-grouped-board">
+                          {groupedTaskRows.map((lane) => {
+                            const laneTaskIds = lane.rows
+                              .map((task) => String(task?.id ?? ""))
+                              .filter(Boolean);
+                            const laneAllSelected =
+                              laneTaskIds.length > 0 &&
+                              laneTaskIds.every((taskId) => selectedTaskIds.includes(taskId));
+                            return (
+                              <section
+                                key={`task-lane-${lane.key}`}
+                                className={`project-group-lane is-${String(lane.key).replace(/[^a-z0-9_]+/g, "-")}`}
+                              >
+                                <header className="project-group-lane-head">
+                                  <div className="project-group-lane-title">
+                                    <span className="project-group-lane-dot" aria-hidden="true" />
+                                    <h5>{lane.label}</h5>
+                                    <span className="project-group-lane-count">{lane.rows.length}</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="project-group-lane-add"
+                                    onClick={() => openTaskModalForStatus(lane.key)}
+                                    disabled={savingTask || deletingTasks}
+                                    aria-label={`Add task in ${lane.label}`}
+                                  >
+                                    <Icon name="plus" size={14} />
+                                  </button>
+                                </header>
+                                <div className="projects-table-wrap project-expenses-table-wrap project-group-lane-table-wrap">
+                                  <table className="projects-table-view project-expenses-table project-tasks-table project-group-lane-table">
+                                    <thead>
+                                      <tr>
+                                        <th className="projects-table-check">
+                                          <input
+                                            type="checkbox"
+                                            checked={laneAllSelected}
+                                            onChange={() => {
+                                              if (laneAllSelected) {
+                                                const laneSet = new Set(laneTaskIds);
+                                                setSelectedTaskIds((prev) => prev.filter((id) => !laneSet.has(id)));
+                                                return;
+                                              }
+                                              setSelectedTaskIds((prev) => Array.from(new Set([...prev, ...laneTaskIds])));
+                                            }}
+                                            aria-label={`Select all tasks in ${lane.label}`}
+                                          />
+                                        </th>
+                                        <th>Task Name</th>
+                                        <th>Description</th>
+                                        <th>Estimation</th>
+                                        <th>People</th>
+                                        <th>Priority</th>
+                                        <th>Status</th>
+                                        <th className="project-group-actions-col" aria-label="Actions" />
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {lane.rows.map((task) => {
+                                        const taskId = String(task?.id ?? "");
+                                        const isChecked = selectedTaskIds.includes(taskId);
+                                        const safePriority = String(task?.priority || "normal")
+                                          .trim()
+                                          .toLowerCase();
+                                        const safeStatus = String(task?.status || "open")
+                                          .trim()
+                                          .toLowerCase();
+                                        const priorityLabel = TASK_PRIORITY_LABELS[safePriority] || "Normal";
+                                        const statusLabel = TASK_STATUS_LABELS[safeStatus] || toReadableLabel(safeStatus, "Open");
+                                        const assignee =
+                                          task?.assignee_name ||
+                                          (task?.assignee_member_id ? `Member #${task.assignee_member_id}` : "Unassigned");
+                                        const assigneeInitials = getInitials(assignee, "UN");
+                                        return (
+                                          <tr key={taskId || `${task?.title || "task"}-${task?.due_date || ""}`}>
+                                            <td className="projects-table-check">
+                                              <input
+                                                type="checkbox"
+                                                checked={isChecked}
+                                                onChange={() => handleToggleTaskSelection(taskId)}
+                                                aria-label={`Select task ${task?.title || taskId}`}
+                                              />
+                                            </td>
+                                            <td>
+                                              <div className="project-expense-detail project-task-detail">
+                                                <strong>{task?.title || "Untitled task"}</strong>
+                                              </div>
+                                            </td>
+                                            <td>
+                                              <p className="project-group-description">{task?.details || "—"}</p>
+                                            </td>
+                                            <td className="project-group-estimation">{formatDate(task?.due_date)}</td>
+                                            <td>
+                                              <div className="project-task-person">
+                                                <span className="project-task-person-avatar" aria-hidden="true">
+                                                  {assigneeInitials}
+                                                </span>
+                                                <span className="project-task-person-name">{assignee}</span>
+                                              </div>
+                                            </td>
+                                            <td>
+                                              <span
+                                                className={`project-task-badge is-priority-${safePriority.replace(/[^a-z_]+/g, "")}`}
+                                              >
+                                                {priorityLabel}
+                                              </span>
+                                            </td>
+                                            <td>
+                                              <span
+                                                className={`project-task-badge is-status-${safeStatus.replace(/[^a-z_]+/g, "")}`}
+                                              >
+                                                {statusLabel}
+                                              </span>
+                                            </td>
+                                            <td className="project-group-actions-col">
+                                              <button
+                                                type="button"
+                                                className="project-group-row-action"
+                                                aria-label={`Edit ${task?.title || "task"}`}
+                                                onClick={() => openTaskEditorForRow(task)}
+                                                disabled={savingTask || deletingTasks}
+                                              >
+                                                <Icon name="more-horizontal" size={15} />
+                                              </button>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </section>
+                            );
+                          })}
                         </div>
                       </>
                     )}
@@ -6263,62 +6476,128 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                         <div className="project-expenses-selection-note">
                           Showing {filteredProjectNotes.length} of {projectNotes.length} notes.
                         </div>
-                        <div className="projects-table-wrap project-expenses-table-wrap">
-                          <table className="projects-table-view project-expenses-table project-notes-table">
-                            <thead>
-                              <tr>
-                                <th className="projects-table-check">
-                                  <input
-                                    type="checkbox"
-                                    checked={allNotesSelected}
-                                    onChange={handleToggleSelectAllNotes}
-                                    aria-label="Select all project notes"
-                                  />
-                                </th>
-                                <th>Note details</th>
-                                <th>Visibility</th>
-                                <th>Author</th>
-                                <th>Updated</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {filteredProjectNotes.map((note) => {
-                                const noteId = String(note?.id ?? "");
-                                const isChecked = selectedNoteIds.includes(noteId);
-                                const safeVisibility = String(note?.visibility || "project_team")
-                                  .trim()
-                                  .toLowerCase();
-                                return (
-                                  <tr key={noteId || `${note?.title || "note"}-${note?.created_at || ""}`}>
-                                    <td className="projects-table-check">
-                                      <input
-                                        type="checkbox"
-                                        checked={isChecked}
-                                        onChange={() => handleToggleNoteSelection(noteId)}
-                                        aria-label={`Select note ${note?.title || noteId}`}
-                                      />
-                                    </td>
-                                    <td>
-                                      <div className="project-expense-detail project-note-detail">
-                                        <strong>{note?.title || "Untitled note"}</strong>
-                                        {note?.body ? <p>{note.body}</p> : null}
-                                      </div>
-                                    </td>
-                                    <td>
-                                      <span className="project-note-visibility">
-                                        {NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
-                                      </span>
-                                    </td>
-                                    <td>
-                                      {note?.author_name ||
-                                        (note?.author_member_id ? `Member #${note.author_member_id}` : "—")}
-                                    </td>
-                                    <td>{formatDate(note?.updated_at || note?.created_at)}</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                        <label className="project-group-select-all">
+                          <input
+                            type="checkbox"
+                            checked={allNotesSelected}
+                            onChange={handleToggleSelectAllNotes}
+                            aria-label="Select all visible project notes"
+                          />
+                          <span>Select all visible notes</span>
+                        </label>
+                        <div className="project-grouped-board">
+                          {groupedNoteRows.map((lane) => {
+                            const laneNoteIds = lane.rows
+                              .map((note) => String(note?.id ?? ""))
+                              .filter(Boolean);
+                            const laneAllSelected =
+                              laneNoteIds.length > 0 &&
+                              laneNoteIds.every((noteId) => selectedNoteIds.includes(noteId));
+                            return (
+                              <section
+                                key={`note-lane-${lane.key}`}
+                                className={`project-group-lane is-${String(lane.key).replace(/[^a-z0-9_]+/g, "-")}`}
+                              >
+                                <header className="project-group-lane-head">
+                                  <div className="project-group-lane-title">
+                                    <span className="project-group-lane-dot" aria-hidden="true" />
+                                    <h5>{lane.label}</h5>
+                                    <span className="project-group-lane-count">{lane.rows.length}</span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="project-group-lane-add"
+                                    onClick={() => openNoteModalForVisibility(lane.key)}
+                                    disabled={savingNote || deletingNotes}
+                                    aria-label={`Add note in ${lane.label}`}
+                                  >
+                                    <Icon name="plus" size={14} />
+                                  </button>
+                                </header>
+                                <div className="projects-table-wrap project-expenses-table-wrap project-group-lane-table-wrap">
+                                  <table className="projects-table-view project-expenses-table project-notes-table project-group-lane-table">
+                                    <thead>
+                                      <tr>
+                                        <th className="projects-table-check">
+                                          <input
+                                            type="checkbox"
+                                            checked={laneAllSelected}
+                                            onChange={() => {
+                                              if (laneAllSelected) {
+                                                const laneSet = new Set(laneNoteIds);
+                                                setSelectedNoteIds((prev) => prev.filter((id) => !laneSet.has(id)));
+                                                return;
+                                              }
+                                              setSelectedNoteIds((prev) => Array.from(new Set([...prev, ...laneNoteIds])));
+                                            }}
+                                            aria-label={`Select all notes in ${lane.label}`}
+                                          />
+                                        </th>
+                                        <th>Note Name</th>
+                                        <th>Description</th>
+                                        <th>Updated</th>
+                                        <th>Author</th>
+                                        <th>Visibility</th>
+                                        <th className="project-group-actions-col" aria-label="Actions" />
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {lane.rows.map((note) => {
+                                        const noteId = String(note?.id ?? "");
+                                        const isChecked = selectedNoteIds.includes(noteId);
+                                        const safeVisibility = String(note?.visibility || "project_team")
+                                          .trim()
+                                          .toLowerCase();
+                                        const author =
+                                          note?.author_name ||
+                                          (note?.author_member_id ? `Member #${note.author_member_id}` : "—");
+                                        return (
+                                          <tr key={noteId || `${note?.title || "note"}-${note?.created_at || ""}`}>
+                                            <td className="projects-table-check">
+                                              <input
+                                                type="checkbox"
+                                                checked={isChecked}
+                                                onChange={() => handleToggleNoteSelection(noteId)}
+                                                aria-label={`Select note ${note?.title || noteId}`}
+                                              />
+                                            </td>
+                                            <td>
+                                              <div className="project-expense-detail project-note-detail">
+                                                <strong>{note?.title || "Untitled note"}</strong>
+                                              </div>
+                                            </td>
+                                            <td>
+                                              <p className="project-group-description">{note?.body || "—"}</p>
+                                            </td>
+                                            <td className="project-group-estimation">
+                                              {formatDate(note?.updated_at || note?.created_at)}
+                                            </td>
+                                            <td>{author}</td>
+                                            <td>
+                                              <span className="project-note-visibility">
+                                                {NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
+                                              </span>
+                                            </td>
+                                            <td className="project-group-actions-col">
+                                              <button
+                                                type="button"
+                                                className="project-group-row-action"
+                                                aria-label={`Edit ${note?.title || "note"}`}
+                                                onClick={() => openNoteEditorForRow(note)}
+                                                disabled={savingNote || deletingNotes}
+                                              >
+                                                <Icon name="more-horizontal" size={15} />
+                                              </button>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </section>
+                            );
+                          })}
                         </div>
                       </>
                     )}

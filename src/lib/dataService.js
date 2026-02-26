@@ -85,9 +85,19 @@ const shouldUseSupabase = () =>
 
 const isMissingColumnError = (error, columnName) => {
   if (!error || !columnName) return false;
-  const message = String(error?.message || error?.details || "").toLowerCase();
+  const message = [
+    error?.message,
+    error?.details,
+    error?.hint,
+  ]
+    .map((value) => String(value || "").toLowerCase())
+    .join(" ");
   const column = String(columnName).toLowerCase();
-  return message.includes("does not exist") && message.includes(column);
+  if (!message.includes(column)) return false;
+  if (message.includes("does not exist")) return true;
+  if (message.includes("could not find") && message.includes("column")) return true;
+  if (message.includes("schema cache") && message.includes("column")) return true;
+  return false;
 };
 
 const isMissingRelationError = (error, relationName = "") => {
@@ -3552,6 +3562,20 @@ const PROJECT_EXPENSE_RECEIPT_ALLOWED_EXTENSIONS = new Set([
   "tiff",
 ]);
 
+const ACTIVITY_POSTER_MAX_SIZE_BYTES = 8 * 1024 * 1024;
+const ACTIVITY_POSTER_ALLOWED_EXTENSIONS = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+  "gif",
+  "bmp",
+  "heic",
+  "heif",
+  "tif",
+  "tiff",
+]);
+
 const getFileExtension = (fileName) =>
   String(fileName || "")
     .split(".")
@@ -3633,6 +3657,20 @@ const isAllowedExpenseReceiptType = (file) => {
   };
 };
 
+const isAllowedActivityPosterType = (file) => {
+  const mimeType = String(file?.type || "")
+    .trim()
+    .toLowerCase();
+  const extension = getFileExtension(file?.name);
+  const allowedByMime = mimeType.startsWith("image/");
+  const allowedByExtension = ACTIVITY_POSTER_ALLOWED_EXTENSIONS.has(extension);
+  return {
+    isAllowed: allowedByMime || allowedByExtension,
+    mimeType,
+    extension,
+  };
+};
+
 const sanitizeDocumentName = (fileName, fallback = "document") =>
   String(fileName || "")
     .replace(/\.[^.]+$/, "")
@@ -3647,6 +3685,67 @@ const extractStorageMessage = (error) => {
   if (!message) return "";
   return message.toLowerCase();
 };
+
+export async function uploadOrganizationActivityPoster(file, tenantId, options = {}) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  if (!file) {
+    throw new Error("Activity poster file is required.");
+  }
+
+  const { isAllowed, mimeType, extension } = isAllowedActivityPosterType(file);
+  if (!isAllowed) {
+    throw new Error("Upload poster as an image file (.jpg, .png, .webp, .gif).");
+  }
+
+  const fileSize = Number(file?.size || 0);
+  if (!Number.isFinite(fileSize) || fileSize <= 0) {
+    throw new Error("Invalid poster file size.");
+  }
+  if (fileSize > ACTIVITY_POSTER_MAX_SIZE_BYTES) {
+    throw new Error("Poster file is too large. Maximum allowed size is 8 MB.");
+  }
+
+  const safeExtension = extension || (mimeType.startsWith("image/") ? "jpg" : "bin");
+  const tenantSegment = sanitizeStorageSegment(tenantId, "global");
+  const safeBaseName = sanitizeDocumentName(file?.name, "activity-poster");
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const timestamp = Date.now();
+  const fileName = `${timestamp}-${safeBaseName}-${suffix}.${safeExtension}`;
+  const filePath = `tenants/${tenantSegment}/activities/posters/${fileName}`;
+
+  const { error: uploadError } = await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).upload(filePath, file, {
+    cacheControl: "3600",
+    upsert: false,
+    contentType: file.type || undefined,
+  });
+
+  if (uploadError) {
+    console.error("Error uploading activity poster:", uploadError);
+    throw uploadError;
+  }
+
+  const previousPath = String(options?.existingPath || options?.existing_path || "").trim();
+  if (previousPath) {
+    const { error: removeError } = await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).remove([previousPath]);
+    if (removeError) {
+      const message = extractStorageMessage(removeError);
+      if (!message.includes("not found")) {
+        console.warn("Previous activity poster cleanup failed:", removeError);
+      }
+    }
+  }
+
+  const { data: publicData } = supabase.storage.from(PROJECT_DOCUMENT_BUCKET).getPublicUrl(filePath);
+  return {
+    poster_path: filePath,
+    poster_url: publicData?.publicUrl || null,
+    mime_type: mimeType || file.type || "application/octet-stream",
+    file_size_bytes: fileSize,
+  };
+}
 
 export async function getProjectDocuments(projectRef, tenantId) {
   if (!isSupabaseConfigured || !supabase) {
@@ -5732,8 +5831,150 @@ export async function deleteOrganizationDocument(documentId, tenantId) {
   return true;
 }
 
+const DEFAULT_ORGANIZATION_ACTIVITY_OPTION_VALUES = {
+  categories: [
+    { value: "General", label: "General" },
+    { value: "Sales", label: "Sales" },
+    { value: "Expenses", label: "Expenses" },
+    { value: "Welfare", label: "Welfare" },
+    { value: "Report", label: "Report" },
+  ],
+  valueTypes: [
+    { value: "Income", label: "Income" },
+    { value: "Expense", label: "Expense" },
+    { value: "Contribution", label: "Contribution" },
+  ],
+  budgetLines: [
+    { value: "Operations", label: "Operations" },
+    { value: "Welfare", label: "Welfare" },
+    { value: "Projects", label: "Projects" },
+    { value: "Administration", label: "Administration" },
+  ],
+};
+
+const buildDefaultOrganizationActivityOptionValues = () => ({
+  categories: DEFAULT_ORGANIZATION_ACTIVITY_OPTION_VALUES.categories.map((item) => ({ ...item })),
+  valueTypes: DEFAULT_ORGANIZATION_ACTIVITY_OPTION_VALUES.valueTypes.map((item) => ({ ...item })),
+  budgetLines: DEFAULT_ORGANIZATION_ACTIVITY_OPTION_VALUES.budgetLines.map((item) => ({ ...item })),
+});
+
+const normalizeActivityOption = (row = {}) => {
+  const group = String(row?.option_group || "")
+    .trim()
+    .toLowerCase();
+  const value = String(row?.option_value || "").trim();
+  const label = String(row?.option_label || value).trim();
+  const displayOrder = Number.isFinite(Number(row?.display_order))
+    ? Number(row.display_order)
+    : Number.MAX_SAFE_INTEGER;
+  if (!group || !value || !label) return null;
+  return { group, value, label, displayOrder };
+};
+
+const groupActivityOptionRows = (rows = []) => {
+  const grouped = {
+    categories: [],
+    valueTypes: [],
+    budgetLines: [],
+  };
+  rows.forEach((row) => {
+    const normalized = normalizeActivityOption(row);
+    if (!normalized) return;
+    const mapped = { value: normalized.value, label: normalized.label, displayOrder: normalized.displayOrder };
+    if (normalized.group === "category") grouped.categories.push(mapped);
+    if (normalized.group === "value_type") grouped.valueTypes.push(mapped);
+    if (normalized.group === "budget_line") grouped.budgetLines.push(mapped);
+  });
+  const sortOptions = (items) =>
+    items.sort((left, right) => {
+      if (left.displayOrder !== right.displayOrder) {
+        return left.displayOrder - right.displayOrder;
+      }
+      return String(left.label).localeCompare(String(right.label));
+    });
+  sortOptions(grouped.categories);
+  sortOptions(grouped.valueTypes);
+  sortOptions(grouped.budgetLines);
+  return grouped;
+};
+
+const mergeActivityOptionRows = (baseRows = [], tenantRows = []) => {
+  const merged = new Map();
+  (baseRows || []).forEach((row) => {
+    const normalized = normalizeActivityOption(row);
+    if (!normalized) return;
+    merged.set(`${normalized.group}:${normalized.value.toLowerCase()}`, row);
+  });
+  (tenantRows || []).forEach((row) => {
+    const normalized = normalizeActivityOption(row);
+    if (!normalized) return;
+    merged.set(`${normalized.group}:${normalized.value.toLowerCase()}`, row);
+  });
+  return Array.from(merged.values());
+};
+
+export async function getOrganizationActivityOptionValues(tenantId) {
+  const fallback = buildDefaultOrganizationActivityOptionValues();
+  if (!isSupabaseConfigured || !supabase) {
+    return fallback;
+  }
+
+  const selectColumns =
+    "id, tenant_id, option_group, option_value, option_label, display_order, is_active";
+  let globalQuery = supabase
+    .from("organization_activity_option_values")
+    .select(selectColumns)
+    .eq("is_active", true)
+    .is("tenant_id", null)
+    .order("display_order", { ascending: true })
+    .order("option_label", { ascending: true });
+  const globalResult = await globalQuery;
+
+  if (globalResult.error) {
+    if (isMissingRelationError(globalResult.error, "organization_activity_option_values")) {
+      return fallback;
+    }
+    console.error("Error loading activity option values:", globalResult.error);
+    return fallback;
+  }
+
+  let tenantRows = [];
+  if (tenantId) {
+    let tenantQuery = supabase
+      .from("organization_activity_option_values")
+      .select(selectColumns)
+      .eq("is_active", true)
+      .eq("tenant_id", tenantId)
+      .order("display_order", { ascending: true })
+      .order("option_label", { ascending: true });
+    const tenantResult = await tenantQuery;
+    if (!tenantResult.error) {
+      tenantRows = tenantResult.data || [];
+    } else if (!isMissingRelationError(tenantResult.error, "organization_activity_option_values")) {
+      console.error("Error loading tenant activity option values:", tenantResult.error);
+    }
+  }
+
+  const grouped = groupActivityOptionRows(
+    mergeActivityOptionRows(globalResult.data || [], tenantRows)
+  );
+
+  return {
+    categories: grouped.categories.length
+      ? grouped.categories.map((item) => ({ value: item.value, label: item.label }))
+      : fallback.categories,
+    valueTypes: grouped.valueTypes.length
+      ? grouped.valueTypes.map((item) => ({ value: item.value, label: item.label }))
+      : fallback.valueTypes,
+    budgetLines: grouped.budgetLines.length
+      ? grouped.budgetLines.map((item) => ({ value: item.value, label: item.label }))
+      : fallback.budgetLines,
+  };
+}
+
 const MEETING_SELECT_VARIANTS = [
-  "id, tenant_id, date, type, agenda, minutes, attendees, title, description, notes, location, status, project_id, owner_member_id, start_at, end_at, created_at, updated_at",
+  "id, tenant_id, date, type, agenda, minutes, assignees, attendees_data, title, description, notes, location, status, project_id, owner_member_id, start_at, end_at, value_type, budget_line, source_partner_id, source_partner_name, poster_url, poster_path, created_at, updated_at",
+  "id, tenant_id, date, type, agenda, minutes, attendees, title, description, notes, location, status, project_id, owner_member_id, start_at, end_at, value_type, budget_line, source_partner_id, source_partner_name, poster_url, poster_path, created_at, updated_at",
   "id, tenant_id, date, type, agenda, minutes, attendees, title, description, location, status, project_id, owner_member_id, created_at",
   "id, tenant_id, date, type, agenda, minutes, attendees",
 ];
@@ -5761,7 +6002,7 @@ const parseOptionalInteger = (value) => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
-const normalizeMeetingAttendees = (value) => {
+const normalizeMeetingMemberIds = (value) => {
   if (Array.isArray(value)) {
     return Array.from(
       new Set(
@@ -5783,7 +6024,87 @@ const normalizeMeetingAttendees = (value) => {
   );
 };
 
+const normalizeMeetingAttendeesData = (value) => {
+  const parsedItems = [];
+  if (Array.isArray(value)) {
+    parsedItems.push(...value);
+  } else if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          parsedItems.push(...parsed);
+        } else if (parsed && typeof parsed === "object") {
+          parsedItems.push(parsed);
+        }
+      } catch {
+        trimmed
+          .split(/[,\n;]/)
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .forEach((item) => parsedItems.push(item));
+      }
+    } else {
+      trimmed
+        .split(/[,\n;]/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .forEach((item) => parsedItems.push(item));
+    }
+  } else if (value && typeof value === "object") {
+    parsedItems.push(value);
+  }
+
+  const normalized = [];
+  const seen = new Set();
+  parsedItems.forEach((item) => {
+    let attendeeType = "member";
+    let attendeeId = null;
+
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      attendeeType = String(item.type || item.attendee_type || "member")
+        .trim()
+        .toLowerCase();
+      attendeeId = Number.parseInt(String(item.id || item.member_id || item.subscriber_id || ""), 10);
+    } else if (typeof item === "string") {
+      if (item.includes(":")) {
+        const [rawType, rawId] = item.split(":");
+        attendeeType = String(rawType || "member")
+          .trim()
+          .toLowerCase();
+        attendeeId = Number.parseInt(String(rawId || ""), 10);
+      } else {
+        attendeeId = Number.parseInt(item, 10);
+      }
+    } else {
+      attendeeId = Number.parseInt(String(item), 10);
+    }
+
+    if (!Number.isInteger(attendeeId) || attendeeId <= 0) return;
+    if (attendeeType !== "member" && attendeeType !== "subscriber") return;
+
+    const dedupeKey = `${attendeeType}:${attendeeId}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    normalized.push({ type: attendeeType, id: attendeeId });
+  });
+
+  return normalized;
+};
+
+const toLegacyMeetingAttendees = (assignees = [], attendeesData = []) => {
+  const attendeeIds = (Array.isArray(attendeesData) ? attendeesData : [])
+    .filter((item) => String(item?.type || "").toLowerCase() === "member")
+    .map((item) => Number.parseInt(String(item?.id || ""), 10))
+    .filter((item) => Number.isInteger(item) && item > 0);
+  return Array.from(new Set([...(assignees || []), ...attendeeIds]));
+};
+
 const buildOrganizationActivityBasePayload = (payload = {}, tenantId) => {
+  const assignees = normalizeMeetingMemberIds(payload?.assignees);
+  const attendeesData = normalizeMeetingAttendeesData(payload?.attendees);
   const nextDate = normalizeMeetingDate(payload?.date) || new Date().toISOString().slice(0, 10);
   return {
     tenant_id: tenantId ?? normalizeOptional(payload?.tenant_id),
@@ -5791,12 +6112,45 @@ const buildOrganizationActivityBasePayload = (payload = {}, tenantId) => {
     type: normalizeOptional(payload?.type) || "General",
     agenda: normalizeOptional(payload?.agenda || payload?.title),
     minutes: normalizeOptional(payload?.minutes),
-    attendees: normalizeMeetingAttendees(payload?.attendees),
+    attendees: toLegacyMeetingAttendees(assignees, attendeesData),
   };
 };
 
 const buildOrganizationActivityPayload = (payload = {}, tenantId) => {
   const base = buildOrganizationActivityBasePayload(payload, tenantId);
+  const assignees = normalizeMeetingMemberIds(payload?.assignees);
+  const attendeesData = normalizeMeetingAttendeesData(payload?.attendees);
+  const explicitOwner = parseOptionalInteger(payload?.owner_member_id);
+  return {
+    tenant_id: base.tenant_id,
+    date: base.date,
+    type: base.type,
+    agenda: base.agenda,
+    minutes: base.minutes,
+    title: normalizeOptional(payload?.title),
+    description: normalizeOptional(payload?.description),
+    notes: normalizeOptional(payload?.notes),
+    location: normalizeOptional(payload?.location),
+    status: normalizeMeetingStatus(payload?.status),
+    project_id: parseOptionalInteger(payload?.project_id),
+    owner_member_id: explicitOwner ?? assignees[0] ?? null,
+    start_at: normalizeOptional(payload?.start_at),
+    end_at: normalizeOptional(payload?.end_at),
+    value_type: normalizeOptional(payload?.value_type),
+    budget_line: normalizeOptional(payload?.budget_line),
+    source_partner_id: normalizeOptional(payload?.source_partner_id),
+    source_partner_name: normalizeOptional(payload?.source_partner_name),
+    poster_url: normalizeOptional(payload?.poster_url),
+    poster_path: normalizeOptional(payload?.poster_path),
+    assignees,
+    attendees_data: attendeesData,
+  };
+};
+
+const buildOrganizationActivityLegacyPayload = (payload = {}, tenantId) => {
+  const base = buildOrganizationActivityBasePayload(payload, tenantId);
+  const assignees = normalizeMeetingMemberIds(payload?.assignees);
+  const explicitOwner = parseOptionalInteger(payload?.owner_member_id);
   return {
     ...base,
     title: normalizeOptional(payload?.title),
@@ -5805,11 +6159,77 @@ const buildOrganizationActivityPayload = (payload = {}, tenantId) => {
     location: normalizeOptional(payload?.location),
     status: normalizeMeetingStatus(payload?.status),
     project_id: parseOptionalInteger(payload?.project_id),
-    owner_member_id: parseOptionalInteger(payload?.owner_member_id),
+    owner_member_id: explicitOwner ?? assignees[0] ?? null,
+    start_at: normalizeOptional(payload?.start_at),
+    end_at: normalizeOptional(payload?.end_at),
+    value_type: normalizeOptional(payload?.value_type),
+    budget_line: normalizeOptional(payload?.budget_line),
+    source_partner_id: normalizeOptional(payload?.source_partner_id),
+    source_partner_name: normalizeOptional(payload?.source_partner_name),
+    poster_url: normalizeOptional(payload?.poster_url),
+    poster_path: normalizeOptional(payload?.poster_path),
+  };
+};
+
+const buildOrganizationActivityLegacyMinimalPayload = (payload = {}, tenantId) => {
+  const base = buildOrganizationActivityBasePayload(payload, tenantId);
+  const assignees = normalizeMeetingMemberIds(payload?.assignees);
+  const explicitOwner = parseOptionalInteger(payload?.owner_member_id);
+  return {
+    ...base,
+    title: normalizeOptional(payload?.title),
+    description: normalizeOptional(payload?.description),
+    notes: normalizeOptional(payload?.notes),
+    location: normalizeOptional(payload?.location),
+    status: normalizeMeetingStatus(payload?.status),
+    project_id: parseOptionalInteger(payload?.project_id),
+    owner_member_id: explicitOwner ?? assignees[0] ?? null,
     start_at: normalizeOptional(payload?.start_at),
     end_at: normalizeOptional(payload?.end_at),
   };
 };
+
+const ORGANIZATION_ACTIVITY_EXTENDED_COLUMNS = [
+  "assignees",
+  "attendees_data",
+  "value_type",
+  "budget_line",
+  "source_partner_id",
+  "source_partner_name",
+  "poster_url",
+  "poster_path",
+];
+
+const ORGANIZATION_ACTIVITY_METADATA_COLUMNS = [
+  "value_type",
+  "budget_line",
+  "source_partner_id",
+  "source_partner_name",
+  "poster_url",
+  "poster_path",
+];
+
+const ORGANIZATION_ACTIVITY_SCHEMA_ERROR =
+  "Activity save failed because your database schema is outdated. Run migrations `migration_052_meetings_assignees_attendees.sql` and `migration_054_activity_option_values.sql`, then retry.";
+
+const hasOrganizationActivityExtendedFields = (payload = {}) => {
+  const assignees = normalizeMeetingMemberIds(payload?.assignees);
+  const attendeesData = normalizeMeetingAttendeesData(payload?.attendees);
+  const normalizeText = (value) => String(value || "").trim();
+  return (
+    assignees.length > 0 ||
+    attendeesData.length > 0 ||
+    Boolean(normalizeText(payload?.value_type)) ||
+    Boolean(normalizeText(payload?.budget_line)) ||
+    Boolean(normalizeText(payload?.source_partner_id)) ||
+    Boolean(normalizeText(payload?.source_partner_name)) ||
+    Boolean(normalizeText(payload?.poster_url)) ||
+    Boolean(normalizeText(payload?.poster_path))
+  );
+};
+
+const isMissingAnyColumnError = (error, columns = []) =>
+  columns.some((columnName) => isMissingColumnError(error, columnName));
 
 /**
  * Create organization activity
@@ -5820,9 +6240,27 @@ export async function createOrganizationActivity(payload = {}, tenantId) {
   }
 
   const fullPayload = buildOrganizationActivityPayload(payload, tenantId);
+  const legacyPayload = buildOrganizationActivityLegacyPayload(payload, tenantId);
+  const legacyMinimalPayload = buildOrganizationActivityLegacyMinimalPayload(payload, tenantId);
   const basePayload = buildOrganizationActivityBasePayload(payload, tenantId);
+  const requiresExtendedSchema = hasOrganizationActivityExtendedFields(payload);
 
   let result = await supabase.from("meetings").insert(fullPayload).select("*").single();
+  if (result.error && isMissingAnyColumnError(result.error, ORGANIZATION_ACTIVITY_EXTENDED_COLUMNS)) {
+    if (requiresExtendedSchema) {
+      throw new Error(ORGANIZATION_ACTIVITY_SCHEMA_ERROR);
+    }
+    result = await supabase.from("meetings").insert(legacyPayload).select("*").single();
+  }
+  if (
+    result.error &&
+    isMissingAnyColumnError(result.error, ORGANIZATION_ACTIVITY_METADATA_COLUMNS)
+  ) {
+    if (requiresExtendedSchema) {
+      throw new Error(ORGANIZATION_ACTIVITY_SCHEMA_ERROR);
+    }
+    result = await supabase.from("meetings").insert(legacyMinimalPayload).select("*").single();
+  }
   if (result.error && isMissingColumnError(result.error, "title")) {
     result = await supabase.from("meetings").insert(basePayload).select("*").single();
   }
@@ -5850,11 +6288,41 @@ export async function updateOrganizationActivity(activityId, payload = {}, tenan
   }
 
   const fullPayload = buildOrganizationActivityPayload(payload, tenantId);
+  const legacyPayload = buildOrganizationActivityLegacyPayload(payload, tenantId);
+  const legacyMinimalPayload = buildOrganizationActivityLegacyMinimalPayload(payload, tenantId);
   const basePayload = buildOrganizationActivityBasePayload(payload, tenantId);
+  const requiresExtendedSchema = hasOrganizationActivityExtendedFields(payload);
 
   let query = supabase.from("meetings").update(fullPayload).eq("id", parsedActivityId);
   query = applyTenantFilter(query, tenantId);
   let result = await query.select("*").single();
+
+  if (result.error && isMissingAnyColumnError(result.error, ORGANIZATION_ACTIVITY_EXTENDED_COLUMNS)) {
+    if (requiresExtendedSchema) {
+      throw new Error(ORGANIZATION_ACTIVITY_SCHEMA_ERROR);
+    }
+    let legacyQuery = supabase
+      .from("meetings")
+      .update(legacyPayload)
+      .eq("id", parsedActivityId);
+    legacyQuery = applyTenantFilter(legacyQuery, tenantId);
+    result = await legacyQuery.select("*").single();
+  }
+
+  if (
+    result.error &&
+    isMissingAnyColumnError(result.error, ORGANIZATION_ACTIVITY_METADATA_COLUMNS)
+  ) {
+    if (requiresExtendedSchema) {
+      throw new Error(ORGANIZATION_ACTIVITY_SCHEMA_ERROR);
+    }
+    let legacyMinimalQuery = supabase
+      .from("meetings")
+      .update(legacyMinimalPayload)
+      .eq("id", parsedActivityId);
+    legacyMinimalQuery = applyTenantFilter(legacyMinimalQuery, tenantId);
+    result = await legacyMinimalQuery.select("*").single();
+  }
 
   if (result.error && isMissingColumnError(result.error, "title")) {
     let fallbackQuery = supabase
@@ -5925,14 +6393,51 @@ export async function getMeetings(tenantId) {
     const { data, error } = await query;
 
     if (error) {
-      if (isMissingColumnError(error, "title")) {
+      if (
+        isMissingAnyColumnError(error, [
+          "assignees",
+          "attendees_data",
+          "title",
+          "description",
+          "notes",
+          "location",
+          "status",
+          "project_id",
+          "owner_member_id",
+          "start_at",
+          "end_at",
+          "value_type",
+          "budget_line",
+          "source_partner_id",
+          "source_partner_name",
+          "poster_url",
+          "poster_path",
+        ])
+      ) {
         continue;
       }
       console.error("Error fetching meetings:", error);
       return [];
     }
 
-    return data || [];
+    return (data || []).map((row) => {
+      const normalizedAssignees = normalizeMeetingMemberIds(
+        Array.isArray(row?.assignees) && row.assignees.length ? row.assignees : row?.attendees
+      );
+      const normalizedAttendeesData = normalizeMeetingAttendeesData(
+        row?.attendees_data ?? row?.attendees
+      );
+      const normalizedAttendees = toLegacyMeetingAttendees(
+        normalizedAssignees,
+        normalizedAttendeesData
+      );
+      return {
+        ...row,
+        assignees: normalizedAssignees,
+        attendees_data: normalizedAttendeesData,
+        attendees: normalizedAttendees,
+      };
+    });
   }
 
   return [];

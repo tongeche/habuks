@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "./icons.jsx";
 
-export default function SiteHeader({ data, hideTopBar = false, anchorBase = "/", onNavClick }) {
+function SiteHeader({ data, hideTopBar = false, anchorBase = "/", onNavClick }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const header = data?.header ?? {};
   const navItems = header.nav?.length ? header.nav : data?.nav ?? [];
@@ -18,7 +18,6 @@ export default function SiteHeader({ data, hideTopBar = false, anchorBase = "/",
   const orgName = data?.orgName ?? "Jongol Foundation";
   const orgTagline = data?.orgTagline ?? "";
   const logoUrl = data?.logoUrl || "/assets/logo.png";
-  const menuLabel = header.menuLabel ?? "Menu";
   const resolveHref = (href) => {
     if (!href) {
       return "#";
@@ -36,6 +35,10 @@ export default function SiteHeader({ data, hideTopBar = false, anchorBase = "/",
     setMenuOpen((open) => !open);
   };
 
+  const handleCloseMenu = () => {
+    setMenuOpen(false);
+  };
+
   const handleNavClick = (e, item) => {
     setMenuOpen(false);
     // Check if this is a pricing link and callback exists
@@ -44,6 +47,55 @@ export default function SiteHeader({ data, hideTopBar = false, anchorBase = "/",
       onNavClick();
     }
   };
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return undefined;
+    }
+
+    const mediaQuery = window.matchMedia("(min-width: 960px)");
+    const handleChange = (event) => {
+      if (event.matches) {
+        setMenuOpen(false);
+      }
+    };
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+    } else if (typeof mediaQuery.addListener === "function") {
+      mediaQuery.addListener(handleChange);
+    }
+
+    return () => {
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", handleChange);
+      } else if (typeof mediaQuery.removeListener === "function") {
+        mediaQuery.removeListener(handleChange);
+      }
+    };
+  }, [menuOpen]);
 
   return (
     <header className="site-header" id="top">
@@ -96,15 +148,15 @@ export default function SiteHeader({ data, hideTopBar = false, anchorBase = "/",
             type="button"
             onClick={handleToggle}
             aria-expanded={menuOpen}
-            aria-controls="primary-navigation"
+            aria-controls="primary-navigation-drawer"
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
           >
-            <Icon name="menu" size={20} />
-            <span>{menuLabel}</span>
+            <Icon name={menuOpen ? "x" : "menu"} size={20} />
           </button>
 
           <nav
             id="primary-navigation"
-            className={`main-nav${menuOpen ? " is-open" : ""}`}
+            className="main-nav"
             aria-label="Primary"
           >
             <ul>
@@ -135,6 +187,56 @@ export default function SiteHeader({ data, hideTopBar = false, anchorBase = "/",
           )}
         </div>
       </div>
+
+      <div
+        className={`site-mobile-drawer-backdrop${menuOpen ? " is-open" : ""}`}
+        onClick={handleCloseMenu}
+        aria-hidden={!menuOpen}
+      />
+
+      <aside
+        id="primary-navigation-drawer"
+        className={`site-mobile-drawer${menuOpen ? " is-open" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Main navigation"
+      >
+        <div className="site-mobile-drawer-head">
+          <strong>Main menu</strong>
+          <button
+            type="button"
+            className="site-mobile-drawer-close"
+            onClick={handleCloseMenu}
+            aria-label="Close menu"
+          >
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+
+        <nav className="site-mobile-drawer-nav" aria-label="Mobile primary">
+          <ul>
+            {navItems.map((item) => (
+              <li key={`mobile-${item.label}`}>
+                <a href={resolveHref(item.href)} onClick={(e) => handleNavClick(e, item)}>
+                  {item.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        {loginAction ? (
+          <div className="site-mobile-drawer-links">
+            <a className="site-mobile-drawer-link is-login" href={resolveHref(loginAction.href)} onClick={handleCloseMenu}>
+              <Icon name="user" size={16} />
+              <span>{loginAction.label}</span>
+            </a>
+          </div>
+        ) : null}
+      </aside>
     </header>
   );
 }
+
+export { SiteHeader };
+export default SiteHeader;
