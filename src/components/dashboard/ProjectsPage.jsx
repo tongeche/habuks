@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   archiveProjectExpenseCategory,
   createIgaBudgetEntries,
@@ -23,6 +23,7 @@ import {
   getProjectTasks,
   getProjectsWithMembership,
   getProjectAssignableMembers,
+  getTenantById,
   joinProject,
   leaveProject,
   renameProjectExpenseCategory,
@@ -34,11 +35,13 @@ import {
   updateProjectNote,
   updateProjectExpense,
   updateProjectTask,
+  updateTenant,
   uploadProjectDocument,
   uploadProjectExpenseReceipt,
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
+import ProjectEditorForm from "./ProjectEditorForm.jsx";
 
 const projectPageMap = {
   jpp: "projects-jpp",
@@ -121,6 +124,197 @@ const DEFAULT_EXPENSE_CATEGORIES = [
   "Operations",
   "Other",
 ];
+
+const PROJECT_EXPENSE_TONES = [
+  "emerald",
+  "blue",
+  "amber",
+  "orange",
+  "rose",
+  "teal",
+  "cyan",
+  "slate",
+  "violet",
+];
+
+const getProjectExpenseCategoryTone = (category) => {
+  if (!category) return "slate";
+  const normalized = String(category).toLowerCase();
+  if (normalized.includes("transport") || normalized.includes("travel")) return "violet";
+  if (normalized.includes("feed") || normalized.includes("food") || normalized.includes("grocery")) {
+    return "orange";
+  }
+  if (normalized.includes("raw") || normalized.includes("supply") || normalized.includes("material")) {
+    return "blue";
+  }
+  if (normalized.includes("packag")) return "rose";
+  if (normalized.includes("utilit") || normalized.includes("housing") || normalized.includes("rent")) {
+    return "teal";
+  }
+  if (normalized.includes("med") || normalized.includes("health")) return "amber";
+  if (normalized.includes("labor") || normalized.includes("staff") || normalized.includes("team")) {
+    return "emerald";
+  }
+  if (normalized.includes("maint") || normalized.includes("repair") || normalized.includes("operation")) {
+    return "cyan";
+  }
+  let hash = 0;
+  const label = String(category);
+  for (let index = 0; index < label.length; index += 1) {
+    hash = (hash * 31 + label.charCodeAt(index)) % 2147483647;
+  }
+  return PROJECT_EXPENSE_TONES[Math.abs(hash) % PROJECT_EXPENSE_TONES.length];
+};
+
+const getProjectExpenseCategoryIcon = (category) => {
+  if (!category) return "receipt";
+  const normalized = String(category).toLowerCase();
+  if (normalized.includes("transport") || normalized.includes("travel")) return "truck";
+  if (normalized.includes("food") || normalized.includes("feed") || normalized.includes("grocery")) {
+    return "wallet";
+  }
+  if (normalized.includes("housing") || normalized.includes("rent") || normalized.includes("utilit")) {
+    return "home";
+  }
+  if (normalized.includes("packag") || normalized.includes("label")) return "tag";
+  if (normalized.includes("med") || normalized.includes("health")) return "heart";
+  if (normalized.includes("labor") || normalized.includes("staff") || normalized.includes("team")) {
+    return "users";
+  }
+  if (normalized.includes("maint") || normalized.includes("repair") || normalized.includes("operation")) {
+    return "settings";
+  }
+  if (normalized.includes("market") || normalized.includes("sale")) return "trending-up";
+  return "receipt";
+};
+
+const asPlainObject = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value;
+};
+
+const normalizePartnerLookupKey = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const getTenantOrganizationProfile = (siteData) => {
+  const safeSiteData = asPlainObject(siteData);
+  return asPlainObject(safeSiteData.organization_profile);
+};
+
+const getTenantOrganizationPartners = (siteData) => {
+  const profile = getTenantOrganizationProfile(siteData);
+  const source = Array.isArray(profile.partners) ? profile.partners : [];
+  return source
+    .map((partner, index) => {
+      const row = asPlainObject(partner);
+      const fallbackId = `partner-${index + 1}`;
+      const rawLinkedProjects = Array.isArray(row.linked_project_ids)
+        ? row.linked_project_ids
+        : Array.isArray(row.linked_projects)
+          ? row.linked_projects
+          : [];
+      const linkedProjectIds = rawLinkedProjects
+        .map((projectRef) => {
+          if (projectRef && typeof projectRef === "object") {
+            const objectRef = asPlainObject(projectRef);
+            return (
+              String(objectRef.id || "").trim() ||
+              String(objectRef.project_id || "").trim() ||
+              String(objectRef.projectId || "").trim()
+            );
+          }
+          return String(projectRef || "").trim();
+        })
+        .filter(Boolean);
+      return {
+        id: String(row.id || fallbackId),
+        name: String(row.name || "").trim(),
+        kind: String(row.kind || "Partner").trim() || "Partner",
+        status: String(row.status || "Active").trim() || "Active",
+        contact_person: String(row.contact_person || "").trim(),
+        contact_email: String(row.contact_email || "").trim(),
+        contact_phone: String(row.contact_phone || "").trim(),
+        last_contact: String(row.last_contact || "").trim(),
+        notes: String(row.notes || "").trim(),
+        logo_url: String(row.logo_url || row.logo || "").trim(),
+        linked_project_ids: Array.from(new Set(linkedProjectIds)),
+      };
+    })
+    .filter((row) => row.name);
+};
+
+const buildTenantSiteDataWithPartners = (siteData, partners) => {
+  const safeSiteData = asPlainObject(siteData);
+  const profile = getTenantOrganizationProfile(safeSiteData);
+  return {
+    ...safeSiteData,
+    organization_profile: {
+      ...profile,
+      partners,
+    },
+  };
+};
+
+const getProjectExpenseVendorLogo = (expense) => {
+  const candidates = [
+    expense?.vendor_logo_url,
+    expense?.vendorLogoUrl,
+    expense?.partner_logo_url,
+    expense?.partnerLogoUrl,
+    expense?.logo_url,
+    expense?.logoUrl,
+    expense?.vendor_meta?.logo_url,
+    expense?.vendor_profile?.logo_url,
+    expense?.partner?.logo_url,
+    expense?.partner?.logoUrl,
+  ];
+  const match = candidates.find((value) => typeof value === "string" && value.trim());
+  return String(match || "").trim();
+};
+
+const getProjectExpenseVendorInitials = (vendorName) => {
+  const words = String(vendorName || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0) return "NA";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return `${words[0].charAt(0)}${words[1].charAt(0)}`.toUpperCase();
+};
+
+const ProjectExpenseVendorCell = ({ expense, partnerByName }) => {
+  const vendorName = String(expense?.vendor || "").trim() || "Unknown vendor";
+  const partnerMatch = partnerByName?.get(normalizePartnerLookupKey(vendorName)) || null;
+  const vendorLogo = getProjectExpenseVendorLogo(expense) || String(partnerMatch?.logo_url || "").trim();
+  const vendorInitials = getProjectExpenseVendorInitials(vendorName);
+  const [showLogo, setShowLogo] = useState(Boolean(vendorLogo));
+
+  useEffect(() => {
+    setShowLogo(Boolean(vendorLogo));
+  }, [vendorLogo]);
+
+  return (
+    <div className="project-expense-vendor">
+      {showLogo ? (
+        <img
+          className="project-expense-vendor-logo"
+          src={vendorLogo}
+          alt={`${vendorName} logo`}
+          loading="lazy"
+          onError={() => setShowLogo(false)}
+        />
+      ) : (
+        <span className="project-expense-vendor-fallback" aria-hidden="true">
+          {vendorInitials}
+        </span>
+      )}
+      <span className="project-expense-vendor-name">{vendorName}</span>
+    </div>
+  );
+};
 
 const FUNDING_SOURCE_LABELS = {
   member_contributions: "Member contributions",
@@ -605,6 +799,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   const [showDeleteExpensesModal, setShowDeleteExpensesModal] = useState(false);
   const [showExpenseCategoryModal, setShowExpenseCategoryModal] = useState(false);
   const [expenseFormError, setExpenseFormError] = useState("");
+  const [expenseReceiptDragActive, setExpenseReceiptDragActive] = useState(false);
   const [projectTasks, setProjectTasks] = useState([]);
   const [projectTasksLoading, setProjectTasksLoading] = useState(false);
   const [projectTasksError, setProjectTasksError] = useState("");
@@ -632,6 +827,8 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   const [deletingNotes, setDeletingNotes] = useState(false);
   const [showDeleteNotesModal, setShowDeleteNotesModal] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
+  const [organizationPartners, setOrganizationPartners] = useState([]);
+  const [organizationPartnersLoading, setOrganizationPartnersLoading] = useState(false);
   const role = String(user?.role || "member").toLowerCase();
   const isAdmin = ["admin", "superadmin"].includes(role);
   const canCreateProject = ["project_manager", "admin", "superadmin"].includes(role);
@@ -639,9 +836,66 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   const parsedEditingProjectId = Number.parseInt(String(editingProjectId ?? ""), 10);
   const isEditingProject = Number.isInteger(parsedEditingProjectId) && parsedEditingProjectId > 0;
 
+  const expensePartnerByName = useMemo(() => {
+    const map = new Map();
+    organizationPartners.forEach((partner) => {
+      const name = String(partner?.name || "").trim();
+      const key = normalizePartnerLookupKey(name);
+      if (!key || map.has(key)) return;
+      map.set(key, partner);
+    });
+    return map;
+  }, [organizationPartners]);
+
+  const vendorPartnerOptions = useMemo(() => {
+    const selectedProjectId = String(selectedProject?.id || "").trim();
+    const hasLinkedProject = (partner) =>
+      selectedProjectId
+        ? Array.isArray(partner?.linked_project_ids) &&
+          partner.linked_project_ids.some((projectId) => String(projectId || "").trim() === selectedProjectId)
+        : false;
+    return [...organizationPartners].sort((a, b) => {
+      const aName = String(a?.name || "").toLowerCase();
+      const bName = String(b?.name || "").toLowerCase();
+      const aLinked = hasLinkedProject(a);
+      const bLinked = hasLinkedProject(b);
+      if (aLinked !== bLinked) {
+        return aLinked ? -1 : 1;
+      }
+      return aName.localeCompare(bName);
+    });
+  }, [organizationPartners, selectedProject?.id]);
+
+  const selectedVendorPartner = useMemo(() => {
+    const key = normalizePartnerLookupKey(expenseForm.vendor);
+    if (!key) return null;
+    return expensePartnerByName.get(key) || null;
+  }, [expenseForm.vendor, expensePartnerByName]);
+
+  const loadOrganizationPartners = useCallback(async () => {
+    if (!tenantId) {
+      setOrganizationPartners([]);
+      return;
+    }
+    setOrganizationPartnersLoading(true);
+    try {
+      const tenantRecord = await getTenantById(tenantId);
+      setOrganizationPartners(getTenantOrganizationPartners(tenantRecord?.site_data));
+    } catch (error) {
+      console.error("Error loading organization partners for expenses:", error);
+      setOrganizationPartners([]);
+    } finally {
+      setOrganizationPartnersLoading(false);
+    }
+  }, [tenantId]);
+
   useEffect(() => {
     loadProjects();
   }, [user, tenantId]);
+
+  useEffect(() => {
+    loadOrganizationPartners();
+  }, [loadOrganizationPartners]);
 
   async function loadProjects() {
     try {
@@ -2087,6 +2341,103 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     overviewRange,
   ]);
 
+  const projectExpenseInsights = useMemo(() => {
+    const totalAmount = Number.isFinite(totalProjectExpensesAmount) ? totalProjectExpensesAmount : 0;
+    const categoryTotals = new Map();
+    const vendorTotals = new Map();
+    let missingReceiptCount = 0;
+
+    projectExpenses.forEach((expense) => {
+      const amount = Number(expense?.amount);
+      const safeAmount = Number.isFinite(amount) && amount > 0 ? amount : 0;
+      const category = String(expense?.category || "Other").trim() || "Other";
+      const vendor = String(expense?.vendor || "").trim() || "Unknown vendor";
+      const hasProof =
+        Boolean(expense?.receipt) ||
+        Boolean(expense?.receipt_download_url) ||
+        Boolean(expense?.receipt_file_path) ||
+        Boolean(expense?.receipt_file_url) ||
+        Boolean(String(expense?.payment_reference || "").trim());
+
+      categoryTotals.set(category, (categoryTotals.get(category) || 0) + safeAmount);
+      const vendorCurrent = vendorTotals.get(vendor) || { name: vendor, amount: 0, count: 0 };
+      vendorTotals.set(vendor, {
+        ...vendorCurrent,
+        amount: vendorCurrent.amount + safeAmount,
+        count: vendorCurrent.count + 1,
+      });
+      if (!hasProof) {
+        missingReceiptCount += 1;
+      }
+    });
+
+    const palette = ["#7c3aed", "#3b82f6", "#06b6d4", "#22c55e", "#84cc16", "#f59e0b", "#ef4444", "#14b8a6"];
+    const sortedCategories = Array.from(categoryTotals.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([label, amount], index) => ({
+        label,
+        amount,
+        color: palette[index % palette.length],
+      }));
+
+    const legendCategories = sortedCategories.slice(0, 4);
+    const remainingCategoryAmount = sortedCategories
+      .slice(4)
+      .reduce((sum, item) => sum + Number(item?.amount || 0), 0);
+
+    const donutCategories = [...legendCategories];
+    if (remainingCategoryAmount > 0) {
+      donutCategories.push({
+        label: "Other",
+        amount: remainingCategoryAmount,
+        color: "#94a3b8",
+      });
+    }
+
+    let cursor = 0;
+    const donutSegments =
+      totalAmount > 0
+        ? donutCategories.map((item, index) => {
+            const slice = (Number(item?.amount || 0) / totalAmount) * 360;
+            const start = cursor;
+            const end = index === donutCategories.length - 1 ? 360 : Math.min(360, start + slice);
+            cursor = end;
+            return `${item.color} ${start.toFixed(2)}deg ${end.toFixed(2)}deg`;
+          })
+        : [];
+
+    const maxCategoryAmount = legendCategories.reduce(
+      (maxValue, item) => Math.max(maxValue, Number(item?.amount || 0)),
+      0
+    );
+
+    const leadingVendor =
+      Array.from(vendorTotals.values()).sort((a, b) => {
+        const amountDelta = Number(b?.amount || 0) - Number(a?.amount || 0);
+        if (amountDelta !== 0) return amountDelta;
+        return String(a?.name || "").localeCompare(String(b?.name || ""));
+      })[0] || null;
+
+    return {
+      totalAmount,
+      expenseCount: projectExpenses.length,
+      missingReceiptCount,
+      legendCategories,
+      donutGradient: donutSegments.length
+        ? `conic-gradient(${donutSegments.join(", ")})`
+        : "conic-gradient(#e2e8f0 0deg 360deg)",
+      maxCategoryAmount,
+      leadingVendor,
+    };
+  }, [projectExpenses, totalProjectExpensesAmount]);
+
+  const leadingExpenseVendorName = String(projectExpenseInsights.leadingVendor?.name || "").trim();
+  const leadingExpenseVendorLogo = useMemo(() => {
+    if (!leadingExpenseVendorName) return "";
+    const partner = expensePartnerByName.get(normalizePartnerLookupKey(leadingExpenseVendorName));
+    return String(partner?.logo_url || "").trim();
+  }, [expensePartnerByName, leadingExpenseVendorName]);
+
   const expenseRowIds = useMemo(
     () =>
       recentProjectExpenses
@@ -2174,6 +2525,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     if (expenseFormReceiptInputRef.current) {
       expenseFormReceiptInputRef.current.value = "";
     }
+    setExpenseReceiptDragActive(false);
     setExpenseFormError("");
     setShowExpenseModal(true);
   };
@@ -2274,6 +2626,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     setArchivingExpenseCategoryId("");
     setShowExpenseModal(false);
     setExpenseForm(createInitialExpenseForm());
+    setExpenseReceiptDragActive(false);
     setExpenseFormError("");
     setEditingExpenseId(null);
     setShowDeleteExpensesModal(false);
@@ -2314,6 +2667,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   const openExpenseModal = () => {
     setEditingExpenseId(null);
     setExpenseForm(createInitialExpenseForm());
+    setExpenseReceiptDragActive(false);
     if (expenseFormReceiptInputRef.current) {
       expenseFormReceiptInputRef.current.value = "";
     }
@@ -2325,6 +2679,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     if (savingExpense) return;
     setShowExpenseModal(false);
     setExpenseForm(createInitialExpenseForm());
+    setExpenseReceiptDragActive(false);
     if (expenseFormReceiptInputRef.current) {
       expenseFormReceiptInputRef.current.value = "";
     }
@@ -2528,8 +2883,102 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     }
   };
 
+  const ensureVendorPartnerRecord = useCallback(
+    async (vendorName, projectId) => {
+      const normalizedVendor = String(vendorName || "").trim();
+      if (!normalizedVendor || !tenantId) {
+        return { created: false, warning: "" };
+      }
+
+      const vendorKey = normalizePartnerLookupKey(normalizedVendor);
+      if (expensePartnerByName.has(vendorKey)) {
+        return { created: false, warning: "" };
+      }
+
+      try {
+        const tenantRecord = await getTenantById(tenantId);
+        if (!tenantRecord) {
+          return {
+            created: false,
+            warning: "Expense saved, but vendor was not added to Organization Partners.",
+          };
+        }
+
+        const existingPartners = getTenantOrganizationPartners(tenantRecord?.site_data);
+        const existingMatch = existingPartners.find(
+          (partner) => normalizePartnerLookupKey(partner?.name) === vendorKey
+        );
+        if (existingMatch) {
+          setOrganizationPartners(existingPartners);
+          return { created: false, warning: "" };
+        }
+
+        const linkedProjectIds =
+          Number.isInteger(projectId) && projectId > 0 ? [String(projectId)] : [];
+        const nextPartner = {
+          id: `partner-${Date.now()}`,
+          name: normalizedVendor,
+          kind: "Vendor",
+          status: "Active",
+          contact_person: "",
+          contact_email: "",
+          contact_phone: "",
+          last_contact: "",
+          notes: "",
+          logo_url: "",
+          linked_project_ids: linkedProjectIds,
+        };
+        const nextPartners = [...existingPartners, nextPartner];
+        const nextSiteData = buildTenantSiteDataWithPartners(tenantRecord?.site_data, nextPartners);
+
+        await updateTenant(tenantId, { site_data: nextSiteData });
+        setOrganizationPartners(nextPartners);
+        return { created: true, warning: "" };
+      } catch (error) {
+        console.error("Error creating vendor from expense form:", error);
+        return {
+          created: false,
+          warning: "Expense saved, but vendor was not added to Organization Partners.",
+        };
+      }
+    },
+    [tenantId, expensePartnerByName]
+  );
+
   const handleExpenseFormReceiptFileChange = (event) => {
     const file = event.target.files?.[0] || null;
+    setExpenseForm((prev) => ({
+      ...prev,
+      receiptFile: file,
+    }));
+    setExpenseReceiptDragActive(false);
+    if (expenseFormError) {
+      setExpenseFormError("");
+    }
+  };
+
+  const triggerExpenseFormReceiptPicker = () => {
+    if (savingExpense) return;
+    expenseFormReceiptInputRef.current?.click();
+  };
+
+  const handleExpenseReceiptDragOver = (event) => {
+    event.preventDefault();
+    if (savingExpense) return;
+    setExpenseReceiptDragActive(true);
+  };
+
+  const handleExpenseReceiptDragLeave = (event) => {
+    event.preventDefault();
+    setExpenseReceiptDragActive(false);
+  };
+
+  const handleExpenseReceiptDrop = (event) => {
+    event.preventDefault();
+    setExpenseReceiptDragActive(false);
+    if (savingExpense) return;
+    const file = event.dataTransfer?.files?.[0] || null;
+    if (!file) return;
     setExpenseForm((prev) => ({
       ...prev,
       receiptFile: file,
@@ -2637,6 +3086,8 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
       const description = [title, notes].filter(Boolean).join(" — ");
       let savedExpense = null;
       let receiptUploadErrorMessage = "";
+      let vendorPartnerWarning = "";
+      let vendorPartnerCreated = false;
 
       if (isEditingExpense) {
         const existingExpense =
@@ -2692,24 +3143,34 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
         }
       }
 
+      if (vendor) {
+        const vendorPartnerResult = await ensureVendorPartnerRecord(vendor, projectId);
+        vendorPartnerCreated = Boolean(vendorPartnerResult?.created);
+        vendorPartnerWarning = String(vendorPartnerResult?.warning || "");
+      }
+
       setShowExpenseModal(false);
       setEditingExpenseId(null);
       setExpenseForm(createInitialExpenseForm());
+      setExpenseReceiptDragActive(false);
       if (expenseFormReceiptInputRef.current) {
         expenseFormReceiptInputRef.current.value = "";
       }
       setSelectedExpenseIds([]);
       setDetailTab("expenses");
+      const successMessage = isEditingExpense ? "Expense updated successfully." : "Expense saved successfully.";
+      const warningMessages = [receiptUploadErrorMessage, vendorPartnerWarning].filter(Boolean);
+      const noticeMessage = warningMessages.length
+        ? `${successMessage} ${warningMessages.join(" ")}`
+        : vendorPartnerCreated
+          ? `${successMessage} Vendor added to Organization Partners.`
+          : successMessage;
       setProjectsNotice({
-        type: receiptUploadErrorMessage ? "warning" : "success",
-        message: receiptUploadErrorMessage
-          ? receiptUploadErrorMessage
-          : isEditingExpense
-            ? "Expense updated successfully."
-            : "Expense saved successfully.",
+        type: warningMessages.length ? "warning" : "success",
+        message: noticeMessage,
       });
-      if (receiptUploadErrorMessage) {
-        setProjectExpensesError(receiptUploadErrorMessage);
+      if (warningMessages.length) {
+        setProjectExpensesError(warningMessages.join(" "));
       }
 
       setProjectExpensesLoading(true);
@@ -4605,359 +5066,32 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
             <p>Loading project details...</p>
           </div>
         ) : (
-        <form className="data-modal-form" onSubmit={handleCreateProjectSubmit}>
-          <div className="data-modal-tabs" role="tablist">
-            <button
-              type="button"
-              className={`data-modal-tab${activeTab === "info" ? " active" : ""}`}
-              onClick={() => setActiveTab("info")}
-              role="tab"
-              aria-selected={activeTab === "info"}
-            >
-              Project info
-            </button>
-            <button
-              type="button"
-              className={`data-modal-tab${activeTab === "budget" ? " active" : ""}`}
-              onClick={() => setActiveTab("budget")}
-              role="tab"
-              aria-selected={activeTab === "budget"}
-            >
-              Budget & finance
-            </button>
-            <button
-              type="button"
-              className={`data-modal-tab${activeTab === "members" ? " active" : ""}`}
-              onClick={() => setActiveTab("members")}
-              role="tab"
-              aria-selected={activeTab === "members"}
-            >
-              Contacts & members
-            </button>
-            <button
-              type="button"
-              className={`data-modal-tab${activeTab === "media" ? " active" : ""}`}
-              onClick={() => setActiveTab("media")}
-              role="tab"
-              aria-selected={activeTab === "media"}
-            >
-              Media
-            </button>
-          </div>
-          {createProjectError ? (
-            <p className="data-modal-feedback data-modal-feedback--error">{createProjectError}</p>
-          ) : null}
-
-          {activeTab === "info" && (
-            <div className="data-modal-grid">
-              <label className="data-modal-field">
-                Project name
-                <input
-                  type="text"
-                  placeholder="e.g. Community Poultry Project"
-                  value={createProjectForm.name}
-                  onChange={(event) => updateCreateProjectField("name", event.target.value)}
-                  required
-                />
-              </label>
-              <label className="data-modal-field">
-                Category
-                <select
-                  value={createProjectForm.moduleKey}
-                  onChange={(event) => updateCreateProjectField("moduleKey", event.target.value)}
-                >
-                  <option value="generic">Agriculture</option>
-                  <option value="jpp">Poultry (JPP)</option>
-                  <option value="jgf">Groundnut (JGF)</option>
-                </select>
-              </label>
-              <label className="data-modal-field">
-                Start date
-                <input
-                  type="date"
-                  value={createProjectForm.startDate}
-                  onChange={(event) => updateCreateProjectField("startDate", event.target.value)}
-                />
-              </label>
-              <label className="data-modal-field">
-                Status
-                <select
-                  value={createProjectForm.status}
-                  onChange={(event) => updateCreateProjectField("status", event.target.value)}
-                >
-                  <option value="active">Active</option>
-                  <option value="planning">Planning</option>
-                  <option value="completed">Completed</option>
-                </select>
-              </label>
-              <label className="data-modal-field data-modal-field--full">
-                Summary
-                <textarea
-                  rows="4"
-                  placeholder="Describe the project goals and outcomes."
-                  value={createProjectForm.summary}
-                  onChange={(event) => updateCreateProjectField("summary", event.target.value)}
-                />
-              </label>
-            </div>
-          )}
-
-          {activeTab === "budget" && (
-            <div className="data-modal-grid">
-              <label className="data-modal-field">
-                Total budget (KSh)
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="120000"
-                  value={createProjectForm.totalBudget}
-                  onChange={(event) => updateCreateProjectField("totalBudget", event.target.value)}
-                />
-              </label>
-              <label className="data-modal-field">
-                Expected revenue (KSh)
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="240000"
-                  value={createProjectForm.expectedRevenue}
-                  onChange={(event) => updateCreateProjectField("expectedRevenue", event.target.value)}
-                />
-              </label>
-              <label className="data-modal-field">
-                Funding source
-                <select
-                  value={createProjectForm.fundingSource}
-                  onChange={(event) => updateCreateProjectField("fundingSource", event.target.value)}
-                >
-                  <option value="member_contributions">Member contributions</option>
-                  <option value="grant">Grant</option>
-                  <option value="loan">Loan</option>
-                  <option value="mixed">Mixed</option>
-                </select>
-              </label>
-              <label className="data-modal-field">
-                Payout schedule
-                <select
-                  value={createProjectForm.payoutSchedule}
-                  onChange={(event) => updateCreateProjectField("payoutSchedule", event.target.value)}
-                >
-                  <option value="monthly">Monthly</option>
-                  <option value="quarterly">Quarterly</option>
-                  <option value="on_completion">On completion</option>
-                </select>
-              </label>
-              <label className="data-modal-field data-modal-field--full">
-                Notes
-                <textarea
-                  rows="4"
-                  placeholder="Add financial notes or constraints."
-                  value={createProjectForm.budgetNotes}
-                  onChange={(event) => updateCreateProjectField("budgetNotes", event.target.value)}
-                />
-              </label>
-            </div>
-          )}
-
-          {activeTab === "members" && (
-            <div className="data-modal-grid">
-              <label className="data-modal-field">
-                Primary contact
-                <select
-                  value={createProjectForm.primaryContactId}
-                  onChange={(event) => updateCreateProjectField("primaryContactId", event.target.value)}
-                  disabled={membersLoading}
-                >
-                  <option value="">{membersLoading ? "Loading members..." : "Select member"}</option>
-                  {memberDirectory.map((member) => (
-                    <option key={member.id} value={String(member.id)}>
-                      {member.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="data-modal-field">
-                Contact email
-                <input
-                  type="email"
-                  placeholder="name@email.com"
-                  value={primaryContact?.email || ""}
-                  readOnly
-                />
-              </label>
-              <label className="data-modal-field">
-                Phone number
-                <input
-                  type="tel"
-                  placeholder="+254 700 000 000"
-                  value={primaryContact?.phone_number || ""}
-                  readOnly
-                />
-              </label>
-              <label className="data-modal-field">
-                Role
-                <select
-                  value={createProjectForm.primaryContactRole}
-                  onChange={(event) => updateCreateProjectField("primaryContactRole", event.target.value)}
-                >
-                  <option value="Project lead">Project lead</option>
-                  <option value="Finance">Finance</option>
-                  <option value="Operations">Operations</option>
-                </select>
-              </label>
-              <label className="data-modal-field data-modal-field--full">
-                Add members
-                <div className="data-modal-member-add">
-                  <select
-                    value={createProjectForm.memberToAddId}
-                    onChange={(event) => updateCreateProjectField("memberToAddId", event.target.value)}
-                    disabled={membersLoading || !selectedMemberOptions.length}
-                  >
-                    <option value="">
-                      {membersLoading
-                        ? "Loading members..."
-                        : selectedMemberOptions.length
-                          ? "Select member to add"
-                          : "No more members to add"}
-                    </option>
-                    {selectedMemberOptions.map((member) => (
-                      <option key={member.id} value={String(member.id)}>
-                        {member.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={handleAddMemberSelection}
-                    disabled={!createProjectForm.memberToAddId}
-                  >
-                    Add
-                  </button>
-                </div>
-              </label>
-              <div className="data-modal-field data-modal-field--full">
-                <div className="data-modal-member-list">
-                  {primaryContact ? (
-                    <span className="member-chip">
-                      {primaryContact.name} ({createProjectForm.primaryContactRole || "Project lead"})
-                    </span>
-                  ) : null}
-                  {selectedAdditionalMembers.map((member) => (
-                    <span className="member-chip" key={`selected-member-${member.id}`}>
-                      {member.name} (Member)
-                      <button
-                        type="button"
-                        className="member-chip-remove"
-                        onClick={() => handleRemoveSelectedMember(member.id)}
-                        aria-label={`Remove ${member.name}`}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                  {!primaryContact && selectedAdditionalMembers.length === 0 ? (
-                    <span className="member-chip member-chip--empty">
-                      No members selected
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === "media" && (
-            <div className="data-modal-grid">
-              <div className="data-modal-field data-modal-field--full">
-                <div className="data-modal-upload-grid">
-                  {selectedExistingMedia.length === 0 ? (
-                    <div className="upload-thumb upload-thumb--empty">No existing media</div>
-                  ) : (
-                    selectedExistingMedia.map((item, index) => (
-                      <div className="upload-thumb upload-thumb--existing" key={`existing-media-${item.id}`}>
-                        <div className="upload-thumb-preview">
-                          <img
-                            src={item.image_url}
-                            alt={item.caption || `Project media ${index + 1}`}
-                            loading="lazy"
-                          />
-                        </div>
-                        <strong>{index === 0 ? "Current cover" : `Current media ${index + 1}`}</strong>
-                        <span>{item.caption || "Project media"}</span>
-                        <button
-                          type="button"
-                          className="upload-thumb-remove"
-                          onClick={() => handleRemoveExistingMedia(item.id)}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-              <label className="data-modal-field data-modal-field--full">
-                Upload project images
-                <div className="data-modal-upload">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={handleMediaFileSelection}
-                  />
-                  <p>Images are stored in the `birds` bucket.</p>
-                  <p className="data-modal-upload-path">{mediaFolderPreview}</p>
-                </div>
-              </label>
-              <div className="data-modal-field data-modal-field--full">
-                <div className="data-modal-upload-grid">
-                  {selectedMediaFiles.length === 0 ? (
-                    <div className="upload-thumb upload-thumb--empty">No new files selected</div>
-                  ) : (
-                    selectedMediaFiles.map((file, index) => (
-                      <div className="upload-thumb upload-thumb--file" key={getFileFingerprint(file)}>
-                        <strong>{index === 0 ? "New image 1" : `New image ${index + 1}`}</strong>
-                        <span>{file.name}</span>
-                        <small>{formatFileSize(file.size)}</small>
-                        <button
-                          type="button"
-                          className="upload-thumb-remove"
-                          onClick={() => handleRemoveMediaFile(getFileFingerprint(file))}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-          <div className="data-modal-actions">
-            <button
-              type="button"
-              className="data-modal-btn"
-              onClick={closeCreateProjectModal}
-              disabled={creatingProject}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="data-modal-btn data-modal-btn--primary"
-              disabled={creatingProject}
-            >
-              {creatingProject
-                ? isEditingProject
-                  ? "Saving..."
-                  : "Creating..."
-                : isEditingProject
-                  ? "Save changes"
-                  : "Create project"}
-            </button>
-          </div>
-        </form>
+        <ProjectEditorForm
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          form={createProjectForm}
+          onFieldChange={updateCreateProjectField}
+          createProjectError={createProjectError}
+          onSubmit={handleCreateProjectSubmit}
+          onCancel={closeCreateProjectModal}
+          creatingProject={creatingProject}
+          isEditingProject={isEditingProject}
+          membersLoading={membersLoading}
+          memberDirectory={memberDirectory}
+          primaryContact={primaryContact}
+          selectedMemberOptions={selectedMemberOptions}
+          selectedAdditionalMembers={selectedAdditionalMembers}
+          onAddMemberSelection={handleAddMemberSelection}
+          onRemoveSelectedMember={handleRemoveSelectedMember}
+          selectedExistingMedia={selectedExistingMedia}
+          onRemoveExistingMedia={handleRemoveExistingMedia}
+          onMediaFileSelection={handleMediaFileSelection}
+          mediaFolderPreview={mediaFolderPreview}
+          selectedMediaFiles={selectedMediaFiles}
+          onRemoveMediaFile={handleRemoveMediaFile}
+          getFileFingerprint={getFileFingerprint}
+          formatFileSize={formatFileSize}
+        />
         )}
       </DataModal>
 
@@ -5006,25 +5140,145 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
       >
         {selectedProject && (
           <div className="project-detail-layout">
-            <div className="project-detail-left">
-              <div className="project-detail-image">
-                <img src={getProjectImage(selectedProject)} alt={selectedProject.name} />
-              </div>
-              <div className="project-detail-thumbs">
-                <img src={getProjectImage(selectedProject)} alt={`${selectedProject.name} preview`} />
-                <img src={getProjectImage(selectedProject)} alt={`${selectedProject.name} preview`} />
-                <img src={getProjectImage(selectedProject)} alt={`${selectedProject.name} preview`} />
-              </div>
-              <div className="project-detail-meta">
-                <span>
-                  <Icon name="calendar" size={14} />
-                  Started: {formatDate(selectedProject.start_date)}
-                </span>
-                <span>
-                  <Icon name="member" size={14} />
-                  {selectedProject.member_count || 0} members
-                </span>
-              </div>
+            <div className={`project-detail-left${detailTab === "expenses" ? " is-expenses" : ""}`}>
+              {detailTab === "expenses" ? (
+                <div className="project-expense-sidebar">
+                  <article className="project-expense-insight-card project-expense-insight-card--hero">
+                    <h5>Expense Overview</h5>
+                    <p>{selectedProject.name}</p>
+                    <div className="project-expense-insight-meta">
+                      <span>
+                        <Icon name="calendar" size={14} />
+                        Started: {formatDate(selectedProject.start_date)}
+                      </span>
+                      <span>
+                        <Icon name="member" size={14} />
+                        {selectedProject.member_count || 0} members
+                      </span>
+                      <span>
+                        <Icon name="receipt" size={14} />
+                        {projectExpenseInsights.expenseCount} expenses tracked
+                      </span>
+                    </div>
+                  </article>
+
+                  <article className="project-expense-insight-card">
+                    <h5>Total Expenses</h5>
+                    <strong className="project-expense-insight-total">
+                      {formatCurrency(projectExpenseInsights.totalAmount)}
+                    </strong>
+                    <div className="project-expense-donut-wrap">
+                      <div
+                        className="project-expense-donut-ring"
+                        style={{ background: projectExpenseInsights.donutGradient }}
+                      >
+                        <div className="project-expense-donut-hole">
+                          <span>Total</span>
+                          <strong>{formatCurrency(projectExpenseInsights.totalAmount)}</strong>
+                        </div>
+                      </div>
+                    </div>
+                    {projectExpenseInsights.legendCategories.length ? (
+                      <div className="project-expense-legend-list">
+                        {projectExpenseInsights.legendCategories.map((item) => (
+                          <div className="project-expense-legend-row" key={`legend-${item.label}`}>
+                            <span className="project-expense-legend-label">
+                              <i style={{ background: item.color }} aria-hidden="true" />
+                              {item.label}
+                            </span>
+                            <strong>{formatCurrency(item.amount)}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="project-expense-insight-empty">No expenses recorded yet.</p>
+                    )}
+                  </article>
+
+                  <article className="project-expense-insight-card">
+                    <h5>Expense Breakdown</h5>
+                    {projectExpenseInsights.legendCategories.length ? (
+                      <div className="project-expense-breakdown-bars">
+                        {projectExpenseInsights.legendCategories.map((item) => {
+                          const barHeight =
+                            projectExpenseInsights.maxCategoryAmount > 0
+                              ? Math.max(16, (item.amount / projectExpenseInsights.maxCategoryAmount) * 84)
+                              : 16;
+                          return (
+                            <div className="project-expense-breakdown-item" key={`breakdown-${item.label}`}>
+                              <span
+                                className="project-expense-breakdown-bar"
+                                style={{
+                                  height: `${barHeight}px`,
+                                  background: `linear-gradient(180deg, ${item.color}, ${item.color}cc)`,
+                                }}
+                              />
+                              <span className="project-expense-breakdown-label">{item.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="project-expense-insight-empty">No breakdown available.</p>
+                    )}
+
+                    {projectExpenseInsights.leadingVendor ? (
+                      <div className="project-expense-leading-vendor">
+                        <div className="project-expense-leading-vendor-main">
+                          {leadingExpenseVendorLogo ? (
+                            <img
+                              src={leadingExpenseVendorLogo}
+                              alt={`${leadingExpenseVendorName} logo`}
+                              className="project-expense-vendor-logo"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <span className="project-expense-vendor-fallback" aria-hidden="true">
+                              {getProjectExpenseVendorInitials(leadingExpenseVendorName)}
+                            </span>
+                          )}
+                          <div>
+                            <strong>{leadingExpenseVendorName}</strong>
+                            <span>
+                              {projectExpenseInsights.leadingVendor.count} expense
+                              {projectExpenseInsights.leadingVendor.count === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="project-expense-leading-vendor-amount">
+                          {formatCurrency(projectExpenseInsights.leadingVendor.amount)}
+                        </span>
+                      </div>
+                    ) : null}
+
+                    <p className="project-expense-insight-foot">
+                      {projectExpenseInsights.missingReceiptCount} expense
+                      {projectExpenseInsights.missingReceiptCount === 1 ? "" : "s"} missing proof
+                    </p>
+                  </article>
+                </div>
+              ) : (
+                <>
+                  <div className="project-detail-image">
+                    <img src={getProjectImage(selectedProject)} alt={selectedProject.name} />
+                  </div>
+                  <div className="project-detail-thumbs">
+                    <img src={getProjectImage(selectedProject)} alt={`${selectedProject.name} preview`} />
+                    <img src={getProjectImage(selectedProject)} alt={`${selectedProject.name} preview`} />
+                    <img src={getProjectImage(selectedProject)} alt={`${selectedProject.name} preview`} />
+                  </div>
+                  <div className="project-detail-meta">
+                    <span>
+                      <Icon name="calendar" size={14} />
+                      Started: {formatDate(selectedProject.start_date)}
+                    </span>
+                    <span>
+                      <Icon name="member" size={14} />
+                      {selectedProject.member_count || 0} members
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
             <div className="project-detail-center">
               <div className="project-detail-tabs" role="tablist">
@@ -5393,16 +5647,18 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                               {recentProjectExpenses.map((expense) => {
                                 const expenseId = String(expense?.id ?? "");
                                 const isChecked = selectedExpenseIds.includes(expenseId);
+                                const categoryLabel = String(expense?.category || "Other").trim() || "Other";
+                                const categoryTone = getProjectExpenseCategoryTone(categoryLabel);
+                                const categoryIcon = getProjectExpenseCategoryIcon(categoryLabel);
                                 const detailTitle =
                                   String(expense?.description || "").trim() ||
-                                  String(expense?.category || "").trim() ||
+                                  categoryLabel ||
                                   `Expense #${expenseId || "-"}`;
-                                const detailSubParts = [
-                                  expense?.batch_id ? `Batch: ${expense.batch_id}` : null,
-                                  expense?.category ? `Type: ${expense.category}` : null,
-                                ].filter(Boolean);
                                 return (
-                                  <tr key={expenseId || `${detailTitle}-${expense?.expense_date || ""}`}>
+                                  <tr
+                                    key={expenseId || `${detailTitle}-${expense?.expense_date || ""}`}
+                                    className="project-expense-row"
+                                  >
                                     <td className="projects-table-check">
                                       <input
                                         type="checkbox"
@@ -5412,15 +5668,35 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                       />
                                     </td>
                                     <td>
-                                      <div className="project-expense-detail">
-                                        <strong>{detailTitle}</strong>
-                                        {detailSubParts.length ? <p>{detailSubParts.join(" • ")}</p> : null}
+                                      <div className="project-expense-main">
+                                        <span
+                                          className={`project-expense-category-icon project-expense-tone-${categoryTone}`}
+                                          aria-hidden="true"
+                                        >
+                                          <Icon name={categoryIcon} size={18} />
+                                        </span>
+                                        <div className="project-expense-detail">
+                                          <strong>{detailTitle}</strong>
+                                        </div>
                                       </div>
                                     </td>
-                                    <td>{formatDate(expense?.expense_date)}</td>
-                                    <td>{expense?.category || "—"}</td>
-                                    <td>{expense?.vendor || "—"}</td>
-                                    <td className="projects-table-money">{formatCurrency(expense?.amount)}</td>
+                                    <td className="project-expense-date">{formatDate(expense?.expense_date)}</td>
+                                    <td>
+                                      <span
+                                        className={`project-expense-category-pill project-expense-tone-${categoryTone}`}
+                                      >
+                                        {categoryLabel}
+                                      </span>
+                                    </td>
+                                    <td className="project-expense-vendor-cell">
+                                      <ProjectExpenseVendorCell
+                                        expense={expense}
+                                        partnerByName={expensePartnerByName}
+                                      />
+                                    </td>
+                                    <td className="projects-table-money project-expense-amount">
+                                      {formatCurrency(expense?.amount)}
+                                    </td>
                                     <td>
                                       <div className="project-expense-receipt-cell">
                                         {expense?.receipt_download_url ? (
@@ -5441,11 +5717,6 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                             {expense?.receipt || expense?.payment_reference ? "Available" : "Missing"}
                                           </span>
                                         )}
-                                        {expense?.payment_reference ? (
-                                          <span className="project-expense-receipt-ref">
-                                            Ref: {expense.payment_reference}
-                                          </span>
-                                        ) : null}
                                       </div>
                                     </td>
                                   </tr>
@@ -6132,11 +6403,39 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
               Vendor
               <input
                 type="text"
-                placeholder="e.g. Agrovet Center"
+                list="project-expense-vendor-options"
+                placeholder="Select a partner or type a new vendor"
                 value={expenseForm.vendor}
                 onChange={(event) => handleExpenseFormFieldChange("vendor", event.target.value)}
                 disabled={savingExpense}
               />
+              <datalist id="project-expense-vendor-options">
+                {vendorPartnerOptions.map((partner) => (
+                  <option key={`${partner.id}-${partner.name}`} value={partner.name} />
+                ))}
+              </datalist>
+              <small className="project-expense-vendor-helper">
+                {organizationPartnersLoading
+                  ? "Loading organization partners..."
+                  : "Vendor list is based on Organization Partners. New names are added automatically."}
+              </small>
+              {selectedVendorPartner ? (
+                <div className="project-expense-vendor-preview">
+                  {selectedVendorPartner.logo_url ? (
+                    <img
+                      src={selectedVendorPartner.logo_url}
+                      alt={`${selectedVendorPartner.name} logo`}
+                      className="project-expense-vendor-logo"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <span className="project-expense-vendor-fallback" aria-hidden="true">
+                      {getProjectExpenseVendorInitials(selectedVendorPartner.name)}
+                    </span>
+                  )}
+                  <span className="project-expense-vendor-preview-text">Using partner record</span>
+                </div>
+              ) : null}
             </label>
             <label className="data-modal-field">
               Payment reference
@@ -6162,26 +6461,75 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
             </label>
             <label className="data-modal-field data-modal-field--full">
               Receipt or proof
+              <div
+                className={`project-expense-upload-dropzone${expenseReceiptDragActive ? " is-drag-active" : ""}${
+                  savingExpense ? " is-disabled" : ""
+                }`}
+                role="button"
+                tabIndex={savingExpense ? -1 : 0}
+                aria-disabled={savingExpense}
+                onClick={triggerExpenseFormReceiptPicker}
+                onKeyDown={(event) => {
+                  if (savingExpense) return;
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    triggerExpenseFormReceiptPicker();
+                  }
+                }}
+                onDragOver={handleExpenseReceiptDragOver}
+                onDragEnter={handleExpenseReceiptDragOver}
+                onDragLeave={handleExpenseReceiptDragLeave}
+                onDrop={handleExpenseReceiptDrop}
+              >
+                <span className="project-expense-upload-icon" aria-hidden="true">
+                  <Icon name="upload" size={18} />
+                </span>
+                <div className="project-expense-upload-copy">
+                  <strong>Drag and drop receipt here</strong>
+                  <p>or click to upload a PDF or image file</p>
+                </div>
+                <button
+                  type="button"
+                  className="data-modal-inline-btn"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    triggerExpenseFormReceiptPicker();
+                  }}
+                  disabled={savingExpense}
+                >
+                  Choose file
+                </button>
+              </div>
               <input
                 ref={expenseFormReceiptInputRef}
                 type="file"
+                className="project-documents-file-input"
                 accept={PROJECT_EXPENSE_RECEIPT_ACCEPT}
                 onChange={handleExpenseFormReceiptFileChange}
                 disabled={savingExpense}
               />
-              <div className="data-modal-field-inline">
-                <small>Upload .pdf or image proof. If unavailable, use payment reference only.</small>
-                {expenseForm.receiptFile ? (
+              <small className="project-expense-upload-helper">
+                Upload .pdf or image proof. If unavailable, use payment reference only.
+              </small>
+              {expenseForm.receiptFile ? (
+                <div className="project-expense-upload-file">
+                  <span className="project-expense-upload-file-icon" aria-hidden="true">
+                    <Icon name="receipt" size={16} />
+                  </span>
+                  <div className="project-expense-upload-file-copy">
+                    <strong>{expenseForm.receiptFile.name}</strong>
+                    <small>{formatFileSize(expenseForm.receiptFile.size)}</small>
+                  </div>
                   <button
                     type="button"
                     className="data-modal-inline-btn"
                     onClick={clearExpenseFormReceiptFile}
                     disabled={savingExpense}
                   >
-                    Remove file
+                    Remove
                   </button>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
               {expenseForm.existingReceiptUrl ? (
                 <a
                   className="project-expense-receipt-link project-expense-receipt-link--inline"

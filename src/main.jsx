@@ -21,6 +21,7 @@ import BlogPostPage from "./components/BlogPostPage.jsx";
 import ResourcesListPage from "./components/ResourcesListPage.jsx";
 import ResourcePage from "./components/ResourcePage.jsx";
 import Dashboard from "./components/dashboard/Dashboard.jsx";
+import StepsRenderPage from "./components/StepsRenderPage.jsx";
 
 // Import Supabase test functions for console testing
 import { testSupabaseConnection, fetchMembers, fetchPayoutSchedule } from "./lib/supabaseTest.js";
@@ -59,6 +60,7 @@ if (rootElement) {
           <Route path="/request-demo" element={<RequestDemoPage />} />
           <Route path="/demo" element={<DemoPage />} />
           <Route path="/demo/landing" element={<DemoLandingPage />} />
+          <Route path="/demo/steps-render" element={<StepsRenderPage />} />
           <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
           <Route path="/cookie-policy" element={<CookiePolicyPage />} />
           <Route path="/gtc" element={<GTCPage />} />

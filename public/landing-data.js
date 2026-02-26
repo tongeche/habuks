@@ -298,38 +298,114 @@ window.landingData = () => ({
     ]
   },
   stepsId: "how-it-works",
-stepsKicker: "HOW IT WORKS",
-stepsTitle: "Get your group running in three simple steps",
-stepsDescription: "Set up, invite your members, and start managing everything in one place.",
-steps: [
-  {
-    title: "Create your organization",
-    description: "Set up your group profile, choose what you want to manage, and customize roles.",
-    icon: "home",
-    image: {
-      src: "/assets/tenants-user.png",
-      alt: "Organization setup screen."
+  stepsKicker: "HOW IT WORKS",
+  stepsTitle: "See your project workspace in action",
+  stepsDescription: "From overview and expenses to documents, tasks, and notes, everything stays connected in one workflow.",
+  steps: [
+    {
+      title: "Invite organization members",
+      description: "Bring more eyes to the work by inviting reviewers and collaborators in minutes.",
+      tag: "Bring more eyes to the work",
+      layout: "media-right",
+      icon: "users",
+      highlights: [
+        "No extra setup for reviewers.",
+        "Great for product, design, and QA.",
+        "Catch issues before launch."
+      ],
+      image: {
+        src: "/assets/invite-members.png",
+        alt: "Invite organization members screen with connected team avatars."
+      }
+    },
+    {
+      title: "Track project performance from one overview",
+      description: "Monitor progress, budget usage, and expense quality from a single project dashboard.",
+      tag: "Overview tab",
+      icon: "chart",
+      highlights: [
+        "See progress, budget used, and documentation KPIs instantly.",
+        "Switch between 30D, 90D, and 12M ranges for trend analysis.",
+        "Spot top expense categories without leaving the project page."
+      ],
+      image: {
+        src: "/assets/data-metric.png",
+        alt: "Project overview dashboard with KPI cards and trend insights."
+      }
+    },
+    {
+      title: "Capture expenses with receipts and categories",
+      description: "Record spend details, attach proof, and keep expense records ready for reviews.",
+      tag: "Expenses tab",
+      icon: "wallet",
+      highlights: [
+        "Log amount, vendor, date, and payment references consistently.",
+        "Upload receipts so every expense has supporting proof.",
+        "Organize categories for cleaner reconciliation and reporting."
+      ],
+      image: {
+        src: "/assets/metrics.png",
+        alt: "Expense and financial insights for an active project."
+      }
+    },
+    {
+      title: "Keep all project documents in one place",
+      description: "Store proposals, work plans, and reports in a central project document workspace.",
+      tag: "Documents tab",
+      icon: "file",
+      highlights: [
+        "Upload PDF and DOCX files directly to the project.",
+        "Generate templates like concept notes and activity reports.",
+        "Rename, archive, and retrieve files with less friction."
+      ],
+      image: {
+        src: "/assets/update-audit.png",
+        alt: "Project documentation and reporting workflow view."
+      }
+    },
+    {
+      title: "Coordinate tasks with clear ownership",
+      description: "Assign tasks, set priorities, and track due dates so execution stays on course.",
+      tag: "Tasks tab",
+      icon: "check",
+      highlights: [
+        "Filter by status and assignee to focus team effort.",
+        "Track overdue and high-priority items early.",
+        "Move work from open to done with a shared view of progress."
+      ],
+      image: {
+        src: "/assets/automated-tracking.png",
+        alt: "Task tracking board and workflow automation view."
+      }
+    },
+    {
+      title: "Capture decisions and updates as project notes",
+      description: "Document follow-ups and important context with visibility controls for each note.",
+      tag: "Notes tab",
+      icon: "edit",
+      highlights: [
+        "Write structured notes linked to active project work.",
+        "Choose project-team or admin-only visibility when needed.",
+        "Search notes quickly when preparing updates and reports."
+      ],
+      image: {
+        src: "/assets/highlight-saas.png",
+        alt: "Project notes and collaboration context panel."
+      }
+    },
+    {
+      title: "Create and launch a project with guided steps",
+      description: "Use the built-in form flow to capture project details before execution begins.",
+      tag: "Live demo",
+      demo: "new-project",
+      icon: "folder",
+      highlights: [
+        "Define project identity, dates, and operational summary.",
+        "Prepare structure for budgeting, members, and media.",
+        "Start clean with a repeatable creation workflow."
+      ]
     }
-  },
-  {
-    title: "Organize your  team",
-    description: "Assign clear responsibilities and control who can  manage and approve activities.",
-    icon: "users",
-    image: {
-      src: "/assets/data-metric.png",
-      alt: "Team roles and permissions screen."
-    }
-  },
-  {
-    title: "Manage projects and finances",
-    description: "Track activities, contributions, expenses, and reports in one dashboard.",
-    icon: "folder",
-    image: {
-      src: "/assets/update-audit.png",
-      alt: "Operations dashboard."
-    }
-  }
-],
+  ],
   security: {
     id: "security",
     kicker: "",

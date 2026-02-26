@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import SiteHeader from "./SiteHeader.jsx";
 import SiteFooter from "./SiteFooter.jsx";
 import Hero from "./Hero.jsx";
-import { Icon } from "./icons.jsx";
 import { BenefitsSection } from "./BenefitsSection.jsx";
 import ProfilesSection from "./ProfilesSection.jsx";
 import AdvantageSection from "./AdvantageSection.jsx";
@@ -11,6 +10,7 @@ import HostedSiteSection from "./HostedSiteSection.jsx";
 import FaqSection from "./FaqSection.jsx";
 import PricingSection from "./PricingSection.jsx";
 import CtaBanner from "./CtaBanner.jsx";
+import StepsCarousel from "./StepsCarousel.jsx";
 
 const getLandingData = () => {
   if (typeof window !== "undefined" && window.landingData) {
@@ -100,33 +100,7 @@ function LandingPage() {
                   <p className="landing-description">{data.stepsDescription}</p>
                 ) : null}
               </div>
-                <div className="landing-steps-grid">
-                  <div className="steps-connector" aria-hidden="true">
-                  </div>
-                {steps.map((step, index) => (
-                  <article className={`step-card step-${index + 1}`} key={step.title}>
-                    <div className="step-badge">{String(index + 1).padStart(2, "0")}</div>
-                    <div className="step-card-body">
-                      <div className="step-card-head">
-                        {step.icon ? (
-                          <span className="step-card-icon" aria-hidden="true">
-                            <Icon name={step.icon} size={18} />
-                          </span>
-                        ) : null}
-                        <h3>{step.title}</h3>
-                      </div>
-                      <p>{step.description}</p>
-                    </div>
-                    <div className="step-card-media">
-                      {step.image?.src ? (
-                        <img src={step.image.src} alt={step.image.alt ?? ""} loading="lazy" />
-                      ) : (
-                        <div className="step-media-placeholder" aria-hidden="true"></div>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
+              <StepsCarousel steps={steps} />
             </div>
           </section>
         ) : null}
