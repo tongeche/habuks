@@ -1277,7 +1277,11 @@
   }
 
   .activities-hub-table {
-    min-width: 760px;
+    min-width: 660px;
+  }
+
+  .activities-hub-table--responsive .activities-hub-col-team {
+    display: none;
   }
 
   .activities-hub-calendar-day {
@@ -1289,7 +1293,27 @@
   }
 }
 
+@media (max-width: 768px) {
+  .activities-hub-add-btn {
+    display: none;
+  }
+}
+
 @media (max-width: 640px) {
+  .activities-hub-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .activities-hub-actions {
+    width: 100%;
+  }
+
+  .activities-hub-add-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
   .activities-hub-kpis {
     grid-template-columns: 1fr;
   }
@@ -1324,8 +1348,43 @@
     padding: 0.48rem;
   }
 
-  .activities-hub-table {
-    min-width: 700px;
+  .activities-hub-table--responsive {
+    min-width: 100%;
+  }
+
+  .activities-hub-table--responsive .activities-hub-col-select,
+  .activities-hub-table--responsive .activities-hub-col-date,
+  .activities-hub-table--responsive .activities-hub-col-category,
+  .activities-hub-table--responsive .activities-hub-col-team {
+    display: none;
+  }
+
+  .activities-hub-table--responsive th,
+  .activities-hub-table--responsive td {
+    padding: 0.55rem 0.5rem;
+  }
+
+  .activities-hub-table--responsive .activities-hub-table-detail {
+    gap: 0.5rem;
+  }
+
+  .activities-hub-table--responsive .activities-hub-table-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .activities-hub-table--responsive .activities-hub-table-detail-text strong {
+    font-size: 0.8rem;
+  }
+
+  .activities-hub-table--responsive .activities-hub-table-detail-text small {
+    font-size: 0.7rem;
+    max-width: 150px;
+  }
+
+  .activities-hub-table--responsive .activities-hub-col-status {
+    white-space: nowrap;
+    text-align: right;
   }
 
   .activities-hub-detail-meta-grid {
@@ -1349,5 +1408,15 @@
   .activities-poster-upload-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .activities-data-modal .data-modal-tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 0.2rem;
+  }
+
+  .activities-data-modal .data-modal-tab {
+    flex-shrink: 0;
   }
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../icons.jsx";
+import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import {
   getProjectExpensesForProjects,
   getProjectSalesForProjects,
@@ -37,7 +38,7 @@ const resolveModuleKey = (project) => {
   return "";
 };
 
-export default function ReportsPage({ user, setActivePage, tenantId }) {
+export default function ReportsPage({ user, access, setActivePage, tenantId }) {
   const [projects, setProjects] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [sales, setSales] = useState([]);
@@ -350,7 +351,7 @@ export default function ReportsPage({ user, setActivePage, tenantId }) {
   ).length;
 
   return (
-    <div className="reports-page">
+    <div className="reports-page dashboard-mobile-shell">
       <div className="page-header">
         <div className="page-header-text">
           <h1>Reports</h1>
@@ -560,24 +561,7 @@ export default function ReportsPage({ user, setActivePage, tenantId }) {
         </>
       )}
 
-      <div className="projects-mobile-nav">
-        <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("overview")}>
-          <Icon name="home" size={20} />
-          <span>Home</span>
-        </button>
-        <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("projects")}>
-          <Icon name="briefcase" size={20} />
-          <span>Projects</span>
-        </button>
-        <button type="button" className="projects-mobile-nav-btn active">
-          <Icon name="trending-up" size={20} />
-          <span>Reports</span>
-        </button>
-        <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("profile")}>
-          <Icon name="user" size={20} />
-          <span>Settings</span>
-        </button>
-      </div>
+      <DashboardMobileNav activePage="reports" access={access} setActivePage={setActivePage} />
     </div>
   );
 }

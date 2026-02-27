@@ -94,20 +94,3 @@ export default function ObjectivesBlock({ data }) {
     </section>
   );
 }
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="objectives-media">
-          {image.src ? (
-            <img src={image.src} alt={image.alt ?? ""} loading="lazy" />
-          ) : (
-            <div className="objectives-placeholder" aria-hidden="true"></div>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}

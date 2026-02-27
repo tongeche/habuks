@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
+import DashboardMobileNav from "./DashboardMobileNav.jsx";
 
 const recordsSeed = [
   {
@@ -136,7 +137,12 @@ const formatDate = (dateStr) =>
 
 const formatAmount = (value) => `KES ${Math.abs(value).toLocaleString("en-KE")}`;
 
-export default function FinanceRecordsPage({ initialType = "all" }) {
+export default function FinanceRecordsPage({
+  initialType = "all",
+  activePage = "",
+  access,
+  setActivePage,
+}) {
   const [records, setRecords] = useState(recordsSeed);
   const [typeFilter, setTypeFilter] = useState(initialType);
   const [period, setPeriod] = useState("30d");
@@ -233,7 +239,11 @@ export default function FinanceRecordsPage({ initialType = "all" }) {
 
   return (
     <>
-      <div className="finance-records-page">
+      <div
+        className={`finance-records-page dashboard-mobile-shell${
+          activePage === "expenses" ? " finance-records-page--expenses" : ""
+        }`}
+      >
         <div className="finance-records-stats">
           <article className="finance-stat-card">
             <p>Total inflow</p>
@@ -294,7 +304,7 @@ export default function FinanceRecordsPage({ initialType = "all" }) {
             </button>
             <button
               type="button"
-              className="finance-toolbar-btn finance-toolbar-btn--primary"
+              className="finance-toolbar-btn finance-toolbar-btn--primary finance-toolbar-btn--add"
               onClick={handleOpenAddRecord}
             >
               + Add record
@@ -506,6 +516,19 @@ export default function FinanceRecordsPage({ initialType = "all" }) {
           </div>
         </form>
       </DataModal>
+      {activePage === "expenses" ? (
+        <button
+          type="button"
+          className="dashboard-page-fab"
+          onClick={handleOpenAddRecord}
+          aria-label="Add expense"
+        >
+          <Icon name="plus" size={20} />
+        </button>
+      ) : null}
+      {activePage === "expenses" ? (
+        <DashboardMobileNav activePage={activePage} access={access} setActivePage={setActivePage} />
+      ) : null}
     </>
   );
 }

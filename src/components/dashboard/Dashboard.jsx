@@ -184,6 +184,7 @@ export default function Dashboard() {
           <ProjectsPage
             user={user}
             tenantRole={tenantRole}
+            access={access}
             setActivePage={setActivePage}
             tenantId={tenantInfo?.id}
             onManageProject={(project) => {
@@ -219,15 +220,38 @@ export default function Dashboard() {
           />
         );
       case "expenses":
-        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="expense" />;
+        return (
+          <FinanceRecordsPage
+            user={user}
+            tenantId={tenantInfo?.id}
+            initialType="expense"
+            activePage="expenses"
+            access={access}
+            setActivePage={setActivePage}
+          />
+        );
       case "reports":
-        return <ReportsPage user={user} setActivePage={setActivePage} tenantId={tenantInfo?.id} />;
+        return (
+          <ReportsPage
+            user={user}
+            access={access}
+            setActivePage={setActivePage}
+            tenantId={tenantInfo?.id}
+          />
+        );
       case "news":
         return <NewsPage user={user} tenantId={tenantInfo?.id} />;
       case "documents":
         return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="all" />;
       case "meetings":
-        return <MeetingsPage user={user} tenantId={tenantInfo?.id} />;
+        return (
+          <MeetingsPage
+            user={user}
+            tenantId={tenantInfo?.id}
+            access={access}
+            setActivePage={setActivePage}
+          />
+        );
       case "members":
         return (
           <MembersPage

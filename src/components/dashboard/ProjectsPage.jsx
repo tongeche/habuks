@@ -43,11 +43,21 @@ import {
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
+import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import ProjectEditorForm from "./ProjectEditorForm.jsx";
 
 const projectPageMap = {
   jpp: "projects-jpp",
   jgf: "projects-jgf",
+};
+
+const PROJECT_DETAIL_TAB_META = {
+  overview: { label: "Overview", icon: "home" },
+  expenses: { label: "Expenses", icon: "wallet" },
+  documents: { label: "Documents", icon: "folder" },
+  tasks: { label: "Tasks", icon: "check" },
+  notes: { label: "Notes", icon: "newspaper" },
+  invites: { label: "Invites", icon: "mail" },
 };
 
 const PROJECT_VIEW_OPTIONS = [
@@ -788,7 +798,7 @@ const clampPercent = (value) => {
   return Math.max(0, Math.min(100, parsed));
 };
 
-export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onManageProject }) {
+export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId, onManageProject }) {
   const projectDocumentInputRef = useRef(null);
   const expenseReceiptInputRef = useRef(null);
   const expenseFormReceiptInputRef = useRef(null);
@@ -5710,11 +5720,13 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
     <div className="projects-page-modern">
       <div className="projects-toolbar">
         <div className="projects-toolbar-left">
-          <button className="projects-filter-btn" type="button">
-            Active <Icon name="chevron" size={16} />
+          <button className="projects-filter-btn projects-filter-btn--state" type="button">
+            <span className="projects-filter-btn-label">Active</span>
+            <Icon name="chevron" size={16} />
           </button>
-          <button className="projects-filter-btn" type="button">
-            Completed <Icon name="chevron" size={16} />
+          <button className="projects-filter-btn projects-filter-btn--state" type="button">
+            <span className="projects-filter-btn-label">Completed</span>
+            <Icon name="chevron" size={16} />
           </button>
         </div>
         <div className="projects-toolbar-right">
@@ -5729,15 +5741,17 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                 aria-selected={projectView === option.key}
               >
                 <Icon name={option.icon} size={14} />
-                {option.label}
+                <span className="projects-view-btn-label">{option.label}</span>
               </button>
             ))}
           </div>
-          <button className="projects-filter-btn" type="button">
-            All Categories <Icon name="chevron" size={16} />
+          <button className="projects-filter-btn projects-filter-btn--category" type="button">
+            <span className="projects-filter-btn-label">All Categories</span>
+            <Icon name="chevron" size={16} />
           </button>
-          <button className="projects-filter-btn" type="button">
-            Newest <Icon name="chevron" size={16} />
+          <button className="projects-filter-btn projects-filter-btn--sort" type="button">
+            <span className="projects-filter-btn-label">Newest</span>
+            <Icon name="chevron" size={16} />
           </button>
           <button
             className="projects-new-btn"
@@ -5749,7 +5763,7 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
             }
           >
             <Icon name="plus" size={16} />
-            New Project
+            <span className="projects-new-btn-label">New Project</span>
           </button>
         </div>
       </div>
@@ -5865,10 +5879,10 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                         </div>
                         <span className="project-progress-value">{progressValue}%</span>
                       </div>
-                      <div className="project-card-actions">
+                      <div className={`project-card-actions${canJoin ? "" : " is-primary-only"}`}>
                         <button
                           type="button"
-                          className="project-btn-primary"
+                          className="project-btn-primary project-btn-primary--open"
                           onClick={(event) => {
                             event.stopPropagation();
                             openProjectDetails(project);
@@ -5908,7 +5922,7 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
 
           {projectView === "table" ? (
             <div className="projects-table-wrap">
-              <table className="projects-table-view">
+              <table className="projects-table-view projects-main-table">
                 <thead>
                   <tr>
                     <th className="projects-table-check">
@@ -5919,13 +5933,13 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                         onChange={handleToggleSelectAllVisible}
                       />
                     </th>
-                    <th>Project</th>
-                    <th>Category</th>
-                    <th>Start date</th>
-                    <th>Status</th>
-                    <th>Members</th>
-                    <th>Budget</th>
-                    <th>Revenue</th>
+                    <th className="projects-main-col-project">Project</th>
+                    <th className="projects-main-col-category">Category</th>
+                    <th className="projects-main-col-start">Start date</th>
+                    <th className="projects-main-col-status">Status</th>
+                    <th className="projects-main-col-members">Members</th>
+                    <th className="projects-main-col-budget">Budget</th>
+                    <th className="projects-main-col-revenue">Revenue</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -5952,7 +5966,7 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                             aria-label={`Select ${project.name}`}
                           />
                         </td>
-                        <td>
+                        <td className="projects-main-col-project">
                           <div className="projects-table-main">
                             <img src={getProjectImage(project)} alt={`${project.name} cover`} loading="lazy" />
                             <div className="projects-table-main-copy">
@@ -5969,12 +5983,12 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                             </div>
                           </div>
                         </td>
-                        <td>{getProjectCategory(project)}</td>
-                        <td>{formatDate(project.start_date)}</td>
-                        <td>{isVisible ? project.status || "Active" : "Hidden"}</td>
-                        <td>{project.member_count || 0}</td>
-                        <td className="projects-table-money">{formatCurrency(budgetAmount)}</td>
-                        <td className="projects-table-money">{formatCurrency(revenueAmount)}</td>
+                        <td className="projects-main-col-category">{getProjectCategory(project)}</td>
+                        <td className="projects-main-col-start">{formatDate(project.start_date)}</td>
+                        <td className="projects-main-col-status">{isVisible ? project.status || "Active" : "Hidden"}</td>
+                        <td className="projects-main-col-members">{project.member_count || 0}</td>
+                        <td className="projects-table-money projects-main-col-budget">{formatCurrency(budgetAmount)}</td>
+                        <td className="projects-table-money projects-main-col-revenue">{formatCurrency(revenueAmount)}</td>
                       </tr>
                     );
                   })}
@@ -6044,26 +6058,18 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
         </>
       )}
 
-      <div className="projects-mobile-nav">
-        <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("overview")}>
-          <Icon name="home" size={20} />
-          <span>Home</span>
+      {canCreateProject ? (
+        <button
+          type="button"
+          className="dashboard-page-fab"
+          onClick={openCreateProjectModal}
+          aria-label="Add project"
+        >
+          <Icon name="plus" size={20} />
         </button>
-        <button type="button" className="projects-mobile-nav-btn active">
-          <Icon name="briefcase" size={20} />
-          <span>Projects</span>
-        </button>
-        {isAdmin && (
-          <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("reports")}>
-            <Icon name="trending-up" size={20} />
-            <span>Reports</span>
-          </button>
-        )}
-        <button type="button" className="projects-mobile-nav-btn" onClick={() => setActivePage?.("profile")}>
-          <Icon name="user" size={20} />
-          <span>Settings</span>
-        </button>
-      </div>
+      ) : null}
+
+      <DashboardMobileNav activePage="projects" access={access} setActivePage={setActivePage} />
 
       <DataModal
         open={showCreateModal}
@@ -6308,17 +6314,7 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                     className={`project-detail-tab${detailTab === tab ? " active" : ""}`}
                     onClick={() => setDetailTab(tab)}
                   >
-                    {tab === "overview"
-                      ? "Overview"
-                      : tab === "expenses"
-                        ? "Expenses"
-                      : tab === "documents"
-                        ? "Documents"
-                        : tab === "tasks"
-                          ? "Tasks"
-                          : tab === "notes"
-                            ? "Notes"
-                            : "Invites"}
+                    {PROJECT_DETAIL_TAB_META[tab]?.label || tab}
                   </button>
                 ))}
               </div>
@@ -6680,12 +6676,12 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                     />
                                   </th>
                                 ) : null}
-                                <th>Expense details</th>
-                                <th>Date</th>
-                                <th>Category</th>
-                                <th>Vendor</th>
-                                <th>Amount</th>
-                                <th>Receipt</th>
+                                <th className="project-expense-col-detail">Expense details</th>
+                                <th className="project-expense-col-date">Date</th>
+                                <th className="project-expense-col-category">Category</th>
+                                <th className="project-expense-col-vendor">Vendor</th>
+                                <th className="project-expense-col-amount">Amount</th>
+                                <th className="project-expense-col-receipt">Receipt</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -6715,7 +6711,7 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                         />
                                       </td>
                                     ) : null}
-                                    <td>
+                                    <td className="project-expense-col-detail">
                                       <div className="project-expense-main">
                                         <div className="project-expense-detail">
                                           <strong className="project-row-title" title={detailTitle}>
@@ -6724,8 +6720,8 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                         </div>
                                       </div>
                                     </td>
-                                    <td className="project-expense-date">{formatDate(expense?.expense_date)}</td>
-                                    <td>
+                                    <td className="project-expense-date project-expense-col-date">{formatDate(expense?.expense_date)}</td>
+                                    <td className="project-expense-col-category">
                                       <span
                                         className={`project-expense-category-pill project-expense-tone-${categoryTone}`}
                                       >
@@ -6735,16 +6731,16 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                         <span className="project-expense-category-pill-label">{categoryLabel}</span>
                                       </span>
                                     </td>
-                                    <td className="project-expense-vendor-cell">
+                                    <td className="project-expense-vendor-cell project-expense-col-vendor">
                                       <ProjectExpenseVendorCell
                                         expense={expense}
                                         partnerByName={expensePartnerByName}
                                       />
                                     </td>
-                                    <td className="projects-table-money project-expense-amount">
+                                    <td className="projects-table-money project-expense-amount project-expense-col-amount">
                                       {formatCurrency(expense?.amount)}
                                     </td>
-                                    <td>
+                                    <td className="project-expense-col-receipt">
                                       <div className="project-expense-receipt-cell">
                                         {expense?.receipt_download_url ? (
                                           <a
@@ -6957,12 +6953,12 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                     />
                                   </th>
                                 ) : null}
-                                <th>Document</th>
-                                <th>Type</th>
-                                <th>Size</th>
-                                <th>Uploaded</th>
-                                <th>By</th>
-                                <th>Action</th>
+                                <th className="project-document-col-document">Document</th>
+                                <th className="project-document-col-type">Type</th>
+                                <th className="project-document-col-size">Size</th>
+                                <th className="project-document-col-uploaded">Uploaded</th>
+                                <th className="project-document-col-by">By</th>
+                                <th className="project-document-col-action">Action</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -6983,17 +6979,17 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                         />
                                       </td>
                                     ) : null}
-                                    <td>
+                                    <td className="project-document-col-document">
                                       <div className="project-expense-detail project-document-detail">
                                         <strong className="project-row-title">{fileName}</strong>
                                         <p>{String(document?.file_path || "").split("/").pop() || "Stored document"}</p>
                                       </div>
                                     </td>
-                                    <td>{getProjectDocumentTypeLabel(document)}</td>
-                                    <td>{formatFileSize(document?.file_size_bytes)}</td>
-                                    <td>{formatDate(document?.uploaded_at)}</td>
-                                    <td>{document?.uploader_name || "—"}</td>
-                                    <td>
+                                    <td className="project-document-col-type">{getProjectDocumentTypeLabel(document)}</td>
+                                    <td className="project-document-col-size">{formatFileSize(document?.file_size_bytes)}</td>
+                                    <td className="project-document-col-uploaded">{formatDate(document?.uploaded_at)}</td>
+                                    <td className="project-document-col-by">{document?.uploader_name || "—"}</td>
+                                    <td className="project-document-col-action">
                                       {downloadUrl ? (
                                         <a
                                           href={downloadUrl}
@@ -7203,14 +7199,14 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                             />
                                           </th>
                                         ) : null}
-                                        <th>Task Name</th>
-                                        <th>Description</th>
-                                        <th>Estimation</th>
-                                        <th>People</th>
-                                        <th>Priority</th>
-                                        <th>Status</th>
+                                        <th className="project-task-col-name">Task Name</th>
+                                        <th className="project-task-col-description">Description</th>
+                                        <th className="project-task-col-due">Estimation</th>
+                                        <th className="project-task-col-people">People</th>
+                                        <th className="project-task-col-priority">Priority</th>
+                                        <th className="project-task-col-status">Status</th>
                                         {canManageProjectContent ? (
-                                          <th className="project-group-actions-col" aria-label="Actions" />
+                                          <th className="project-group-actions-col project-task-col-actions" aria-label="Actions" />
                                         ) : null}
                                       </tr>
                                     </thead>
@@ -7246,18 +7242,18 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                                 />
                                               </td>
                                             ) : null}
-                                            <td>
+                                            <td className="project-task-col-name">
                                               <div className="project-expense-detail project-task-detail">
                                                 <strong className="project-row-title">{task?.title || "Untitled task"}</strong>
                                               </div>
                                             </td>
-                                            <td className="project-group-description-cell">
+                                            <td className="project-group-description-cell project-task-col-description">
                                               <p className="project-group-description" title={taskDetailsRaw || undefined}>
                                                 {taskDetailsDisplay}
                                               </p>
                                             </td>
-                                            <td className="project-group-estimation">{formatDate(task?.due_date)}</td>
-                                            <td>
+                                            <td className="project-group-estimation project-task-col-due">{formatDate(task?.due_date)}</td>
+                                            <td className="project-task-col-people">
                                               <div className="project-task-person">
                                                 <span className="project-task-person-avatar" aria-hidden="true">
                                                   {assigneeInitials}
@@ -7265,14 +7261,14 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                                 <span className="project-task-person-name">{assignee}</span>
                                               </div>
                                             </td>
-                                            <td>
+                                            <td className="project-task-col-priority">
                                               <span
                                                 className={`project-task-badge is-priority-${safePriority.replace(/[^a-z_]+/g, "")}`}
                                               >
                                                 {priorityLabel}
                                               </span>
                                             </td>
-                                            <td>
+                                            <td className="project-task-col-status">
                                               <span
                                                 className={`project-task-badge is-status-${safeStatus.replace(/[^a-z_]+/g, "")}`}
                                               >
@@ -7280,7 +7276,7 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                               </span>
                                             </td>
                                             {canManageProjectContent ? (
-                                              <td className="project-group-actions-col">
+                                              <td className="project-group-actions-col project-task-col-actions">
                                                 <button
                                                   type="button"
                                                   className="project-group-row-action"
@@ -7307,261 +7303,281 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                   </div>
                 )}
                 {detailTab === "notes" && (
-                  <div className="project-detail-section project-detail-notes">
-                    <div className="project-detail-section-head">
-                      <h4>Notes</h4>
-                      <div className="project-detail-section-head-actions">
-                        {canManageProjectContent && selectedNoteIds.length > 0 ? (
-                          <>
+                  <>
+                    <div className="project-detail-section project-detail-notes">
+                      <div className="project-detail-section-head">
+                        <h4>Notes</h4>
+                        <div className="project-detail-section-head-actions">
+                          {canManageProjectContent && selectedNoteIds.length > 0 ? (
+                            <>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={openEditSelectedNoteModal}
+                                disabled={selectedNotes.length !== 1 || savingNote || deletingNotes}
+                              >
+                                Edit selected
+                              </button>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost danger"
+                                onClick={requestDeleteSelectedNotes}
+                                disabled={deletingNotes || savingNote}
+                              >
+                                Delete selected
+                              </button>
+                            </>
+                          ) : null}
+                          {canManageProjectContent ? (
+                            <button
+                              type="button"
+                              className="project-detail-action project-detail-action--add-note"
+                              onClick={openNoteModal}
+                              disabled={savingNote || deletingNotes}
+                            >
+                              Add note
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                      {projectNotesError ? (
+                        <p className="project-detail-expense-error">{projectNotesError}</p>
+                      ) : null}
+                      {projectNotes.length > 0 ? (
+                        <div className="project-detail-filters">
+                          <label className="project-detail-filter project-detail-filter--search">
+                            <span>Search</span>
+                            <input
+                              type="search"
+                              placeholder="Search note title or content"
+                              value={noteSearchQuery}
+                              onChange={(event) => setNoteSearchQuery(event.target.value)}
+                            />
+                          </label>
+                          <label className="project-detail-filter">
+                            <span>Visibility</span>
+                            <select
+                              value={noteVisibilityFilter}
+                              onChange={(event) => setNoteVisibilityFilter(event.target.value)}
+                            >
+                              <option value="all">All visibility</option>
+                              {Object.entries(NOTE_VISIBILITY_LABELS).map(([value, label]) => (
+                                <option key={`note-filter-visibility-${value}`} value={value}>
+                                  {label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="project-detail-filter project-detail-filter--actions">
                             <button
                               type="button"
                               className="project-detail-action ghost"
-                              onClick={openEditSelectedNoteModal}
-                              disabled={selectedNotes.length !== 1 || savingNote || deletingNotes}
+                              onClick={() => {
+                                setNoteSearchQuery("");
+                                setNoteVisibilityFilter("all");
+                              }}
+                              disabled={!hasActiveNoteFilters}
                             >
-                              Edit selected
+                              Clear filters
                             </button>
-                            <button
-                              type="button"
-                              className="project-detail-action ghost danger"
-                              onClick={requestDeleteSelectedNotes}
-                              disabled={deletingNotes || savingNote}
-                            >
-                              Delete selected
-                            </button>
-                          </>
-                        ) : null}
-                        {canManageProjectContent ? (
-                          <button
-                            type="button"
-                            className="project-detail-action"
-                            onClick={openNoteModal}
-                            disabled={savingNote || deletingNotes}
-                          >
-                            Add note
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                    {projectNotesError ? (
-                      <p className="project-detail-expense-error">{projectNotesError}</p>
-                    ) : null}
-                    {projectNotes.length > 0 ? (
-                      <div className="project-detail-filters">
-                        <label className="project-detail-filter project-detail-filter--search">
-                          <span>Search</span>
-                          <input
-                            type="search"
-                            placeholder="Search note title or content"
-                            value={noteSearchQuery}
-                            onChange={(event) => setNoteSearchQuery(event.target.value)}
-                          />
-                        </label>
-                        <label className="project-detail-filter">
-                          <span>Visibility</span>
-                          <select
-                            value={noteVisibilityFilter}
-                            onChange={(event) => setNoteVisibilityFilter(event.target.value)}
-                          >
-                            <option value="all">All visibility</option>
-                            {Object.entries(NOTE_VISIBILITY_LABELS).map(([value, label]) => (
-                              <option key={`note-filter-visibility-${value}`} value={value}>
-                                {label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <div className="project-detail-filter project-detail-filter--actions">
-                          <button
-                            type="button"
-                            className="project-detail-action ghost"
-                            onClick={() => {
-                              setNoteSearchQuery("");
-                              setNoteVisibilityFilter("all");
-                            }}
-                            disabled={!hasActiveNoteFilters}
-                          >
-                            Clear filters
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                    {projectNotesLoading ? (
-                      <div className="project-expenses-loading">
-                        <div className="loading-spinner"></div>
-                        <span>Loading notes...</span>
-                      </div>
-                    ) : projectNotes.length === 0 ? (
-                      <div className="project-detail-empty">
-                        <Icon name="notes" size={24} />
-                        <span>No notes yet.</span>
-                      </div>
-                    ) : filteredProjectNotes.length === 0 ? (
-                      <div className="project-detail-empty">
-                        <Icon name="search" size={24} />
-                        <span>No notes match the selected filters.</span>
-                      </div>
-                    ) : (
-                      <>
-                        {canManageProjectContent ? (
-                          <div className="project-expenses-selection-note">
-                            {selectedNoteIds.length} selected
                           </div>
-                        ) : null}
-                        <div className="project-expenses-selection-note">
-                          Showing {filteredProjectNotes.length} of {projectNotes.length} notes.
                         </div>
-                        {canManageProjectContent ? (
-                          <label className="project-group-select-all">
-                            <input
-                              type="checkbox"
-                              checked={allNotesSelected}
-                              onChange={handleToggleSelectAllNotes}
-                              aria-label="Select all visible project notes"
-                            />
-                            <span>Select all visible notes</span>
-                          </label>
-                        ) : null}
-                        <div className="project-grouped-board">
-                          {groupedNoteRows.map((lane) => {
-                            const laneNoteIds = lane.rows
-                              .map((note) => String(note?.id ?? ""))
-                              .filter(Boolean);
-                            const laneAllSelected =
-                              laneNoteIds.length > 0 &&
-                              laneNoteIds.every((noteId) => selectedNoteIds.includes(noteId));
-                            return (
-                              <section
-                                key={`note-lane-${lane.key}`}
-                                className={`project-group-lane is-${String(lane.key).replace(/[^a-z0-9_]+/g, "-")}`}
-                              >
-                                <header className="project-group-lane-head">
-                                  <div className="project-group-lane-title">
-                                    <span className="project-group-lane-dot" aria-hidden="true" />
-                                    <h5>{lane.label}</h5>
-                                    <span className="project-group-lane-count">{lane.rows.length}</span>
-                                  </div>
-                                  {canManageProjectContent ? (
-                                    <button
-                                      type="button"
-                                      className="project-group-lane-add"
-                                      onClick={() => openNoteModalForVisibility(lane.key)}
-                                      disabled={savingNote || deletingNotes}
-                                      aria-label={`Add note in ${lane.label}`}
-                                    >
-                                      <Icon name="plus" size={14} />
-                                    </button>
-                                  ) : null}
-                                </header>
-                                <div className="projects-table-wrap project-expenses-table-wrap project-group-lane-table-wrap">
-                                  <table className="projects-table-view project-expenses-table project-notes-table project-group-lane-table">
-                                    <thead>
-                                      <tr>
-                                        {canManageProjectContent ? (
-                                          <th className="projects-table-check">
-                                            <input
-                                              type="checkbox"
-                                              checked={laneAllSelected}
-                                              onChange={() => {
-                                                if (laneAllSelected) {
-                                                  const laneSet = new Set(laneNoteIds);
-                                                  setSelectedNoteIds((prev) => prev.filter((id) => !laneSet.has(id)));
-                                                  return;
-                                                }
-                                                setSelectedNoteIds((prev) =>
-                                                  Array.from(new Set([...prev, ...laneNoteIds]))
-                                                );
-                                              }}
-                                              aria-label={`Select all notes in ${lane.label}`}
+                      ) : null}
+                      {projectNotesLoading ? (
+                        <div className="project-expenses-loading">
+                          <div className="loading-spinner"></div>
+                          <span>Loading notes...</span>
+                        </div>
+                      ) : projectNotes.length === 0 ? (
+                        <div className="project-detail-empty">
+                          <Icon name="notes" size={24} />
+                          <span>No notes yet.</span>
+                        </div>
+                      ) : filteredProjectNotes.length === 0 ? (
+                        <div className="project-detail-empty">
+                          <Icon name="search" size={24} />
+                          <span>No notes match the selected filters.</span>
+                        </div>
+                      ) : (
+                        <>
+                          {canManageProjectContent ? (
+                            <div className="project-expenses-selection-note">
+                              {selectedNoteIds.length} selected
+                            </div>
+                          ) : null}
+                          <div className="project-expenses-selection-note">
+                            Showing {filteredProjectNotes.length} of {projectNotes.length} notes.
+                          </div>
+                          {canManageProjectContent ? (
+                            <label className="project-group-select-all">
+                              <input
+                                type="checkbox"
+                                checked={allNotesSelected}
+                                onChange={handleToggleSelectAllNotes}
+                                aria-label="Select all visible project notes"
+                              />
+                              <span>Select all visible notes</span>
+                            </label>
+                          ) : null}
+                          <div className="project-grouped-board">
+                            {groupedNoteRows.map((lane) => {
+                              const laneNoteIds = lane.rows
+                                .map((note) => String(note?.id ?? ""))
+                                .filter(Boolean);
+                              const laneAllSelected =
+                                laneNoteIds.length > 0 &&
+                                laneNoteIds.every((noteId) => selectedNoteIds.includes(noteId));
+                              return (
+                                <section
+                                  key={`note-lane-${lane.key}`}
+                                  className={`project-group-lane is-${String(lane.key).replace(/[^a-z0-9_]+/g, "-")}`}
+                                >
+                                  <header className="project-group-lane-head">
+                                    <div className="project-group-lane-title">
+                                      <span className="project-group-lane-dot" aria-hidden="true" />
+                                      <h5>{lane.label}</h5>
+                                      <span className="project-group-lane-count">{lane.rows.length}</span>
+                                    </div>
+                                    {canManageProjectContent ? (
+                                      <button
+                                        type="button"
+                                        className="project-group-lane-add"
+                                        onClick={() => openNoteModalForVisibility(lane.key)}
+                                        disabled={savingNote || deletingNotes}
+                                        aria-label={`Add note in ${lane.label}`}
+                                      >
+                                        <Icon name="plus" size={14} />
+                                      </button>
+                                    ) : null}
+                                  </header>
+                                  <div className="projects-table-wrap project-expenses-table-wrap project-group-lane-table-wrap">
+                                    <table className="projects-table-view project-expenses-table project-notes-table project-group-lane-table">
+                                      <thead>
+                                        <tr>
+                                          {canManageProjectContent ? (
+                                            <th className="projects-table-check">
+                                              <input
+                                                type="checkbox"
+                                                checked={laneAllSelected}
+                                                onChange={() => {
+                                                  if (laneAllSelected) {
+                                                    const laneSet = new Set(laneNoteIds);
+                                                    setSelectedNoteIds((prev) =>
+                                                      prev.filter((id) => !laneSet.has(id))
+                                                    );
+                                                    return;
+                                                  }
+                                                  setSelectedNoteIds((prev) =>
+                                                    Array.from(new Set([...prev, ...laneNoteIds]))
+                                                  );
+                                                }}
+                                                aria-label={`Select all notes in ${lane.label}`}
+                                              />
+                                            </th>
+                                          ) : null}
+                                          <th className="project-note-col-name">Note Name</th>
+                                          <th className="project-note-col-description">Description</th>
+                                          <th className="project-note-col-updated">Updated</th>
+                                          <th className="project-note-col-author">Author</th>
+                                          <th className="project-note-col-visibility">Visibility</th>
+                                          {canManageProjectContent ? (
+                                            <th
+                                              className="project-group-actions-col project-note-col-actions"
+                                              aria-label="Actions"
                                             />
-                                          </th>
-                                        ) : null}
-                                        <th>Note Name</th>
-                                        <th>Description</th>
-                                        <th>Updated</th>
-                                        <th>Author</th>
-                                        <th>Visibility</th>
-                                        {canManageProjectContent ? (
-                                          <th className="project-group-actions-col" aria-label="Actions" />
-                                        ) : null}
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {lane.rows.map((note) => {
-                                        const noteId = String(note?.id ?? "");
-                                        const isChecked = selectedNoteIds.includes(noteId);
-                                        const safeVisibility = String(note?.visibility || "project_team")
-                                          .trim()
-                                          .toLowerCase();
-                                        const visibilityIcon = safeVisibility === "admins_only" ? "shield" : "users";
-                                        const author =
-                                          note?.author_name ||
-                                          (note?.author_member_id ? `Member #${note.author_member_id}` : "—");
-                                        const noteBodyRaw = String(note?.body || "").trim();
-                                        const noteBodyDisplay = noteBodyRaw
-                                          ? truncateProjectCellText(noteBodyRaw, 108)
-                                          : "—";
-                                        return (
-                                          <tr key={noteId || `${note?.title || "note"}-${note?.created_at || ""}`}>
-                                            {canManageProjectContent ? (
-                                              <td className="projects-table-check">
-                                                <input
-                                                  type="checkbox"
-                                                  checked={isChecked}
-                                                  onChange={() => handleToggleNoteSelection(noteId)}
-                                                  aria-label={`Select note ${note?.title || noteId}`}
-                                                />
+                                          ) : null}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {lane.rows.map((note) => {
+                                          const noteId = String(note?.id ?? "");
+                                          const isChecked = selectedNoteIds.includes(noteId);
+                                          const safeVisibility = String(note?.visibility || "project_team")
+                                            .trim()
+                                            .toLowerCase();
+                                          const visibilityIcon = safeVisibility === "admins_only" ? "shield" : "users";
+                                          const author =
+                                            note?.author_name ||
+                                            (note?.author_member_id ? `Member #${note.author_member_id}` : "—");
+                                          const noteBodyRaw = String(note?.body || "").trim();
+                                          const noteBodyDisplay = noteBodyRaw
+                                            ? truncateProjectCellText(noteBodyRaw, 108)
+                                            : "—";
+                                          return (
+                                            <tr key={noteId || `${note?.title || "note"}-${note?.created_at || ""}`}>
+                                              {canManageProjectContent ? (
+                                                <td className="projects-table-check">
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={isChecked}
+                                                    onChange={() => handleToggleNoteSelection(noteId)}
+                                                    aria-label={`Select note ${note?.title || noteId}`}
+                                                  />
+                                                </td>
+                                              ) : null}
+                                              <td className="project-note-col-name">
+                                                <div className="project-expense-detail project-note-detail">
+                                                  <strong className="project-row-title">
+                                                    {note?.title || "Untitled note"}
+                                                  </strong>
+                                                </div>
                                               </td>
-                                            ) : null}
-                                            <td>
-                                              <div className="project-expense-detail project-note-detail">
-                                                <strong className="project-row-title">{note?.title || "Untitled note"}</strong>
-                                              </div>
-                                            </td>
-                                            <td className="project-group-description-cell">
-                                              <p className="project-group-description" title={noteBodyRaw || undefined}>
-                                                {noteBodyDisplay}
-                                              </p>
-                                            </td>
-                                            <td className="project-group-estimation">
-                                              {formatDate(note?.updated_at || note?.created_at)}
-                                            </td>
-                                            <td>{author}</td>
-                                            <td>
-                                              <span
-                                                className={`project-note-visibility is-${safeVisibility.replace(/[^a-z_]+/g, "")}`}
-                                                title={NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
-                                                aria-label={NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
-                                              >
-                                                <Icon name={visibilityIcon} size={12} />
-                                              </span>
-                                            </td>
-                                            {canManageProjectContent ? (
-                                              <td className="project-group-actions-col">
-                                                <button
-                                                  type="button"
-                                                  className="project-group-row-action"
-                                                  aria-label={`Edit ${note?.title || "note"}`}
-                                                  onClick={() => openNoteEditorForRow(note)}
-                                                  disabled={savingNote || deletingNotes}
+                                              <td className="project-group-description-cell project-note-col-description">
+                                                <p className="project-group-description" title={noteBodyRaw || undefined}>
+                                                  {noteBodyDisplay}
+                                                </p>
+                                              </td>
+                                              <td className="project-group-estimation project-note-col-updated">
+                                                {formatDate(note?.updated_at || note?.created_at)}
+                                              </td>
+                                              <td className="project-note-col-author">{author}</td>
+                                              <td className="project-note-col-visibility">
+                                                <span
+                                                  className={`project-note-visibility is-${safeVisibility.replace(/[^a-z_]+/g, "")}`}
+                                                  title={NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
+                                                  aria-label={NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
                                                 >
-                                                  <Icon name="more-horizontal" size={15} />
-                                                </button>
+                                                  <Icon name={visibilityIcon} size={12} />
+                                                </span>
                                               </td>
-                                            ) : null}
-                                          </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </section>
-                            );
-                          })}
-                        </div>
-                      </>
-                    )}
-                  </div>
+                                              {canManageProjectContent ? (
+                                                <td className="project-group-actions-col project-note-col-actions">
+                                                  <button
+                                                    type="button"
+                                                    className="project-group-row-action"
+                                                    aria-label={`Edit ${note?.title || "note"}`}
+                                                    onClick={() => openNoteEditorForRow(note)}
+                                                    disabled={savingNote || deletingNotes}
+                                                  >
+                                                    <Icon name="more-horizontal" size={15} />
+                                                  </button>
+                                                </td>
+                                              ) : null}
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </section>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {canManageProjectContent ? (
+                      <button
+                        type="button"
+                        className="project-detail-fab project-detail-fab--note"
+                        onClick={openNoteModal}
+                        disabled={savingNote || deletingNotes}
+                        aria-label="Add note"
+                      >
+                        <Icon name="plus" size={20} />
+                      </button>
+                    ) : null}
+                  </>
                 )}
                 {detailTab === "invites" && canViewProjectInvites && (
                   <div className="project-detail-section project-detail-invites">
@@ -7608,13 +7624,13 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                         <table className="projects-table-view project-expenses-table project-invites-table">
                           <thead>
                             <tr>
-                              <th>Invited member</th>
-                              <th>Role</th>
-                              <th>Access</th>
-                              <th>Status</th>
-                              <th>Invite #</th>
-                              <th>Created</th>
-                              <th>Expires</th>
+                              <th className="project-invite-col-member">Invited member</th>
+                              <th className="project-invite-col-role">Role</th>
+                              <th className="project-invite-col-access">Access</th>
+                              <th className="project-invite-col-status">Status</th>
+                              <th className="project-invite-col-code">Invite #</th>
+                              <th className="project-invite-col-created">Created</th>
+                              <th className="project-invite-col-expires">Expires</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -7630,20 +7646,20 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                               const phone = String(invite?.phone_number || "").trim();
                               return (
                                 <tr key={inviteId || `${email}-${inviteNumber}`}>
-                                  <td>
+                                  <td className="project-invite-col-member">
                                     <div className="project-invite-member">
                                       <strong>{email || "No email"}</strong>
                                       {phone ? <small>{phone}</small> : null}
                                     </div>
                                   </td>
-                                  <td>{safeRole}</td>
-                                  <td>{formatInviteScopeLabel(invite)}</td>
-                                  <td>
+                                  <td className="project-invite-col-role">{safeRole}</td>
+                                  <td className="project-invite-col-access">{formatInviteScopeLabel(invite)}</td>
+                                  <td className="project-invite-col-status">
                                     <span className={`project-invite-status is-${safeStatus}`}>
                                       {formatInviteStatusLabel(invite?.status)}
                                     </span>
                                   </td>
-                                  <td>
+                                  <td className="project-invite-col-code">
                                     {inviteNumber ? (
                                       <button
                                         type="button"
@@ -7657,8 +7673,10 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                                       "—"
                                     )}
                                   </td>
-                                  <td>{formatDate(invite?.created_at)}</td>
-                                  <td>{invite?.expires_at ? formatDate(invite.expires_at) : "No expiry"}</td>
+                                  <td className="project-invite-col-created">{formatDate(invite?.created_at)}</td>
+                                  <td className="project-invite-col-expires">
+                                    {invite?.expires_at ? formatDate(invite.expires_at) : "No expiry"}
+                                  </td>
                                 </tr>
                               );
                             })}
@@ -7668,6 +7686,24 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                     )}
                   </div>
                 )}
+              </div>
+              <div className="project-detail-mobile-nav" role="tablist" aria-label="Project sections">
+                {projectDetailTabs.map((tab) => {
+                  const tabMeta = PROJECT_DETAIL_TAB_META[tab] || { label: tab, icon: "briefcase" };
+                  return (
+                    <button
+                      key={`mobile-${tab}`}
+                      type="button"
+                      className={`project-detail-mobile-nav-btn${detailTab === tab ? " active" : ""}`}
+                      onClick={() => setDetailTab(tab)}
+                      role="tab"
+                      aria-selected={detailTab === tab}
+                    >
+                      <Icon name={tabMeta.icon} size={16} />
+                      <span>{tabMeta.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -8507,9 +8543,9 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
               <table className="projects-table-view project-expense-category-table">
                 <thead>
                   <tr>
-                    <th>Category</th>
-                    <th>Used in expenses</th>
-                    <th>Actions</th>
+                    <th className="project-category-col-name">Category</th>
+                    <th className="project-category-col-usage">Used in expenses</th>
+                    <th className="project-category-col-actions">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -8521,11 +8557,11 @@ export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onMana
                     const isArchiving = archivingExpenseCategoryId === categoryId;
                     return (
                       <tr key={categoryId || categoryName}>
-                        <td>
+                        <td className="project-category-col-name">
                           <span className="project-category-chip">{categoryName || "—"}</span>
                         </td>
-                        <td>{usageCount}</td>
-                        <td>
+                        <td className="project-category-col-usage">{usageCount}</td>
+                        <td className="project-category-col-actions">
                           <div className="project-expense-category-actions">
                             <button
                               type="button"

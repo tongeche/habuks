@@ -14,6 +14,7 @@ import {
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
+import DashboardMobileNav from "./DashboardMobileNav.jsx";
 
 const ACTIVITY_STATUS_META = {
   today: { label: "Today", tone: "today" },
@@ -303,7 +304,7 @@ const createSourcePartnerForm = () => ({
   status: "Active",
 });
 
-export default function MeetingsPage({ user, tenantId }) {
+export default function MeetingsPage({ user, tenantId, access, setActivePage }) {
   const [meetings, setMeetings] = useState([]);
   const [members, setMembers] = useState([]);
   const [welfareSummary, setWelfareSummary] = useState(null);
@@ -1216,7 +1217,7 @@ export default function MeetingsPage({ user, tenantId }) {
   }
 
   return (
-    <div className="activities-hub">
+    <div className="activities-hub dashboard-mobile-shell">
       <section className="activities-hub-top">
         <div className="activities-hub-heading">
           <h2>Activities Hub</h2>
@@ -1310,10 +1311,10 @@ export default function MeetingsPage({ user, tenantId }) {
               </div>
             ) : (
               <div className="activities-hub-table-wrap">
-                <table className="activities-hub-table">
+                <table className="activities-hub-table activities-hub-table--responsive">
                   <thead>
                     <tr>
-                      <th>
+                      <th className="activities-hub-col-select">
                         <input
                           type="checkbox"
                           checked={allVisibleSelected}
@@ -1321,11 +1322,11 @@ export default function MeetingsPage({ user, tenantId }) {
                           aria-label="Select all visible activities"
                         />
                       </th>
-                      <th>Activity Details</th>
-                      <th>Date</th>
-                      <th>Category</th>
-                      <th>Team Members</th>
-                      <th>Status</th>
+                      <th className="activities-hub-col-details">Activity Details</th>
+                      <th className="activities-hub-col-date">Date</th>
+                      <th className="activities-hub-col-category">Category</th>
+                      <th className="activities-hub-col-team">Team Members</th>
+                      <th className="activities-hub-col-status">Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1339,7 +1340,7 @@ export default function MeetingsPage({ user, tenantId }) {
 
                       return (
                         <tr key={`activity-table-row-${identity}`} className={isSelected ? "is-selected" : ""}>
-                          <td className="activities-hub-table-select">
+                          <td className="activities-hub-table-select activities-hub-col-select">
                             <input
                               type="checkbox"
                               checked={isSelected}
@@ -1347,7 +1348,7 @@ export default function MeetingsPage({ user, tenantId }) {
                               aria-label={`Select ${item.title}`}
                             />
                           </td>
-                          <td>
+                          <td className="activities-hub-col-details">
                             <button
                               type="button"
                               className="activities-hub-table-detail"
@@ -1366,15 +1367,15 @@ export default function MeetingsPage({ user, tenantId }) {
                               </span>
                             </button>
                           </td>
-                          <td>
+                          <td className="activities-hub-col-date">
                             <span className="activities-hub-table-date">{formatDate(item.date)}</span>
                           </td>
-                          <td>
+                          <td className="activities-hub-col-category">
                             <span className={`activities-hub-category-chip tone-${visual.tone}`}>
                               {item.category}
                             </span>
                           </td>
-                          <td>
+                          <td className="activities-hub-col-team">
                             {teamNames.length ? (
                               <div className="activities-hub-team-stack">
                                 {teamNames.slice(0, 3).map((name) => (
@@ -1396,7 +1397,7 @@ export default function MeetingsPage({ user, tenantId }) {
                               <span className="activities-hub-team-empty">Unassigned</span>
                             )}
                           </td>
-                          <td>
+                          <td className="activities-hub-col-status">
                             <button
                               type="button"
                               className={`activities-hub-status-btn${
@@ -2240,6 +2241,15 @@ export default function MeetingsPage({ user, tenantId }) {
           </div>
         </form>
       </DataModal>
+      <button
+        type="button"
+        className="dashboard-page-fab"
+        onClick={() => openCreateActivityModal()}
+        aria-label="Add activity"
+      >
+        <Icon name="plus" size={20} />
+      </button>
+      <DashboardMobileNav activePage="meetings" access={access} setActivePage={setActivePage} />
     </div>
   );
 }
