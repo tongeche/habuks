@@ -524,6 +524,61 @@ begin
     (v_jgf_project_id, '/assets/metrics.png', 'Expense and revenue view for JGF.', true, 0, v_tenant_id),
     (v_jgf_project_id, '/assets/highlight-saas.png', 'Operations highlights for processing team.', false, 1, v_tenant_id),
     (v_jgf_project_id, '/assets/tenants-user.png', 'Project member and role collaboration view.', false, 2, v_tenant_id);
+
+  -- Organization partners (used by donor/partner report sections).
+  update public.tenants
+  set site_data = jsonb_set(
+    jsonb_set(
+      coalesce(site_data, '{}'::jsonb),
+      '{organization_profile}',
+      coalesce(site_data->'organization_profile', '{}'::jsonb),
+      true
+    ),
+    '{organization_profile,partners}',
+    jsonb_build_array(
+      jsonb_build_object(
+        'id', 'demo-partner-county',
+        'name', 'Homa Bay County Agriculture Office',
+        'kind', 'Government',
+        'status', 'Active',
+        'contact_person', 'County Extension Officer',
+        'contact_email', 'agriculture@homabay.go.ke',
+        'contact_phone', '+254700100221',
+        'last_contact', to_char(current_date - interval '12 days', 'YYYY-MM-DD'),
+        'notes', 'Supports member mobilization and extension visits.',
+        'logo_url', '/assets/logo.png',
+        'linked_project_ids', jsonb_build_array(v_jpp_project_id::text, v_jgf_project_id::text)
+      ),
+      jsonb_build_object(
+        'id', 'demo-partner-coop',
+        'name', 'Kosele Farmer Cooperative',
+        'kind', 'Supplier',
+        'status', 'Active',
+        'contact_person', 'Procurement Desk',
+        'contact_email', 'procurement@koselecoop.org',
+        'contact_phone', '+254700100331',
+        'last_contact', to_char(current_date - interval '8 days', 'YYYY-MM-DD'),
+        'notes', 'Provides raw material and feed procurement support.',
+        'logo_url', '/assets/logo.png',
+        'linked_project_ids', jsonb_build_array(v_jpp_project_id::text, v_jgf_project_id::text)
+      ),
+      jsonb_build_object(
+        'id', 'demo-partner-foundation',
+        'name', 'Lake Region Enterprise Foundation',
+        'kind', 'Funder',
+        'status', 'Pipeline',
+        'contact_person', 'Partnerships Lead',
+        'contact_email', 'partnerships@lakefoundation.org',
+        'contact_phone', '+254700100441',
+        'last_contact', to_char(current_date - interval '4 days', 'YYYY-MM-DD'),
+        'notes', 'Reviewing co-funding proposal for working capital and training.',
+        'logo_url', '/assets/logo.png',
+        'linked_project_ids', jsonb_build_array(v_jgf_project_id::text)
+      )
+    ),
+    true
+  )
+  where id = v_tenant_id;
 end $$;
 
 commit;

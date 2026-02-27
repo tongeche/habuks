@@ -56,6 +56,7 @@ if (rootElement) {
           <Route path="/resources/:slug" element={<ResourcePage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/join" element={<RegisterPage />} />
           <Route path="/get-started" element={<TenantSignupPage />} />
           <Route path="/request-demo" element={<RequestDemoPage />} />
           <Route path="/demo" element={<DemoPage />} />

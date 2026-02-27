@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   archiveProjectExpenseCategory,
+  createProjectMagicLinkInvite,
   createIgaBudgetEntries,
   createProjectExpense,
   createProjectMediaAssets,
@@ -19,6 +20,7 @@ import {
   getProjectExpenseCategoryDefinitions,
   getProjectEditorData,
   getProjectExpenses,
+  getProjectMagicLinkInvites,
   getProjectNotes,
   getProjectTasks,
   getProjectsWithMembership,
@@ -112,6 +114,19 @@ const createInitialNoteForm = () => ({
   visibility: "project_team",
   details: "",
 });
+
+const createInitialProjectInviteForm = () => ({
+  email: "",
+  phone_number: "",
+  role: "member",
+  notes: "",
+});
+
+const normalizeRoleKey = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_");
 
 const DEFAULT_EXPENSE_CATEGORIES = [
   "Supplies",
@@ -374,6 +389,13 @@ const getInitials = (value, fallback = "NA") => {
     .slice(0, 2);
   if (!parts.length) return fallback;
   return parts.map((part) => part.charAt(0).toUpperCase()).join("");
+};
+
+const truncateProjectCellText = (value, maxLength = 96) => {
+  const normalized = String(value || "").trim().replace(/\s+/g, " ");
+  if (!normalized) return "";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 };
 
 const PROJECT_DOCUMENT_ACCEPT =
@@ -766,7 +788,7 @@ const clampPercent = (value) => {
   return Math.max(0, Math.min(100, parsed));
 };
 
-function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
+export function ProjectsPage({ user, tenantRole, setActivePage, tenantId, onManageProject }) {
   const projectDocumentInputRef = useRef(null);
   const expenseReceiptInputRef = useRef(null);
   const expenseFormReceiptInputRef = useRef(null);
@@ -818,6 +840,8 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   const [selectedExpenseIds, setSelectedExpenseIds] = useState([]);
   const [detailTab, setDetailTab] = useState("overview");
   const [overviewRange, setOverviewRange] = useState(DEFAULT_PROJECT_OVERVIEW_RANGE);
+  const [showBudgetSummaryReportModal, setShowBudgetSummaryReportModal] = useState(false);
+  const [exportingDonorBrief, setExportingDonorBrief] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [expenseForm, setExpenseForm] = useState(() => createInitialExpenseForm());
   const [editingExpenseId, setEditingExpenseId] = useState(null);
@@ -856,11 +880,23 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   const [deletingNotes, setDeletingNotes] = useState(false);
   const [showDeleteNotesModal, setShowDeleteNotesModal] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
+  const [projectInvites, setProjectInvites] = useState([]);
+  const [projectInvitesLoading, setProjectInvitesLoading] = useState(false);
+  const [projectInvitesError, setProjectInvitesError] = useState("");
+  const [showProjectInviteModal, setShowProjectInviteModal] = useState(false);
+  const [projectInviteForm, setProjectInviteForm] = useState(() => createInitialProjectInviteForm());
+  const [projectInviteFormError, setProjectInviteFormError] = useState("");
+  const [submittingProjectInvite, setSubmittingProjectInvite] = useState(false);
   const [organizationPartners, setOrganizationPartners] = useState([]);
   const [organizationPartnersLoading, setOrganizationPartnersLoading] = useState(false);
-  const role = String(user?.role || "member").toLowerCase();
-  const isAdmin = ["admin", "superadmin"].includes(role);
-  const canCreateProject = ["project_manager", "admin", "superadmin"].includes(role);
+  const role = String(tenantRole || user?.role || "member");
+  const roleKey = normalizeRoleKey(role);
+  const isAdmin = ["admin", "superadmin", "super_admin"].includes(roleKey);
+  const canCreateProject = ["project_manager", "admin", "superadmin", "super_admin"].includes(roleKey);
+  const canViewProjectInvites =
+    isAdmin ||
+    ["project_manager", "coordinator", "project_coordinator", "cordinator"].includes(roleKey);
+  const canManageProjectContent = canCreateProject;
   const canSelfManageMembership = isAdmin;
   const parsedEditingProjectId = Number.parseInt(String(editingProjectId ?? ""), 10);
   const isEditingProject = Number.isInteger(parsedEditingProjectId) && parsedEditingProjectId > 0;
@@ -1694,6 +1730,24 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     }).format(amount);
   };
 
+  const formatReportMetricValue = (value, unit = "") => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return "—";
+    if (unit === "%") return `${Math.round(parsed)}%`;
+    if (unit === "x") {
+      if (parsed <= 0) return "—";
+      return parsed >= 10 ? `${Math.round(parsed)}x` : `${parsed.toFixed(2)}x`;
+    }
+    if (unit === "months") {
+      if (parsed <= 0) return "0 mo";
+      if (parsed >= 10) return `${Math.round(parsed)} mo`;
+      return `${parsed.toFixed(1)} mo`;
+    }
+    const rounded = Math.round(parsed);
+    const numberLabel = rounded.toLocaleString("en-KE");
+    return unit ? `${numberLabel} ${unit}` : numberLabel;
+  };
+
   const getProjectBudgetAmount = (project) => {
     const candidates = [
       project?.budget_total,
@@ -1884,11 +1938,40 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     );
   };
 
+  const projectDetailTabs = useMemo(() => {
+    const tabs = ["overview", "expenses", "documents", "tasks", "notes"];
+    if (canViewProjectInvites) {
+      tabs.push("invites");
+    }
+    return tabs;
+  }, [canViewProjectInvites]);
+
   const openProjectDetails = (project) => {
     setSelectedProject(project);
     setDetailTab("overview");
     setOverviewRange(DEFAULT_PROJECT_OVERVIEW_RANGE);
+    setShowBudgetSummaryReportModal(false);
+    setExportingDonorBrief(false);
+    setShowProjectInviteModal(false);
+    setProjectInviteForm(createInitialProjectInviteForm());
+    setProjectInviteFormError("");
+    setProjectInvitesError("");
   };
+
+  useEffect(() => {
+    if (detailTab === "invites" && !canViewProjectInvites) {
+      setDetailTab("overview");
+    }
+  }, [detailTab, canViewProjectInvites]);
+
+  useEffect(() => {
+    if (!selectedProject) {
+      setShowBudgetSummaryReportModal(false);
+      setExportingDonorBrief(false);
+      setShowProjectInviteModal(false);
+      setProjectInviteFormError("");
+    }
+  }, [selectedProject]);
 
   useEffect(() => {
     if (!selectedProject?.id) {
@@ -1922,6 +2005,34 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
       cancelled = true;
     };
   }, [selectedProject?.id, tenantId]);
+
+  const loadProjectInvites = useCallback(async () => {
+    const parsedProjectId = Number.parseInt(String(selectedProject?.id || ""), 10);
+    if (!canViewProjectInvites || !Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+      setProjectInvites([]);
+      return;
+    }
+
+    setProjectInvitesLoading(true);
+    setProjectInvitesError("");
+    try {
+      const rows = await getProjectMagicLinkInvites(parsedProjectId);
+      setProjectInvites(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      console.error("Error loading project invites:", error);
+      setProjectInvites([]);
+      setProjectInvitesError(error?.message || "Failed to load invited members.");
+    } finally {
+      setProjectInvitesLoading(false);
+    }
+  }, [selectedProject?.id, canViewProjectInvites]);
+
+  useEffect(() => {
+    if (detailTab !== "invites") {
+      return;
+    }
+    loadProjectInvites();
+  }, [detailTab, loadProjectInvites]);
 
   useEffect(() => {
     if (!selectedProject?.id) {
@@ -2370,6 +2481,635 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     overviewRange,
   ]);
 
+  const projectSummaryReport = useMemo(() => {
+    if (!selectedProject) return null;
+
+    const budgetUsedPercent = clampPercent(projectOverviewAnalytics.budgetSpentPercent);
+    const executionPercent = clampPercent(projectOverviewAnalytics.taskCompletionPercent);
+    const proofCoveragePercent = clampPercent(projectOverviewAnalytics.expenseProofPercent);
+    const progressPercent = clampPercent(projectOverviewAnalytics.progressPercent);
+    const memberCount = Number(selectedProject?.member_count || 0);
+    const safeMemberCount = Number.isFinite(memberCount) && memberCount >= 0 ? memberCount : 0;
+
+    let budgetHealth = { label: "Healthy burn", tone: "good" };
+    if (budgetUsedPercent >= 100) {
+      budgetHealth = { label: "Over budget", tone: "critical" };
+    } else if (budgetUsedPercent >= 80) {
+      budgetHealth = { label: "Watch spend", tone: "warning" };
+    }
+
+    const expenseGuardrail =
+      proofCoveragePercent >= 85
+        ? "Strong controls"
+        : proofCoveragePercent >= 60
+          ? "Needs tighter controls"
+          : "Weak controls";
+
+    const budgetAmount = Number(projectOverviewAnalytics.budgetAmount);
+    const safeBudgetAmount = Number.isFinite(budgetAmount) && budgetAmount >= 0 ? budgetAmount : null;
+    const expectedRevenueAmount = Number(projectOverviewAnalytics.expectedRevenueAmount);
+    const safeExpectedRevenueAmount =
+      Number.isFinite(expectedRevenueAmount) && expectedRevenueAmount >= 0
+        ? expectedRevenueAmount
+        : null;
+    const spentAmount = Number(projectOverviewAnalytics.spentAmount);
+    const safeSpentAmount = Number.isFinite(spentAmount) && spentAmount >= 0 ? spentAmount : 0;
+    const remainingAmount = Number(projectOverviewAnalytics.remainingAmount);
+    const safeRemainingAmount =
+      Number.isFinite(remainingAmount) && remainingAmount >= 0 ? remainingAmount : null;
+
+    const fundsCommittedAmount = safeExpectedRevenueAmount;
+    const coveragePercent =
+      safeBudgetAmount !== null && safeBudgetAmount > 0 && fundsCommittedAmount !== null
+        ? clampPercent((fundsCommittedAmount / safeBudgetAmount) * 100)
+        : null;
+    const fundingGapAmount =
+      safeBudgetAmount !== null
+        ? fundsCommittedAmount !== null
+          ? Math.max(safeBudgetAmount - fundsCommittedAmount, 0)
+          : safeBudgetAmount
+        : null;
+    const fundingSurplusAmount =
+      safeBudgetAmount !== null && fundsCommittedAmount !== null && fundsCommittedAmount > safeBudgetAmount
+        ? fundsCommittedAmount - safeBudgetAmount
+        : 0;
+
+    let fundingStatus = { label: "Coverage unknown", tone: "unknown" };
+    if (coveragePercent !== null) {
+      if (coveragePercent >= 100) {
+        fundingStatus = { label: "Fully covered", tone: "good" };
+      } else if (coveragePercent >= 70) {
+        fundingStatus = { label: "Partially covered", tone: "warning" };
+      } else {
+        fundingStatus = { label: "Funding gap", tone: "critical" };
+      }
+    } else if (safeBudgetAmount !== null && safeBudgetAmount > 0) {
+      fundingStatus = { label: "Funding not mapped", tone: "warning" };
+    }
+
+    const today = new Date();
+    const todayStart = new Date(today);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartTs = todayStart.getTime();
+    const rollingStart = new Date(todayStart);
+    rollingStart.setDate(rollingStart.getDate() - 89);
+    const rollingStartTs = rollingStart.getTime();
+
+    let rollingSpendAmount = 0;
+    projectExpenses.forEach((expense) => {
+      const amount = Number(expense?.amount);
+      if (!Number.isFinite(amount) || amount <= 0) return;
+      const timestamp = Date.parse(String(expense?.expense_date || expense?.created_at || ""));
+      if (!Number.isFinite(timestamp)) return;
+      if (timestamp < rollingStartTs || timestamp > todayStartTs + 24 * 60 * 60 * 1000) return;
+      rollingSpendAmount += amount;
+    });
+
+    let monthlyBurnRate = rollingSpendAmount > 0 ? rollingSpendAmount / 3 : 0;
+    if (monthlyBurnRate <= 0 && safeSpentAmount > 0) {
+      const startTimestamp = Date.parse(String(selectedProject?.start_date || ""));
+      if (Number.isFinite(startTimestamp)) {
+        const activeMonths = Math.max((todayStartTs - startTimestamp) / (1000 * 60 * 60 * 24 * 30), 1);
+        monthlyBurnRate = safeSpentAmount / activeMonths;
+      } else {
+        monthlyBurnRate = safeSpentAmount;
+      }
+    }
+
+    const runwayMonths =
+      safeRemainingAmount !== null && monthlyBurnRate > 0
+        ? Math.max(safeRemainingAmount / monthlyBurnRate, 0)
+        : null;
+    let runwayStatus = { label: "Runway unavailable", tone: "unknown" };
+    if (runwayMonths !== null) {
+      if (runwayMonths < 3) {
+        runwayStatus = { label: "Short runway", tone: "critical" };
+      } else if (runwayMonths < 6) {
+        runwayStatus = { label: "Moderate runway", tone: "warning" };
+      } else {
+        runwayStatus = { label: "Healthy runway", tone: "good" };
+      }
+    }
+
+    const topCategories = (projectOverviewAnalytics.topExpenseCategories || []).slice(0, 5).map((item) => ({
+      category: String(item?.category || "Other"),
+      amount: Number(item?.amount || 0),
+    }));
+    const topCategoryMax = topCategories.reduce((maxValue, item) => Math.max(maxValue, item.amount), 0);
+
+    const recentExpensesFeed = recentProjectExpenses.slice(0, 5).map((expense, index) => {
+      const hasProof =
+        Boolean(expense?.receipt) ||
+        Boolean(expense?.receipt_file_path) ||
+        Boolean(expense?.receipt_file_url) ||
+        Boolean(String(expense?.payment_reference || "").trim());
+      return {
+        id: String(expense?.id || `expense-${index + 1}`),
+        title: String(expense?.title || expense?.category || "Expense item").trim() || "Expense item",
+        vendor: String(expense?.vendor || "Vendor not specified").trim() || "Vendor not specified",
+        amount: Number(expense?.amount || 0),
+        dateLabel: formatDate(expense?.expense_date || expense?.created_at),
+        hasProof,
+      };
+    });
+
+    const expenseCount = projectOverviewAnalytics.expensesCount;
+    const completionLabel =
+      executionPercent >= 75 ? "On schedule" : executionPercent >= 45 ? "Progressing" : "Needs acceleration";
+    const leadSummary = getProjectLead(selectedProject);
+
+    const linkedProjectId = String(selectedProject?.id || "").trim();
+    const linkedPartners = organizationPartners
+      .filter((partner) =>
+        linkedProjectId
+          ? Array.isArray(partner?.linked_project_ids) &&
+            partner.linked_project_ids.some((projectId) => String(projectId || "").trim() === linkedProjectId)
+          : false
+      )
+      .map((partner) => String(partner?.name || "").trim())
+      .filter(Boolean);
+
+    const milestoneRows = (() => {
+      const rows = [...projectTasks]
+        .map((task, index) => {
+          const statusKey = String(task?.status || "open")
+            .trim()
+            .toLowerCase();
+          const dueTimestamp = Date.parse(String(task?.due_date || ""));
+          const hasDueDate = Number.isFinite(dueTimestamp);
+          const isDone = statusKey === "done";
+          const isCancelled = statusKey === "cancelled";
+          const isOverdue = hasDueDate && dueTimestamp < todayStartTs && !isDone && !isCancelled;
+          const statusLabel = TASK_STATUS_LABELS[statusKey] || toReadableLabel(statusKey, "Open");
+          const timelineTone = isDone ? "done" : isOverdue ? "critical" : statusKey === "in_progress" ? "active" : "upcoming";
+          return {
+            id: String(task?.id || `milestone-${index + 1}`),
+            title: String(task?.title || "Untitled milestone").trim() || "Untitled milestone",
+            assignee: String(task?.assignee_name || "").trim() || "Unassigned",
+            dueLabel: hasDueDate ? formatDate(task?.due_date) : "No due date",
+            dueSort: hasDueDate ? dueTimestamp : Number.MAX_SAFE_INTEGER,
+            statusLabel: isOverdue ? "Overdue" : statusLabel,
+            timelineTone,
+            isDone,
+          };
+        })
+        .sort((a, b) => a.dueSort - b.dueSort)
+        .slice(0, 6);
+
+      if (rows.length) return rows;
+
+      const fallbackStart = new Date(Date.parse(String(selectedProject?.start_date || "")) || Date.now());
+      const fallbackMilestones = [
+        { title: "Project kickoff", offsetDays: 0, statusLabel: "Started", timelineTone: "done" },
+        { title: "Midpoint delivery review", offsetDays: 60, statusLabel: "In progress", timelineTone: "active" },
+        { title: "Donor reporting checkpoint", offsetDays: 120, statusLabel: "Upcoming", timelineTone: "upcoming" },
+      ];
+      return fallbackMilestones.map((milestone, index) => {
+        const dueDate = new Date(fallbackStart);
+        dueDate.setDate(fallbackStart.getDate() + milestone.offsetDays);
+        return {
+          id: `fallback-milestone-${index + 1}`,
+          title: milestone.title,
+          assignee: "Project team",
+          dueLabel: formatDate(dueDate.toISOString()),
+          dueSort: dueDate.getTime(),
+          statusLabel: milestone.statusLabel,
+          timelineTone: milestone.timelineTone,
+          isDone: milestone.timelineTone === "done",
+        };
+      });
+    })();
+
+    const milestoneCompletionPercent =
+      milestoneRows.length > 0
+        ? clampPercent((milestoneRows.filter((row) => row.isDone).length / milestoneRows.length) * 100)
+        : 0;
+
+    const milestoneTarget = projectOverviewAnalytics.totalTasks > 0 ? projectOverviewAnalytics.totalTasks : 4;
+    const kpiTracker = [
+      {
+        key: "member_reach",
+        label: "Member reach",
+        baseline: 0,
+        current: safeMemberCount,
+        target: Math.max(safeMemberCount, Math.ceil(safeMemberCount * 1.25), 5),
+        unit: "members",
+      },
+      {
+        key: "milestones",
+        label: "Milestones delivered",
+        baseline: 0,
+        current: projectOverviewAnalytics.taskTotals.done,
+        target: milestoneTarget,
+        unit: "milestones",
+      },
+      {
+        key: "budget_coverage",
+        label: "Budget coverage",
+        baseline: 0,
+        current: coveragePercent ?? 0,
+        target: 100,
+        unit: "%",
+      },
+      {
+        key: "expense_compliance",
+        label: "Expense compliance",
+        baseline: 0,
+        current: proofCoveragePercent,
+        target: 95,
+        unit: "%",
+      },
+    ].map((row) => {
+      const safeTarget = Number(row.target);
+      const safeCurrent = Number(row.current);
+      const progressToTarget =
+        Number.isFinite(safeTarget) && safeTarget > 0 && Number.isFinite(safeCurrent)
+          ? clampPercent((safeCurrent / safeTarget) * 100)
+          : 0;
+      const change = Number.isFinite(safeCurrent) ? safeCurrent - Number(row.baseline || 0) : 0;
+      return {
+        ...row,
+        progressToTarget,
+        change,
+      };
+    });
+
+    const donorAskAmount =
+      fundingGapAmount !== null && fundingGapAmount > 0 ? fundingGapAmount : null;
+    const donorAskSummary =
+      donorAskAmount !== null
+        ? `Seeking ${formatCurrency(donorAskAmount)} to close the current funding gap and sustain planned delivery milestones.`
+        : fundingSurplusAmount > 0
+          ? `Funding projections exceed budget by ${formatCurrency(fundingSurplusAmount)}. Additional support can accelerate delivery scale.`
+          : "Funding position is balanced to budget. Additional support can be directed to acceleration priorities.";
+
+    const completedMilestones = Number(projectOverviewAnalytics.taskTotals.done || 0);
+    const costPerMember = safeMemberCount > 0 ? safeSpentAmount / safeMemberCount : null;
+    const costPerCompletedMilestone =
+      completedMilestones > 0 ? safeSpentAmount / completedMilestones : null;
+    const budgetLeverageRatio =
+      safeSpentAmount > 0 && safeExpectedRevenueAmount !== null
+        ? safeExpectedRevenueAmount / safeSpentAmount
+        : null;
+
+    let valueForMoneyNarrative = "Value-for-money baseline is being established as more delivery data is captured.";
+    if (costPerMember !== null && budgetLeverageRatio !== null) {
+      valueForMoneyNarrative =
+        budgetLeverageRatio >= 1
+          ? `Current spending translates into projected returns at approximately ${budgetLeverageRatio.toFixed(
+              2
+            )}x of spend, with unit costs at ${formatCurrency(costPerMember)} per member reached.`
+          : `Projected returns are still below total spend (${budgetLeverageRatio.toFixed(
+              2
+            )}x). Focus is on cost control and milestone acceleration.`;
+    }
+
+    const riskScoreLookup = { low: 1, medium: 2, high: 3 };
+    const toRiskTone = (likelihood, impact) => {
+      const likelihoodScore = riskScoreLookup[String(likelihood || "").toLowerCase()] || 1;
+      const impactScore = riskScoreLookup[String(impact || "").toLowerCase()] || 1;
+      const severityScore = likelihoodScore * impactScore;
+      if (severityScore >= 6) return "high";
+      if (severityScore >= 3) return "medium";
+      return "low";
+    };
+
+    const riskReviewDate = new Date(todayStart);
+    riskReviewDate.setDate(riskReviewDate.getDate() + 30);
+    const reviewDateLabel = formatDate(riskReviewDate.toISOString());
+
+    const fundingRiskLikelihood = coveragePercent === null ? "medium" : coveragePercent < 70 ? "high" : coveragePercent < 100 ? "medium" : "low";
+    const fundingRiskImpact = fundingGapAmount !== null && fundingGapAmount > 0 ? "high" : "medium";
+    const deliveryRiskLikelihood =
+      projectOverviewAnalytics.overdueTaskCount > 0 ? "high" : projectOverviewAnalytics.highPriorityActiveTaskCount > 1 ? "medium" : "low";
+    const deliveryRiskImpact = executionPercent < 50 ? "high" : executionPercent < 75 ? "medium" : "low";
+    const complianceRiskLikelihood = proofCoveragePercent < 60 ? "high" : proofCoveragePercent < 85 ? "medium" : "low";
+    const complianceRiskImpact = proofCoveragePercent < 60 ? "high" : "medium";
+
+    const riskRegister = [
+      {
+        key: "funding_continuity",
+        risk: "Funding continuity and cashflow pressure",
+        likelihood: toReadableLabel(fundingRiskLikelihood, "Medium"),
+        impact: toReadableLabel(fundingRiskImpact, "Medium"),
+        tone: toRiskTone(fundingRiskLikelihood, fundingRiskImpact),
+        owner: "Finance lead",
+        mitigation:
+          donorAskAmount !== null
+            ? `Prioritize closure of the ${formatCurrency(donorAskAmount)} funding ask and phase non-critical spend.`
+            : "Maintain monthly budget variance reviews and ring-fence critical costs.",
+        reviewDate: reviewDateLabel,
+      },
+      {
+        key: "delivery_slippage",
+        risk: "Delivery slippage against milestone schedule",
+        likelihood: toReadableLabel(deliveryRiskLikelihood, "Medium"),
+        impact: toReadableLabel(deliveryRiskImpact, "Medium"),
+        tone: toRiskTone(deliveryRiskLikelihood, deliveryRiskImpact),
+        owner: "Project manager",
+        mitigation:
+          projectOverviewAnalytics.overdueTaskCount > 0
+            ? `Recover ${projectOverviewAnalytics.overdueTaskCount} overdue task(s) with weekly milestone check-ins.`
+            : "Maintain weekly workplan reviews and escalation for critical tasks.",
+        reviewDate: reviewDateLabel,
+      },
+      {
+        key: "compliance_gap",
+        risk: "Compliance and evidence quality risk",
+        likelihood: toReadableLabel(complianceRiskLikelihood, "Medium"),
+        impact: toReadableLabel(complianceRiskImpact, "Medium"),
+        tone: toRiskTone(complianceRiskLikelihood, complianceRiskImpact),
+        owner: "M&E and admin",
+        mitigation:
+          proofCoveragePercent < 95
+            ? "Enforce receipt upload and monthly document verification for all expenses."
+            : "Continue quarterly internal compliance reviews.",
+        reviewDate: reviewDateLabel,
+      },
+    ];
+
+    const riskHighCount = riskRegister.filter((row) => row.tone === "high").length;
+    const riskMediumCount = riskRegister.filter((row) => row.tone === "medium").length;
+
+    const mePlan = kpiTracker.map((kpi) => {
+      let dataSource = "Project records";
+      let frequency = "Monthly";
+      let verification = "Internal review sign-off";
+      if (kpi.key === "member_reach") {
+        dataSource = "Member registry and attendance logs";
+        frequency = "Monthly";
+        verification = "Cross-check against membership roll";
+      } else if (kpi.key === "milestones") {
+        dataSource = "Task tracker and completion reports";
+        frequency = "Bi-weekly";
+        verification = "Project manager approval";
+      } else if (kpi.key === "budget_coverage") {
+        dataSource = "Budget ledger and funding commitments";
+        frequency = "Monthly";
+        verification = "Finance reconciliation";
+      } else if (kpi.key === "expense_compliance") {
+        dataSource = "Expense register and receipt archive";
+        frequency = "Monthly";
+        verification = "Random proof audit";
+      }
+      return {
+        ...kpi,
+        dataSource,
+        frequency,
+        verification,
+      };
+    });
+
+    const sustainabilityScore = clampPercent(
+      ((executionPercent || 0) + (proofCoveragePercent || 0) + (coveragePercent ?? progressPercent ?? 0)) / 3
+    );
+    let sustainabilityLabel = "At risk";
+    if (sustainabilityScore >= 85) {
+      sustainabilityLabel = "Resilient";
+    } else if (sustainabilityScore >= 70) {
+      sustainabilityLabel = "Strengthening";
+    }
+
+    const sustainabilityPillars = [
+      {
+        key: "financial",
+        title: "Financial continuity",
+        detail:
+          safeExpectedRevenueAmount !== null
+            ? `Revenue target of ${formatCurrency(
+                safeExpectedRevenueAmount
+              )} is tracked against spend and reinvestment needs.`
+            : "Revenue planning is pending; funding diversification should be prioritized.",
+      },
+      {
+        key: "capacity",
+        title: "Local delivery capacity",
+        detail: `${safeMemberCount} member(s) are currently linked to execution with structured milestones and role ownership.`,
+      },
+      {
+        key: "governance",
+        title: "Governance and accountability",
+        detail: `${projectOverviewAnalytics.documentsCount} documents and ${projectOverviewAnalytics.notesCount} notes currently support traceability and continuity.`,
+      },
+    ];
+
+    return {
+      generatedAt: new Date().toLocaleString("en-KE", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+      projectName: String(selectedProject?.name || "Project"),
+      moduleLabel: getProjectCategory(selectedProject),
+      statusLabel: String(selectedProject?.status || "active")
+        .replace(/[_-]+/g, " ")
+        .replace(/\b\w/g, (char) => char.toUpperCase()),
+      startDateLabel: formatDate(selectedProject?.start_date),
+      memberCount: safeMemberCount,
+      leadSummary,
+      budgetHealth,
+      expenseGuardrail,
+      fundingStatus,
+      runwayStatus,
+      progressPercent,
+      budgetUsedPercent,
+      executionPercent,
+      proofCoveragePercent,
+      completionLabel,
+      budgetAmount: safeBudgetAmount,
+      spentAmount: safeSpentAmount,
+      remainingAmount: safeRemainingAmount,
+      expectedRevenueAmount: safeExpectedRevenueAmount,
+      fundsCommittedAmount,
+      fundingGapAmount,
+      fundingSurplusAmount,
+      budgetCoveragePercent: coveragePercent,
+      monthlyBurnRate,
+      runwayMonths,
+      totalTasks: projectOverviewAnalytics.totalTasks,
+      taskTotals: projectOverviewAnalytics.taskTotals,
+      overdueTaskCount: projectOverviewAnalytics.overdueTaskCount,
+      highPriorityActiveTaskCount: projectOverviewAnalytics.highPriorityActiveTaskCount,
+      notesCount: projectOverviewAnalytics.notesCount,
+      documentsCount: projectOverviewAnalytics.documentsCount,
+      expenseCount,
+      rangeExpensesCount: projectOverviewAnalytics.rangeExpensesCount,
+      trendWindowLabel: projectOverviewAnalytics.trendWindowLabel,
+      trendDeltaPercent: projectOverviewAnalytics.trendDeltaPercent,
+      topCategories,
+      topCategoryMax,
+      recentExpensesFeed,
+      milestoneRows,
+      milestoneCompletionPercent,
+      kpiTracker,
+      linkedPartners,
+      donorAskAmount,
+      donorAskSummary,
+      costPerMember,
+      costPerCompletedMilestone,
+      budgetLeverageRatio,
+      valueForMoneyNarrative,
+      riskRegister,
+      riskHighCount,
+      riskMediumCount,
+      mePlan,
+      sustainabilityScore,
+      sustainabilityLabel,
+      sustainabilityPillars,
+    };
+  }, [selectedProject, projectOverviewAnalytics, recentProjectExpenses, projectExpenses, projectTasks, organizationPartners]);
+
+  const openBudgetSummaryReportModal = () => {
+    if (!selectedProject) return;
+    setShowBudgetSummaryReportModal(true);
+  };
+
+  const closeBudgetSummaryReportModal = () => {
+    setExportingDonorBrief(false);
+    setShowBudgetSummaryReportModal(false);
+  };
+
+  const buildDonorBriefLines = (report) => {
+    if (!report) return [];
+    const lines = [];
+    appendWrappedPdfLine(lines, `Generated: ${report.generatedAt}`);
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "EXECUTIVE SUMMARY");
+    appendWrappedPdfLine(lines, `Project: ${report.projectName}`);
+    appendWrappedPdfLine(lines, `Module: ${report.moduleLabel}`);
+    appendWrappedPdfLine(lines, `Status: ${report.statusLabel}`);
+    appendWrappedPdfLine(lines, `Started: ${report.startDateLabel}`);
+    appendWrappedPdfLine(lines, `Lead summary: ${report.leadSummary}`);
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "FUNDING POSITION");
+    appendWrappedPdfLine(lines, `Total budget: ${formatCurrency(report.budgetAmount)}`);
+    appendWrappedPdfLine(lines, `Funds committed: ${formatCurrency(report.fundsCommittedAmount)}`);
+    appendWrappedPdfLine(lines, `Spent to date: ${formatCurrency(report.spentAmount)}`);
+    appendWrappedPdfLine(lines, `Budget remaining: ${formatCurrency(report.remainingAmount)}`);
+    appendWrappedPdfLine(lines, `Funding gap: ${formatCurrency(report.fundingGapAmount)}`);
+    appendWrappedPdfLine(
+      lines,
+      `Budget coverage: ${formatPercentLabel(report.budgetCoveragePercent)} | Burn rate: ${formatCurrency(
+        report.monthlyBurnRate
+      )}/month | Runway: ${formatReportMetricValue(report.runwayMonths, "months")}`
+    );
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "DELIVERY STATUS");
+    appendWrappedPdfLine(
+      lines,
+      `Progress: ${formatPercentLabel(report.progressPercent)} | Execution: ${formatPercentLabel(
+        report.executionPercent
+      )} | Compliance: ${formatPercentLabel(report.proofCoveragePercent)}`
+    );
+    appendWrappedPdfLine(
+      lines,
+      `Tasks: ${report.taskTotals.done} done, ${report.taskTotals.in_progress} in progress, ${report.taskTotals.open} open, ${report.overdueTaskCount} overdue`
+    );
+    appendWrappedPdfLine(lines, `Documents: ${report.documentsCount} | Notes: ${report.notesCount}`);
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "KPI TRACKER");
+    report.kpiTracker.slice(0, 4).forEach((kpi, index) => {
+      appendWrappedPdfLine(
+        lines,
+        `${index + 1}. ${kpi.label}: Baseline ${formatReportMetricValue(
+          kpi.baseline,
+          kpi.unit
+        )} | Current ${formatReportMetricValue(kpi.current, kpi.unit)} | Target ${formatReportMetricValue(
+          kpi.target,
+          kpi.unit
+        )}`
+      );
+    });
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "MILESTONE TIMELINE");
+    report.milestoneRows.slice(0, 5).forEach((milestone, index) => {
+      appendWrappedPdfLine(
+        lines,
+        `${index + 1}. ${milestone.title} | ${milestone.statusLabel} | Due ${milestone.dueLabel} | ${milestone.assignee}`
+      );
+    });
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "VALUE FOR MONEY");
+    appendWrappedPdfLine(lines, `Cost per member reached: ${formatCurrency(report.costPerMember)}`);
+    appendWrappedPdfLine(
+      lines,
+      `Cost per milestone delivered: ${formatCurrency(report.costPerCompletedMilestone)}`
+    );
+    appendWrappedPdfLine(
+      lines,
+      `Leverage ratio (expected revenue vs spend): ${formatReportMetricValue(report.budgetLeverageRatio, "x")}`
+    );
+    appendWrappedPdfLine(lines, `Narrative: ${report.valueForMoneyNarrative}`);
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "RISK REGISTER");
+    report.riskRegister.slice(0, 3).forEach((risk, index) => {
+      appendWrappedPdfLine(
+        lines,
+        `${index + 1}. ${risk.risk} | Likelihood ${risk.likelihood} | Impact ${risk.impact} | Owner ${risk.owner} | Review ${risk.reviewDate}`
+      );
+      appendWrappedPdfLine(lines, `Mitigation: ${risk.mitigation}`);
+    });
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "MONITORING & EVALUATION");
+    report.mePlan.slice(0, 4).forEach((indicator, index) => {
+      appendWrappedPdfLine(
+        lines,
+        `${index + 1}. ${indicator.label} | Source: ${indicator.dataSource} | Frequency: ${indicator.frequency} | Verification: ${indicator.verification}`
+      );
+    });
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "SUSTAINABILITY");
+    appendWrappedPdfLine(
+      lines,
+      `Sustainability score: ${formatPercentLabel(report.sustainabilityScore)} (${report.sustainabilityLabel})`
+    );
+    report.sustainabilityPillars.slice(0, 3).forEach((pillar, index) => {
+      appendWrappedPdfLine(lines, `${index + 1}. ${pillar.title}: ${pillar.detail}`);
+    });
+    appendWrappedPdfLine(lines, "");
+    appendWrappedPdfLine(lines, "PARTNER & FUNDING ASK");
+    appendWrappedPdfLine(
+      lines,
+      `Linked partners: ${report.linkedPartners.length ? report.linkedPartners.join(", ") : "None listed"}`
+    );
+    appendWrappedPdfLine(lines, `Funding narrative: ${report.donorAskSummary}`);
+    return lines;
+  };
+
+  const handleDownloadDonorBrief = () => {
+    if (!projectSummaryReport || exportingDonorBrief) return;
+    setExportingDonorBrief(true);
+    try {
+      const lines = buildDonorBriefLines(projectSummaryReport);
+      const fileTitle = `${projectSummaryReport.projectName} Donor Brief`;
+      const blob = buildSimplePdfBlob(fileTitle, lines);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const slug = toFilenameSlug(projectSummaryReport.projectName || "project");
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      link.href = url;
+      link.download = `${slug}-donor-brief-${dateStamp}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      setProjectsNotice({
+        type: "success",
+        message: "Donor brief downloaded.",
+      });
+    } catch (error) {
+      console.error("Error generating donor brief:", error);
+      setProjectsNotice({
+        type: "warning",
+        message: "Failed to generate donor brief PDF.",
+      });
+    } finally {
+      setExportingDonorBrief(false);
+    }
+  };
+
   const projectExpenseInsights = useMemo(() => {
     const totalAmount = Number.isFinite(totalProjectExpensesAmount) ? totalProjectExpensesAmount : 0;
     const categoryTotals = new Map();
@@ -2532,6 +3272,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   }, [projectExpenses, expenseCategoryRows]);
 
   const openEditSelectedExpenseModal = () => {
+    if (!canManageProjectContent) return;
     if (selectedExpenses.length !== 1) return;
     const expense = selectedExpenses[0];
     const parsed = parseExpenseDescriptionForForm(expense?.description, expense?.category);
@@ -2560,6 +3301,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const requestDeleteSelectedExpenses = () => {
+    if (!canManageProjectContent) return;
     if (!selectedExpenses.length) return;
     setShowDeleteExpensesModal(true);
   };
@@ -2576,6 +3318,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   }, [showDeleteExpensesModal, selectedExpenses.length]);
 
   const handleConfirmDeleteSelectedExpenses = async () => {
+    if (!canManageProjectContent) return;
     if (!selectedExpenses.length) return;
     setDeletingExpenses(true);
     setExpenseFormError("");
@@ -2694,6 +3437,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   }, [selectedProject?.id]);
 
   const openExpenseModal = () => {
+    if (!canManageProjectContent) return;
     setEditingExpenseId(null);
     setExpenseForm(createInitialExpenseForm());
     setExpenseReceiptDragActive(false);
@@ -2717,6 +3461,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const openExpenseCategoryModal = () => {
+    if (!canManageProjectContent) return;
     setExpenseCategoriesError("");
     setShowExpenseCategoryModal(true);
   };
@@ -2730,6 +3475,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const startEditingExpenseCategory = (categoryRow) => {
+    if (!canManageProjectContent) return;
     const categoryId = String(categoryRow?.id || "");
     const categoryName = String(categoryRow?.name || "").trim();
     if (!categoryId || !categoryName) return;
@@ -2747,6 +3493,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
 
   const handleSaveExpenseCategory = async (event) => {
     event.preventDefault();
+    if (!canManageProjectContent) return;
 
     const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
     if (!Number.isInteger(projectId) || projectId <= 0) {
@@ -2814,6 +3561,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const handleArchiveExpenseCategory = async (categoryRow) => {
+    if (!canManageProjectContent) return;
     const categoryId = String(categoryRow?.id || "");
     const categoryName = String(categoryRow?.name || "").trim();
     if (!categoryId || !categoryName) return;
@@ -3028,6 +3776,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const triggerSelectedExpenseReceiptPicker = () => {
+    if (!canManageProjectContent) return;
     if (selectedExpenses.length !== 1 || savingExpense || deletingExpenses || uploadingExpenseReceipt) return;
     const targetExpenseId = String(selectedExpenses[0]?.id ?? "").trim();
     if (!targetExpenseId) return;
@@ -3037,6 +3786,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const handleSelectedExpenseReceiptFileSelection = async (event) => {
+    if (!canManageProjectContent) return;
     const file = event.target.files?.[0] || null;
     event.target.value = "";
     const targetExpenseId = String(receiptUploadExpenseId || selectedExpenses[0]?.id || "").trim();
@@ -3073,6 +3823,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
 
   const handleExpenseFormSubmit = async (event) => {
     event.preventDefault();
+    if (!canManageProjectContent) return;
     const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
     const normalizedEditingExpenseId = String(editingExpenseId || "").trim();
     const isEditingExpense = Boolean(normalizedEditingExpenseId);
@@ -3277,7 +4028,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
 
   const triggerProjectDocumentPicker = () => {
     if (
-      !canCreateProject ||
+      !canManageProjectContent ||
       uploadingProjectDocument ||
       deletingDocuments ||
       emittingProjectDocument ||
@@ -3289,6 +4040,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const handleProjectDocumentFileSelection = async (event) => {
+    if (!canManageProjectContent) return;
     const files = Array.from(event.target.files || []);
     event.target.value = "";
     const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
@@ -3384,7 +4136,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const openRenameSelectedDocumentModal = () => {
-    if (!canCreateProject || selectedDocumentIds.length !== 1) return;
+    if (!canManageProjectContent || selectedDocumentIds.length !== 1) return;
     const selectedDocument =
       sortedProjectDocuments.find(
         (document) => String(document?.id ?? "") === String(selectedDocumentIds[0] ?? "")
@@ -3404,7 +4156,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   const handleConfirmRenameSelectedDocument = async (event) => {
     event.preventDefault();
 
-    if (!canCreateProject || selectedDocumentIds.length !== 1) {
+    if (!canManageProjectContent || selectedDocumentIds.length !== 1) {
       setDocumentRenameError("Select one document to rename.");
       return;
     }
@@ -3451,6 +4203,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const requestDeleteSelectedDocuments = () => {
+    if (!canManageProjectContent) return;
     if (!selectedDocuments.length) return;
     setShowDeleteDocumentsModal(true);
   };
@@ -3927,7 +4680,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
 
   const handlePrepareEmitDocument = async () => {
     if (
-      !canCreateProject ||
+      !canManageProjectContent ||
       uploadingProjectDocument ||
       deletingDocuments ||
       emittingProjectDocument ||
@@ -4007,6 +4760,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   }, [showRenameDocumentModal, selectedDocumentIds.length]);
 
   const handleConfirmDeleteSelectedDocuments = async () => {
+    if (!canManageProjectContent) return;
     if (!selectedDocuments.length) return;
     setDeletingDocuments(true);
     try {
@@ -4213,6 +4967,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
 
   const openTaskModalForStatus = useCallback(
     (status = "open") => {
+      if (!canManageProjectContent) return;
       const normalizedStatus =
         TASK_STATUS_LABELS[String(status || "").trim().toLowerCase()] ? String(status).trim().toLowerCase() : "open";
       const defaultAssignee = parseMemberId(user?.id);
@@ -4226,7 +4981,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
       setTaskFormError("");
       setShowTaskModal(true);
     },
-    [user?.id]
+    [canManageProjectContent, user?.id]
   );
 
   const openTaskModal = () => {
@@ -4234,6 +4989,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const openTaskEditorForRow = useCallback((task) => {
+    if (!canManageProjectContent) return;
     if (!task) return;
     setEditingTaskId(String(task?.id ?? ""));
     setTaskForm({
@@ -4246,9 +5002,10 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     });
     setTaskFormError("");
     setShowTaskModal(true);
-  }, []);
+  }, [canManageProjectContent]);
 
   const openEditSelectedTaskModal = () => {
+    if (!canManageProjectContent) return;
     if (selectedTasks.length !== 1) return;
     openTaskEditorForRow(selectedTasks[0]);
   };
@@ -4261,6 +5018,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const requestDeleteSelectedTasks = () => {
+    if (!canManageProjectContent) return;
     if (!selectedTasks.length) return;
     setShowDeleteTasksModal(true);
   };
@@ -4288,6 +5046,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
 
   const handleTaskFormSubmit = async (event) => {
     event.preventDefault();
+    if (!canManageProjectContent) return;
     const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
     const parsedEditingTaskId = String(editingTaskId || "").trim();
     const isEditingTask = Boolean(parsedEditingTaskId);
@@ -4377,6 +5136,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const handleConfirmDeleteSelectedTasks = async () => {
+    if (!canManageProjectContent) return;
     if (!selectedTasks.length) return;
     setDeletingTasks(true);
     try {
@@ -4533,19 +5293,23 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   const hasActiveNoteFilters =
     String(noteSearchQuery || "").trim().length > 0 || noteVisibilityFilter !== "all";
 
-  const openNoteModalForVisibility = useCallback((visibility = "project_team") => {
-    const normalizedVisibility =
-      NOTE_VISIBILITY_LABELS[String(visibility || "").trim().toLowerCase()]
-        ? String(visibility).trim().toLowerCase()
-        : "project_team";
-    setEditingNoteId(null);
-    setNoteForm({
-      ...createInitialNoteForm(),
-      visibility: normalizedVisibility,
-    });
-    setNoteFormError("");
-    setShowNoteModal(true);
-  }, []);
+  const openNoteModalForVisibility = useCallback(
+    (visibility = "project_team") => {
+      if (!canManageProjectContent) return;
+      const normalizedVisibility =
+        NOTE_VISIBILITY_LABELS[String(visibility || "").trim().toLowerCase()]
+          ? String(visibility).trim().toLowerCase()
+          : "project_team";
+      setEditingNoteId(null);
+      setNoteForm({
+        ...createInitialNoteForm(),
+        visibility: normalizedVisibility,
+      });
+      setNoteFormError("");
+      setShowNoteModal(true);
+    },
+    [canManageProjectContent]
+  );
 
   const openNoteModal = () => {
     openNoteModalForVisibility("project_team");
@@ -4559,6 +5323,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const openNoteEditorForRow = useCallback((note) => {
+    if (!canManageProjectContent) return;
     if (!note) return;
     setEditingNoteId(String(note?.id ?? ""));
     setNoteForm({
@@ -4568,14 +5333,16 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
     });
     setNoteFormError("");
     setShowNoteModal(true);
-  }, []);
+  }, [canManageProjectContent]);
 
   const openEditSelectedNoteModal = () => {
+    if (!canManageProjectContent) return;
     if (selectedNotes.length !== 1) return;
     openNoteEditorForRow(selectedNotes[0]);
   };
 
   const requestDeleteSelectedNotes = () => {
+    if (!canManageProjectContent) return;
     if (!selectedNotes.length) return;
     setShowDeleteNotesModal(true);
   };
@@ -4603,6 +5370,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
 
   const handleNoteFormSubmit = async (event) => {
     event.preventDefault();
+    if (!canManageProjectContent) return;
     const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
     const parsedEditingNoteId = String(editingNoteId || "").trim();
     const isEditingNote = Boolean(parsedEditingNoteId);
@@ -4683,6 +5451,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
   };
 
   const handleConfirmDeleteSelectedNotes = async () => {
+    if (!canManageProjectContent) return;
     if (!selectedNotes.length) return;
     setDeletingNotes(true);
     try {
@@ -4731,6 +5500,112 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
         onManageProject(project);
       }
       setActivePage(target);
+    }
+  };
+
+  const formatInviteStatusLabel = (status) =>
+    String(status || "pending")
+      .trim()
+      .replace(/[_-]+/g, " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+
+  const formatInviteScopeLabel = (invite) => {
+    const scope = String(invite?.project_access_scope || "none").trim().toLowerCase();
+    if (scope === "all") return "All projects";
+    if (scope === "selected") {
+      const count = Array.isArray(invite?.project_ids) ? invite.project_ids.length : 0;
+      return count <= 1 ? "Selected project" : `${count} selected projects`;
+    }
+    return "No project access";
+  };
+
+  const resetProjectInviteForm = useCallback(() => {
+    setProjectInviteForm(createInitialProjectInviteForm());
+    setProjectInviteFormError("");
+  }, []);
+
+  const openProjectInviteModal = useCallback(() => {
+    const parsedProjectId = Number.parseInt(String(selectedProject?.id || ""), 10);
+    if (!canViewProjectInvites || !Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+      return;
+    }
+    resetProjectInviteForm();
+    setShowProjectInviteModal(true);
+  }, [canViewProjectInvites, selectedProject?.id, resetProjectInviteForm]);
+
+  const closeProjectInviteModal = useCallback(() => {
+    if (submittingProjectInvite) return;
+    setShowProjectInviteModal(false);
+    resetProjectInviteForm();
+  }, [submittingProjectInvite, resetProjectInviteForm]);
+
+  const handleProjectInviteFormFieldChange = useCallback((field, value) => {
+    setProjectInviteForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+    if (projectInviteFormError) {
+      setProjectInviteFormError("");
+    }
+  }, [projectInviteFormError]);
+
+  const handleProjectInviteSubmit = async (event) => {
+    event.preventDefault();
+    if (!canViewProjectInvites) return;
+
+    const projectId = Number.parseInt(String(selectedProject?.id || ""), 10);
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      setProjectInviteFormError("Select a valid project before inviting members.");
+      return;
+    }
+
+    const email = String(projectInviteForm.email || "").trim().toLowerCase();
+    if (!email) {
+      setProjectInviteFormError("Invite email is required.");
+      return;
+    }
+
+    setSubmittingProjectInvite(true);
+    setProjectInviteFormError("");
+    try {
+      const result = await createProjectMagicLinkInvite({
+        project_id: projectId,
+        email,
+        phone_number: projectInviteForm.phone_number || null,
+        role: projectInviteForm.role || "member",
+        notes: projectInviteForm.notes || null,
+      });
+      setShowProjectInviteModal(false);
+      resetProjectInviteForm();
+      setProjectsNotice({
+        type: "success",
+        message: `Invite created for ${email}. Invite number: ${result?.inviteNumber || "N/A"}.`,
+      });
+      await loadProjectInvites();
+      setDetailTab("invites");
+    } catch (error) {
+      console.error("Error creating project invite:", error);
+      setProjectInviteFormError(error?.message || "Failed to create project invite.");
+    } finally {
+      setSubmittingProjectInvite(false);
+    }
+  };
+
+  const handleCopyInviteNumber = async (inviteNumber) => {
+    const value = String(inviteNumber || "").trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setProjectsNotice({
+        type: "success",
+        message: `Invite number ${value} copied.`,
+      });
+    } catch (error) {
+      console.error("Unable to copy invite number:", error);
+      setProjectsNotice({
+        type: "warning",
+        message: `Unable to copy invite number ${value}.`,
+      });
     }
   };
 
@@ -5272,7 +6147,10 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
 
       <DataModal
         open={Boolean(selectedProject)}
-        onClose={() => setSelectedProject(null)}
+        onClose={() => {
+          setShowBudgetSummaryReportModal(false);
+          setSelectedProject(null);
+        }}
         title={selectedProject?.name || "Project details"}
         subtitle={selectedProject ? getProjectSubtitle(selectedProject) : ""}
         icon="briefcase"
@@ -5423,7 +6301,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
             </div>
             <div className="project-detail-center">
               <div className="project-detail-tabs" role="tablist">
-                {["overview", "expenses", "documents", "tasks", "notes"].map((tab) => (
+                {projectDetailTabs.map((tab) => (
                   <button
                     key={tab}
                     type="button"
@@ -5434,11 +6312,13 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                       ? "Overview"
                       : tab === "expenses"
                         ? "Expenses"
-                        : tab === "documents"
-                          ? "Documents"
-                          : tab === "tasks"
-                            ? "Tasks"
-                            : "Notes"}
+                      : tab === "documents"
+                        ? "Documents"
+                        : tab === "tasks"
+                          ? "Tasks"
+                          : tab === "notes"
+                            ? "Notes"
+                            : "Invites"}
                   </button>
                 ))}
               </div>
@@ -5488,7 +6368,19 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                     </div>
 
                     <div className="project-overview-panel-grid">
-                      <article className="project-overview-panel">
+                      <article
+                        className="project-overview-panel project-overview-panel--interactive"
+                        role="button"
+                        tabIndex={0}
+                        onClick={openBudgetSummaryReportModal}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openBudgetSummaryReportModal();
+                          }
+                        }}
+                        aria-label={`Open project summary report for ${selectedProject?.name || "this project"}`}
+                      >
                         <div className="project-overview-panel-head">
                           <h5>Budget health</h5>
                           <span>{formatPercentLabel(projectOverviewAnalytics.budgetSpentPercent)} used</span>
@@ -5531,6 +6423,10 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                             </div>
                           </div>
                         </div>
+                        <p className="project-overview-panel-link-hint">
+                          <Icon name="trending-up" size={14} />
+                          View full summary report
+                        </p>
                       </article>
 
                       <article className="project-overview-panel">
@@ -5675,7 +6571,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                     <div className="project-detail-section-head">
                       <h4>Expenses</h4>
                       <div className="project-detail-section-head-actions">
-                        {selectedExpenseIds.length > 0 ? (
+                        {canManageProjectContent && selectedExpenseIds.length > 0 ? (
                           <>
                             <button
                               type="button"
@@ -5713,14 +6609,16 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                             </button>
                           </>
                         ) : null}
-                        <input
-                          ref={expenseReceiptInputRef}
-                          type="file"
-                          className="project-documents-file-input"
-                          accept={PROJECT_EXPENSE_RECEIPT_ACCEPT}
-                          onChange={handleSelectedExpenseReceiptFileSelection}
-                          disabled={uploadingExpenseReceipt || savingExpense || deletingExpenses}
-                        />
+                        {canManageProjectContent ? (
+                          <input
+                            ref={expenseReceiptInputRef}
+                            type="file"
+                            className="project-documents-file-input"
+                            accept={PROJECT_EXPENSE_RECEIPT_ACCEPT}
+                            onChange={handleSelectedExpenseReceiptFileSelection}
+                            disabled={uploadingExpenseReceipt || savingExpense || deletingExpenses}
+                          />
+                        ) : null}
                         <button
                           type="button"
                           className="project-detail-action ghost icon-only"
@@ -5731,14 +6629,16 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                         >
                           <Icon name="download" size={16} />
                         </button>
-                        <button
-                          type="button"
-                          className="project-detail-action"
-                          onClick={openExpenseModal}
-                          disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
-                        >
-                          Add expense
-                        </button>
+                        {canManageProjectContent ? (
+                          <button
+                            type="button"
+                            className="project-detail-action"
+                            onClick={openExpenseModal}
+                            disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                          >
+                            Add expense
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                     {projectExpensesError ? (
@@ -5756,9 +6656,11 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                       </div>
                     ) : (
                       <>
-                        <div className="project-expenses-selection-note">
-                          {selectedExpenseIds.length} selected
-                        </div>
+                        {canManageProjectContent ? (
+                          <div className="project-expenses-selection-note">
+                            {selectedExpenseIds.length} selected
+                          </div>
+                        ) : null}
                         {projectExpenses.length > recentProjectExpenses.length ? (
                           <div className="project-expenses-selection-note">
                             Showing {recentProjectExpenses.length} most recent expenses.
@@ -5768,14 +6670,16 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                           <table className="projects-table-view project-expenses-table">
                             <thead>
                               <tr>
-                                <th className="projects-table-check">
-                                  <input
-                                    type="checkbox"
-                                    checked={allExpensesSelected}
-                                    onChange={handleToggleSelectAllExpenses}
-                                    aria-label="Select all project expenses"
-                                  />
-                                </th>
+                                {canManageProjectContent ? (
+                                  <th className="projects-table-check">
+                                    <input
+                                      type="checkbox"
+                                      checked={allExpensesSelected}
+                                      onChange={handleToggleSelectAllExpenses}
+                                      aria-label="Select all project expenses"
+                                    />
+                                  </th>
+                                ) : null}
                                 <th>Expense details</th>
                                 <th>Date</th>
                                 <th>Category</th>
@@ -5795,29 +6699,28 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                   String(expense?.description || "").trim() ||
                                   categoryLabel ||
                                   `Expense #${expenseId || "-"}`;
+                                const detailTitleTrimmed = truncateProjectCellText(detailTitle, 82);
                                 return (
                                   <tr
                                     key={expenseId || `${detailTitle}-${expense?.expense_date || ""}`}
                                     className="project-expense-row"
                                   >
-                                    <td className="projects-table-check">
-                                      <input
-                                        type="checkbox"
-                                        checked={isChecked}
-                                        onChange={() => handleToggleExpenseSelection(expenseId)}
-                                        aria-label={`Select expense ${detailTitle}`}
-                                      />
-                                    </td>
+                                    {canManageProjectContent ? (
+                                      <td className="projects-table-check">
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={() => handleToggleExpenseSelection(expenseId)}
+                                          aria-label={`Select expense ${detailTitle}`}
+                                        />
+                                      </td>
+                                    ) : null}
                                     <td>
                                       <div className="project-expense-main">
-                                        <span
-                                          className={`project-expense-category-icon project-expense-tone-${categoryTone}`}
-                                          aria-hidden="true"
-                                        >
-                                          <Icon name={categoryIcon} size={18} />
-                                        </span>
                                         <div className="project-expense-detail">
-                                          <strong>{detailTitle}</strong>
+                                          <strong className="project-row-title" title={detailTitle}>
+                                            {detailTitleTrimmed}
+                                          </strong>
                                         </div>
                                       </div>
                                     </td>
@@ -5826,7 +6729,10 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                       <span
                                         className={`project-expense-category-pill project-expense-tone-${categoryTone}`}
                                       >
-                                        {categoryLabel}
+                                        <span className="project-expense-category-pill-icon" aria-hidden="true">
+                                          <Icon name={categoryIcon} size={12} />
+                                        </span>
+                                        <span className="project-expense-category-pill-label">{categoryLabel}</span>
                                       </span>
                                     </td>
                                     <td className="project-expense-vendor-cell">
@@ -5875,39 +6781,43 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                     <div className="project-detail-section-head">
                       <h4>Documents</h4>
                       <div className="project-detail-section-head-actions">
-                        <div className="project-documents-mode" role="tablist" aria-label="Document action mode">
-                          <button
-                            type="button"
-                            className={`project-documents-mode-btn${projectDocumentMode === "upload" ? " active" : ""}`}
-                            onClick={() => setProjectDocumentMode("upload")}
-                            disabled={
-                              uploadingProjectDocument ||
-                              deletingDocuments ||
-                              emittingProjectDocument ||
-                              renamingDocument
-                            }
-                            role="tab"
-                            aria-selected={projectDocumentMode === "upload"}
-                          >
-                            Upload
-                          </button>
-                          <button
-                            type="button"
-                            className={`project-documents-mode-btn${projectDocumentMode === "emit" ? " active" : ""}`}
-                            onClick={() => setProjectDocumentMode("emit")}
-                            disabled={
-                              uploadingProjectDocument ||
-                              deletingDocuments ||
-                              emittingProjectDocument ||
-                              renamingDocument
-                            }
-                            role="tab"
-                            aria-selected={projectDocumentMode === "emit"}
-                          >
-                            Emit
-                          </button>
-                        </div>
-                        {selectedDocumentIds.length === 1 && canCreateProject ? (
+                        {canManageProjectContent ? (
+                          <div className="project-documents-mode" role="tablist" aria-label="Document action mode">
+                            <button
+                              type="button"
+                              className={`project-documents-mode-btn${projectDocumentMode === "upload" ? " active" : ""}`}
+                              onClick={() => setProjectDocumentMode("upload")}
+                              disabled={
+                                uploadingProjectDocument ||
+                                deletingDocuments ||
+                                emittingProjectDocument ||
+                                renamingDocument
+                              }
+                              role="tab"
+                              aria-selected={projectDocumentMode === "upload"}
+                            >
+                              Upload
+                            </button>
+                            <button
+                              type="button"
+                              className={`project-documents-mode-btn${projectDocumentMode === "emit" ? " active" : ""}`}
+                              onClick={() => setProjectDocumentMode("emit")}
+                              disabled={
+                                uploadingProjectDocument ||
+                                deletingDocuments ||
+                                emittingProjectDocument ||
+                                renamingDocument
+                              }
+                              role="tab"
+                              aria-selected={projectDocumentMode === "emit"}
+                            >
+                              Emit
+                            </button>
+                          </div>
+                        ) : (
+                          <span>Read-only</span>
+                        )}
+                        {selectedDocumentIds.length === 1 && canManageProjectContent ? (
                           <button
                             type="button"
                             className="project-detail-action ghost"
@@ -5922,7 +6832,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                             Rename selected
                           </button>
                         ) : null}
-                        {selectedDocumentIds.length > 0 && canCreateProject ? (
+                        {selectedDocumentIds.length > 0 && canManageProjectContent ? (
                           <button
                             type="button"
                             className="project-detail-action ghost danger"
@@ -5937,23 +6847,17 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                             Delete selected
                           </button>
                         ) : null}
-                        {projectDocumentMode === "upload" ? (
+                        {canManageProjectContent && projectDocumentMode === "upload" ? (
                           <>
                             <button
                               type="button"
                               className="project-detail-action"
                               onClick={triggerProjectDocumentPicker}
                               disabled={
-                                !canCreateProject ||
                                 uploadingProjectDocument ||
                                 deletingDocuments ||
                                 emittingProjectDocument ||
                                 renamingDocument
-                              }
-                              title={
-                                !canCreateProject
-                                  ? "Only project managers and admins can upload documents."
-                                  : undefined
                               }
                             >
                               {uploadingProjectDocument ? "Uploading..." : "Upload document"}
@@ -5966,7 +6870,6 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                               multiple
                               onChange={handleProjectDocumentFileSelection}
                               disabled={
-                                !canCreateProject ||
                                 uploadingProjectDocument ||
                                 deletingDocuments ||
                                 emittingProjectDocument ||
@@ -5974,53 +6877,51 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                               }
                             />
                           </>
-                        ) : (
+                        ) : canManageProjectContent ? (
                           <button
                             type="button"
                             className="project-detail-action"
                             onClick={handlePrepareEmitDocument}
                             disabled={
-                              !canCreateProject ||
                               emittingProjectDocument ||
                               uploadingProjectDocument ||
                               deletingDocuments ||
                               renamingDocument
                             }
-                            title={
-                              !canCreateProject
-                                ? "Only project managers and admins can emit documents."
-                                : undefined
-                            }
                           >
                             {emittingProjectDocument ? "Emitting..." : "Emit document"}
                           </button>
-                        )}
+                        ) : null}
                       </div>
                     </div>
-                    {projectDocumentMode === "upload" ? (
-                      <p className="project-documents-hint">
-                        Allowed file types: <strong>.docx</strong>, <strong>.pdf</strong>, and image files.
-                      </p>
-                    ) : (
-                      <div className="project-documents-emit">
-                        <label className="project-detail-filter project-detail-filter--search">
-                          <span>Document template</span>
-                          <select
-                            value={emitDocumentType}
-                            onChange={(event) => setEmitDocumentType(event.target.value)}
-                            disabled={!canCreateProject || emittingProjectDocument || renamingDocument}
-                          >
-                            {PROJECT_EMIT_DOCUMENT_OPTIONS.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <p className="project-documents-emit-note">
-                          All templates emit generated PDFs using current project data and KPI summaries.
+                    {canManageProjectContent ? (
+                      projectDocumentMode === "upload" ? (
+                        <p className="project-documents-hint">
+                          Allowed file types: <strong>.docx</strong>, <strong>.pdf</strong>, and image files.
                         </p>
-                      </div>
+                      ) : (
+                        <div className="project-documents-emit">
+                          <label className="project-detail-filter project-detail-filter--search">
+                            <span>Document template</span>
+                            <select
+                              value={emitDocumentType}
+                              onChange={(event) => setEmitDocumentType(event.target.value)}
+                              disabled={emittingProjectDocument || renamingDocument}
+                            >
+                              {PROJECT_EMIT_DOCUMENT_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <p className="project-documents-emit-note">
+                            All templates emit generated PDFs using current project data and KPI summaries.
+                          </p>
+                        </div>
+                      )
+                    ) : (
+                      <p className="project-documents-hint">You can view and download documents in this project.</p>
                     )}
                     {projectDocumentsError ? (
                       <p className="project-detail-expense-error">{projectDocumentsError}</p>
@@ -6037,21 +6938,25 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                       </div>
                     ) : (
                       <>
-                        <div className="project-expenses-selection-note">
-                          {selectedDocumentIds.length} selected
-                        </div>
+                        {canManageProjectContent ? (
+                          <div className="project-expenses-selection-note">
+                            {selectedDocumentIds.length} selected
+                          </div>
+                        ) : null}
                         <div className="projects-table-wrap project-expenses-table-wrap">
                           <table className="projects-table-view project-expenses-table project-documents-table">
                             <thead>
                               <tr>
-                                <th className="projects-table-check">
-                                  <input
-                                    type="checkbox"
-                                    checked={allDocumentsSelected}
-                                    onChange={handleToggleSelectAllDocuments}
-                                    aria-label="Select all project documents"
-                                  />
-                                </th>
+                                {canManageProjectContent ? (
+                                  <th className="projects-table-check">
+                                    <input
+                                      type="checkbox"
+                                      checked={allDocumentsSelected}
+                                      onChange={handleToggleSelectAllDocuments}
+                                      aria-label="Select all project documents"
+                                    />
+                                  </th>
+                                ) : null}
                                 <th>Document</th>
                                 <th>Type</th>
                                 <th>Size</th>
@@ -6068,17 +6973,19 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                 const downloadUrl = String(document?.download_url || document?.file_url || "").trim();
                                 return (
                                   <tr key={documentId || fileName}>
-                                    <td className="projects-table-check">
-                                      <input
-                                        type="checkbox"
-                                        checked={isChecked}
-                                        onChange={() => handleToggleDocumentSelection(documentId)}
-                                        aria-label={`Select document ${fileName}`}
-                                      />
-                                    </td>
+                                    {canManageProjectContent ? (
+                                      <td className="projects-table-check">
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={() => handleToggleDocumentSelection(documentId)}
+                                          aria-label={`Select document ${fileName}`}
+                                        />
+                                      </td>
+                                    ) : null}
                                     <td>
                                       <div className="project-expense-detail project-document-detail">
-                                        <strong>{fileName}</strong>
+                                        <strong className="project-row-title">{fileName}</strong>
                                         <p>{String(document?.file_path || "").split("/").pop() || "Stored document"}</p>
                                       </div>
                                     </td>
@@ -6115,7 +7022,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                     <div className="project-detail-section-head">
                       <h4>Tasks</h4>
                       <div className="project-detail-section-head-actions">
-                        {selectedTaskIds.length > 0 ? (
+                        {canManageProjectContent && selectedTaskIds.length > 0 ? (
                           <>
                             <button
                               type="button"
@@ -6135,14 +7042,16 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                             </button>
                           </>
                         ) : null}
-                        <button
-                          type="button"
-                          className="project-detail-action"
-                          onClick={openTaskModal}
-                          disabled={savingTask || deletingTasks}
-                        >
-                          Add task
-                        </button>
+                        {canManageProjectContent ? (
+                          <button
+                            type="button"
+                            className="project-detail-action"
+                            onClick={openTaskModal}
+                            disabled={savingTask || deletingTasks}
+                          >
+                            Add task
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                     {projectTasksError ? (
@@ -6221,21 +7130,25 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                       </div>
                     ) : (
                       <>
-                        <div className="project-expenses-selection-note">
-                          {selectedTaskIds.length} selected
-                        </div>
+                        {canManageProjectContent ? (
+                          <div className="project-expenses-selection-note">
+                            {selectedTaskIds.length} selected
+                          </div>
+                        ) : null}
                         <div className="project-expenses-selection-note">
                           Showing {filteredProjectTasks.length} of {projectTasks.length} tasks.
                         </div>
-                        <label className="project-group-select-all">
-                          <input
-                            type="checkbox"
-                            checked={allTasksSelected}
-                            onChange={handleToggleSelectAllTasks}
-                            aria-label="Select all visible project tasks"
-                          />
-                          <span>Select all visible tasks</span>
-                        </label>
+                        {canManageProjectContent ? (
+                          <label className="project-group-select-all">
+                            <input
+                              type="checkbox"
+                              checked={allTasksSelected}
+                              onChange={handleToggleSelectAllTasks}
+                              aria-label="Select all visible project tasks"
+                            />
+                            <span>Select all visible tasks</span>
+                          </label>
+                        ) : null}
                         <div className="project-grouped-board">
                           {groupedTaskRows.map((lane) => {
                             const laneTaskIds = lane.rows
@@ -6255,42 +7168,50 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                     <h5>{lane.label}</h5>
                                     <span className="project-group-lane-count">{lane.rows.length}</span>
                                   </div>
-                                  <button
-                                    type="button"
-                                    className="project-group-lane-add"
-                                    onClick={() => openTaskModalForStatus(lane.key)}
-                                    disabled={savingTask || deletingTasks}
-                                    aria-label={`Add task in ${lane.label}`}
-                                  >
-                                    <Icon name="plus" size={14} />
-                                  </button>
+                                  {canManageProjectContent ? (
+                                    <button
+                                      type="button"
+                                      className="project-group-lane-add"
+                                      onClick={() => openTaskModalForStatus(lane.key)}
+                                      disabled={savingTask || deletingTasks}
+                                      aria-label={`Add task in ${lane.label}`}
+                                    >
+                                      <Icon name="plus" size={14} />
+                                    </button>
+                                  ) : null}
                                 </header>
                                 <div className="projects-table-wrap project-expenses-table-wrap project-group-lane-table-wrap">
                                   <table className="projects-table-view project-expenses-table project-tasks-table project-group-lane-table">
                                     <thead>
                                       <tr>
-                                        <th className="projects-table-check">
-                                          <input
-                                            type="checkbox"
-                                            checked={laneAllSelected}
-                                            onChange={() => {
-                                              if (laneAllSelected) {
-                                                const laneSet = new Set(laneTaskIds);
-                                                setSelectedTaskIds((prev) => prev.filter((id) => !laneSet.has(id)));
-                                                return;
-                                              }
-                                              setSelectedTaskIds((prev) => Array.from(new Set([...prev, ...laneTaskIds])));
-                                            }}
-                                            aria-label={`Select all tasks in ${lane.label}`}
-                                          />
-                                        </th>
+                                        {canManageProjectContent ? (
+                                          <th className="projects-table-check">
+                                            <input
+                                              type="checkbox"
+                                              checked={laneAllSelected}
+                                              onChange={() => {
+                                                if (laneAllSelected) {
+                                                  const laneSet = new Set(laneTaskIds);
+                                                  setSelectedTaskIds((prev) => prev.filter((id) => !laneSet.has(id)));
+                                                  return;
+                                                }
+                                                setSelectedTaskIds((prev) =>
+                                                  Array.from(new Set([...prev, ...laneTaskIds]))
+                                                );
+                                              }}
+                                              aria-label={`Select all tasks in ${lane.label}`}
+                                            />
+                                          </th>
+                                        ) : null}
                                         <th>Task Name</th>
                                         <th>Description</th>
                                         <th>Estimation</th>
                                         <th>People</th>
                                         <th>Priority</th>
                                         <th>Status</th>
-                                        <th className="project-group-actions-col" aria-label="Actions" />
+                                        {canManageProjectContent ? (
+                                          <th className="project-group-actions-col" aria-label="Actions" />
+                                        ) : null}
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -6309,23 +7230,31 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                           task?.assignee_name ||
                                           (task?.assignee_member_id ? `Member #${task.assignee_member_id}` : "Unassigned");
                                         const assigneeInitials = getInitials(assignee, "UN");
+                                        const taskDetailsRaw = String(task?.details || "").trim();
+                                        const taskDetailsDisplay = taskDetailsRaw
+                                          ? truncateProjectCellText(taskDetailsRaw, 108)
+                                          : "—";
                                         return (
                                           <tr key={taskId || `${task?.title || "task"}-${task?.due_date || ""}`}>
-                                            <td className="projects-table-check">
-                                              <input
-                                                type="checkbox"
-                                                checked={isChecked}
-                                                onChange={() => handleToggleTaskSelection(taskId)}
-                                                aria-label={`Select task ${task?.title || taskId}`}
-                                              />
-                                            </td>
+                                            {canManageProjectContent ? (
+                                              <td className="projects-table-check">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={isChecked}
+                                                  onChange={() => handleToggleTaskSelection(taskId)}
+                                                  aria-label={`Select task ${task?.title || taskId}`}
+                                                />
+                                              </td>
+                                            ) : null}
                                             <td>
                                               <div className="project-expense-detail project-task-detail">
-                                                <strong>{task?.title || "Untitled task"}</strong>
+                                                <strong className="project-row-title">{task?.title || "Untitled task"}</strong>
                                               </div>
                                             </td>
-                                            <td>
-                                              <p className="project-group-description">{task?.details || "—"}</p>
+                                            <td className="project-group-description-cell">
+                                              <p className="project-group-description" title={taskDetailsRaw || undefined}>
+                                                {taskDetailsDisplay}
+                                              </p>
                                             </td>
                                             <td className="project-group-estimation">{formatDate(task?.due_date)}</td>
                                             <td>
@@ -6350,17 +7279,19 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                                 {statusLabel}
                                               </span>
                                             </td>
-                                            <td className="project-group-actions-col">
-                                              <button
-                                                type="button"
-                                                className="project-group-row-action"
-                                                aria-label={`Edit ${task?.title || "task"}`}
-                                                onClick={() => openTaskEditorForRow(task)}
-                                                disabled={savingTask || deletingTasks}
-                                              >
-                                                <Icon name="more-horizontal" size={15} />
-                                              </button>
-                                            </td>
+                                            {canManageProjectContent ? (
+                                              <td className="project-group-actions-col">
+                                                <button
+                                                  type="button"
+                                                  className="project-group-row-action"
+                                                  aria-label={`Edit ${task?.title || "task"}`}
+                                                  onClick={() => openTaskEditorForRow(task)}
+                                                  disabled={savingTask || deletingTasks}
+                                                >
+                                                  <Icon name="more-horizontal" size={15} />
+                                                </button>
+                                              </td>
+                                            ) : null}
                                           </tr>
                                         );
                                       })}
@@ -6380,7 +7311,7 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                     <div className="project-detail-section-head">
                       <h4>Notes</h4>
                       <div className="project-detail-section-head-actions">
-                        {selectedNoteIds.length > 0 ? (
+                        {canManageProjectContent && selectedNoteIds.length > 0 ? (
                           <>
                             <button
                               type="button"
@@ -6400,14 +7331,16 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                             </button>
                           </>
                         ) : null}
-                        <button
-                          type="button"
-                          className="project-detail-action"
-                          onClick={openNoteModal}
-                          disabled={savingNote || deletingNotes}
-                        >
-                          Add note
-                        </button>
+                        {canManageProjectContent ? (
+                          <button
+                            type="button"
+                            className="project-detail-action"
+                            onClick={openNoteModal}
+                            disabled={savingNote || deletingNotes}
+                          >
+                            Add note
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                     {projectNotesError ? (
@@ -6470,21 +7403,25 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                       </div>
                     ) : (
                       <>
-                        <div className="project-expenses-selection-note">
-                          {selectedNoteIds.length} selected
-                        </div>
+                        {canManageProjectContent ? (
+                          <div className="project-expenses-selection-note">
+                            {selectedNoteIds.length} selected
+                          </div>
+                        ) : null}
                         <div className="project-expenses-selection-note">
                           Showing {filteredProjectNotes.length} of {projectNotes.length} notes.
                         </div>
-                        <label className="project-group-select-all">
-                          <input
-                            type="checkbox"
-                            checked={allNotesSelected}
-                            onChange={handleToggleSelectAllNotes}
-                            aria-label="Select all visible project notes"
-                          />
-                          <span>Select all visible notes</span>
-                        </label>
+                        {canManageProjectContent ? (
+                          <label className="project-group-select-all">
+                            <input
+                              type="checkbox"
+                              checked={allNotesSelected}
+                              onChange={handleToggleSelectAllNotes}
+                              aria-label="Select all visible project notes"
+                            />
+                            <span>Select all visible notes</span>
+                          </label>
+                        ) : null}
                         <div className="project-grouped-board">
                           {groupedNoteRows.map((lane) => {
                             const laneNoteIds = lane.rows
@@ -6504,41 +7441,49 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                     <h5>{lane.label}</h5>
                                     <span className="project-group-lane-count">{lane.rows.length}</span>
                                   </div>
-                                  <button
-                                    type="button"
-                                    className="project-group-lane-add"
-                                    onClick={() => openNoteModalForVisibility(lane.key)}
-                                    disabled={savingNote || deletingNotes}
-                                    aria-label={`Add note in ${lane.label}`}
-                                  >
-                                    <Icon name="plus" size={14} />
-                                  </button>
+                                  {canManageProjectContent ? (
+                                    <button
+                                      type="button"
+                                      className="project-group-lane-add"
+                                      onClick={() => openNoteModalForVisibility(lane.key)}
+                                      disabled={savingNote || deletingNotes}
+                                      aria-label={`Add note in ${lane.label}`}
+                                    >
+                                      <Icon name="plus" size={14} />
+                                    </button>
+                                  ) : null}
                                 </header>
                                 <div className="projects-table-wrap project-expenses-table-wrap project-group-lane-table-wrap">
                                   <table className="projects-table-view project-expenses-table project-notes-table project-group-lane-table">
                                     <thead>
                                       <tr>
-                                        <th className="projects-table-check">
-                                          <input
-                                            type="checkbox"
-                                            checked={laneAllSelected}
-                                            onChange={() => {
-                                              if (laneAllSelected) {
-                                                const laneSet = new Set(laneNoteIds);
-                                                setSelectedNoteIds((prev) => prev.filter((id) => !laneSet.has(id)));
-                                                return;
-                                              }
-                                              setSelectedNoteIds((prev) => Array.from(new Set([...prev, ...laneNoteIds])));
-                                            }}
-                                            aria-label={`Select all notes in ${lane.label}`}
-                                          />
-                                        </th>
+                                        {canManageProjectContent ? (
+                                          <th className="projects-table-check">
+                                            <input
+                                              type="checkbox"
+                                              checked={laneAllSelected}
+                                              onChange={() => {
+                                                if (laneAllSelected) {
+                                                  const laneSet = new Set(laneNoteIds);
+                                                  setSelectedNoteIds((prev) => prev.filter((id) => !laneSet.has(id)));
+                                                  return;
+                                                }
+                                                setSelectedNoteIds((prev) =>
+                                                  Array.from(new Set([...prev, ...laneNoteIds]))
+                                                );
+                                              }}
+                                              aria-label={`Select all notes in ${lane.label}`}
+                                            />
+                                          </th>
+                                        ) : null}
                                         <th>Note Name</th>
                                         <th>Description</th>
                                         <th>Updated</th>
                                         <th>Author</th>
                                         <th>Visibility</th>
-                                        <th className="project-group-actions-col" aria-label="Actions" />
+                                        {canManageProjectContent ? (
+                                          <th className="project-group-actions-col" aria-label="Actions" />
+                                        ) : null}
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -6548,47 +7493,62 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                                         const safeVisibility = String(note?.visibility || "project_team")
                                           .trim()
                                           .toLowerCase();
+                                        const visibilityIcon = safeVisibility === "admins_only" ? "shield" : "users";
                                         const author =
                                           note?.author_name ||
                                           (note?.author_member_id ? `Member #${note.author_member_id}` : "—");
+                                        const noteBodyRaw = String(note?.body || "").trim();
+                                        const noteBodyDisplay = noteBodyRaw
+                                          ? truncateProjectCellText(noteBodyRaw, 108)
+                                          : "—";
                                         return (
                                           <tr key={noteId || `${note?.title || "note"}-${note?.created_at || ""}`}>
-                                            <td className="projects-table-check">
-                                              <input
-                                                type="checkbox"
-                                                checked={isChecked}
-                                                onChange={() => handleToggleNoteSelection(noteId)}
-                                                aria-label={`Select note ${note?.title || noteId}`}
-                                              />
-                                            </td>
+                                            {canManageProjectContent ? (
+                                              <td className="projects-table-check">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={isChecked}
+                                                  onChange={() => handleToggleNoteSelection(noteId)}
+                                                  aria-label={`Select note ${note?.title || noteId}`}
+                                                />
+                                              </td>
+                                            ) : null}
                                             <td>
                                               <div className="project-expense-detail project-note-detail">
-                                                <strong>{note?.title || "Untitled note"}</strong>
+                                                <strong className="project-row-title">{note?.title || "Untitled note"}</strong>
                                               </div>
                                             </td>
-                                            <td>
-                                              <p className="project-group-description">{note?.body || "—"}</p>
+                                            <td className="project-group-description-cell">
+                                              <p className="project-group-description" title={noteBodyRaw || undefined}>
+                                                {noteBodyDisplay}
+                                              </p>
                                             </td>
                                             <td className="project-group-estimation">
                                               {formatDate(note?.updated_at || note?.created_at)}
                                             </td>
                                             <td>{author}</td>
                                             <td>
-                                              <span className="project-note-visibility">
-                                                {NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
+                                              <span
+                                                className={`project-note-visibility is-${safeVisibility.replace(/[^a-z_]+/g, "")}`}
+                                                title={NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
+                                                aria-label={NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
+                                              >
+                                                <Icon name={visibilityIcon} size={12} />
                                               </span>
                                             </td>
-                                            <td className="project-group-actions-col">
-                                              <button
-                                                type="button"
-                                                className="project-group-row-action"
-                                                aria-label={`Edit ${note?.title || "note"}`}
-                                                onClick={() => openNoteEditorForRow(note)}
-                                                disabled={savingNote || deletingNotes}
-                                              >
-                                                <Icon name="more-horizontal" size={15} />
-                                              </button>
-                                            </td>
+                                            {canManageProjectContent ? (
+                                              <td className="project-group-actions-col">
+                                                <button
+                                                  type="button"
+                                                  className="project-group-row-action"
+                                                  aria-label={`Edit ${note?.title || "note"}`}
+                                                  onClick={() => openNoteEditorForRow(note)}
+                                                  disabled={savingNote || deletingNotes}
+                                                >
+                                                  <Icon name="more-horizontal" size={15} />
+                                                </button>
+                                              </td>
+                                            ) : null}
                                           </tr>
                                         );
                                       })}
@@ -6603,10 +7563,646 @@ function ProjectsPage({ user, setActivePage, tenantId, onManageProject }) {
                     )}
                   </div>
                 )}
+                {detailTab === "invites" && canViewProjectInvites && (
+                  <div className="project-detail-section project-detail-invites">
+                    <div className="project-detail-section-head">
+                      <div>
+                        <h4>Invited members</h4>
+                        <p>Invites linked to this project, including all-project access invites.</p>
+                      </div>
+                      <div className="project-detail-section-head-actions">
+                        <button
+                          type="button"
+                          className="project-detail-action ghost"
+                          onClick={loadProjectInvites}
+                          disabled={projectInvitesLoading || submittingProjectInvite}
+                        >
+                          Refresh
+                        </button>
+                        <button
+                          type="button"
+                          className="project-detail-action"
+                          onClick={openProjectInviteModal}
+                          disabled={submittingProjectInvite}
+                        >
+                          <Icon name="plus" size={14} />
+                          Invite member
+                        </button>
+                      </div>
+                    </div>
+                    {projectInvitesError ? (
+                      <p className="project-detail-expense-error">{projectInvitesError}</p>
+                    ) : null}
+                    {projectInvitesLoading ? (
+                      <div className="project-expenses-loading">
+                        <div className="loading-spinner"></div>
+                        <span>Loading invited members...</span>
+                      </div>
+                    ) : projectInvites.length === 0 ? (
+                      <div className="project-detail-empty">
+                        <Icon name="mail" size={24} />
+                        <span>No invites for this project yet.</span>
+                      </div>
+                    ) : (
+                      <div className="projects-table-wrap project-expenses-table-wrap project-invites-table-wrap">
+                        <table className="projects-table-view project-expenses-table project-invites-table">
+                          <thead>
+                            <tr>
+                              <th>Invited member</th>
+                              <th>Role</th>
+                              <th>Access</th>
+                              <th>Status</th>
+                              <th>Invite #</th>
+                              <th>Created</th>
+                              <th>Expires</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {projectInvites.map((invite) => {
+                              const inviteId = String(invite?.id || invite?.invite_number || "");
+                              const safeRole = toReadableLabel(String(invite?.role || "member"), "Member");
+                              const safeStatus = String(invite?.status || "pending")
+                                .trim()
+                                .toLowerCase()
+                                .replace(/[^a-z0-9_]+/g, "_");
+                              const inviteNumber = String(invite?.invite_number || "").trim();
+                              const email = String(invite?.email || "").trim();
+                              const phone = String(invite?.phone_number || "").trim();
+                              return (
+                                <tr key={inviteId || `${email}-${inviteNumber}`}>
+                                  <td>
+                                    <div className="project-invite-member">
+                                      <strong>{email || "No email"}</strong>
+                                      {phone ? <small>{phone}</small> : null}
+                                    </div>
+                                  </td>
+                                  <td>{safeRole}</td>
+                                  <td>{formatInviteScopeLabel(invite)}</td>
+                                  <td>
+                                    <span className={`project-invite-status is-${safeStatus}`}>
+                                      {formatInviteStatusLabel(invite?.status)}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    {inviteNumber ? (
+                                      <button
+                                        type="button"
+                                        className="project-invite-copy"
+                                        onClick={() => handleCopyInviteNumber(inviteNumber)}
+                                        title="Copy invite number"
+                                      >
+                                        {inviteNumber}
+                                      </button>
+                                    ) : (
+                                      "—"
+                                    )}
+                                  </td>
+                                  <td>{formatDate(invite?.created_at)}</td>
+                                  <td>{invite?.expires_at ? formatDate(invite.expires_at) : "No expiry"}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
+      </DataModal>
+
+      <DataModal
+        open={Boolean(selectedProject) && showProjectInviteModal}
+        onClose={closeProjectInviteModal}
+        title="Invite member"
+        subtitle={
+          selectedProject?.name
+            ? `Invite someone to join ${selectedProject.name}.`
+            : "Send a secure invite to this project."
+        }
+        icon="mail"
+      >
+        <form className="data-modal-form" onSubmit={handleProjectInviteSubmit}>
+          {projectInviteFormError ? (
+            <p className="data-modal-feedback data-modal-feedback--error">{projectInviteFormError}</p>
+          ) : null}
+          <p className="project-invite-form-scope">
+            This invite grants access to <strong>{selectedProject?.name || "the selected project"}</strong>.
+          </p>
+          <div className="data-modal-grid">
+            <div className="data-modal-field data-modal-field--full">
+              <label>Email *</label>
+              <input
+                type="email"
+                value={projectInviteForm.email}
+                onChange={(event) => handleProjectInviteFormFieldChange("email", event.target.value)}
+                placeholder="member@example.com"
+                disabled={submittingProjectInvite}
+                required
+              />
+            </div>
+
+            <div className="data-modal-field">
+              <label>Phone</label>
+              <input
+                type="tel"
+                value={projectInviteForm.phone_number}
+                onChange={(event) => handleProjectInviteFormFieldChange("phone_number", event.target.value)}
+                placeholder="+254 700 000 000"
+                disabled={submittingProjectInvite}
+              />
+            </div>
+
+            <div className="data-modal-field">
+              <label>Role</label>
+              <select
+                value={projectInviteForm.role}
+                onChange={(event) => handleProjectInviteFormFieldChange("role", event.target.value)}
+                disabled={submittingProjectInvite}
+              >
+                <option value="member">Member</option>
+                <option value="coordinator">Coordinator</option>
+                <option value="project_manager">Project Manager</option>
+                <option value="supervisor">Supervisor</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+
+            <div className="data-modal-field data-modal-field--full">
+              <label>Notes</label>
+              <textarea
+                value={projectInviteForm.notes}
+                onChange={(event) => handleProjectInviteFormFieldChange("notes", event.target.value)}
+                placeholder="Optional instructions for this invite"
+                rows="3"
+                disabled={submittingProjectInvite}
+              />
+            </div>
+          </div>
+
+          <div className="data-modal-actions">
+            <button
+              type="button"
+              className="data-modal-btn"
+              onClick={closeProjectInviteModal}
+              disabled={submittingProjectInvite}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="data-modal-btn data-modal-btn--primary"
+              disabled={submittingProjectInvite}
+            >
+              {submittingProjectInvite ? "Sending..." : "Send invite"}
+            </button>
+          </div>
+        </form>
+      </DataModal>
+
+      <DataModal
+        open={Boolean(selectedProject) && showBudgetSummaryReportModal}
+        onClose={closeBudgetSummaryReportModal}
+        title="Project Summary Report"
+        subtitle={
+          projectSummaryReport
+            ? `${projectSummaryReport.projectName} • Generated ${projectSummaryReport.generatedAt}`
+            : ""
+        }
+        icon="trending-up"
+        className="project-summary-report-modal"
+        bodyClassName="project-summary-report-body"
+      >
+        {projectSummaryReport ? (
+          <div className="project-summary-report">
+            <div className="project-summary-report-actions">
+              <button
+                type="button"
+                className="project-detail-action"
+                onClick={handleDownloadDonorBrief}
+                disabled={exportingDonorBrief}
+              >
+                <Icon name="download" size={16} />
+                {exportingDonorBrief ? "Preparing donor brief..." : "Download donor brief (PDF)"}
+              </button>
+              <p className="project-summary-report-actions-note">
+                Share-ready package for donors and partners with financials, KPIs, milestones, and funding ask.
+              </p>
+            </div>
+
+            <section className="project-summary-report-hero">
+              <div>
+                <p className="project-summary-report-kicker">Executive summary</p>
+                <h3>{projectSummaryReport.projectName}</h3>
+                <p className="project-summary-report-description">{projectSummaryReport.leadSummary}</p>
+                <div className="project-summary-report-meta">
+                  <span>
+                    <Icon name="briefcase" size={14} />
+                    {projectSummaryReport.moduleLabel}
+                  </span>
+                  <span>
+                    <Icon name="calendar" size={14} />
+                    Started {projectSummaryReport.startDateLabel}
+                  </span>
+                  <span>
+                    <Icon name="member" size={14} />
+                    {projectSummaryReport.memberCount} member
+                    {projectSummaryReport.memberCount === 1 ? "" : "s"}
+                  </span>
+                  <span>
+                    <Icon name="target" size={14} />
+                    {projectSummaryReport.statusLabel}
+                  </span>
+                </div>
+              </div>
+              <div className="project-summary-report-health-stack">
+                <div
+                  className={`project-summary-report-health project-summary-report-health--${projectSummaryReport.budgetHealth.tone}`}
+                >
+                  <span>Budget status</span>
+                  <strong>{projectSummaryReport.budgetHealth.label}</strong>
+                  <small>{formatPercentLabel(projectSummaryReport.budgetUsedPercent)} utilized</small>
+                </div>
+                <div
+                  className={`project-summary-report-health project-summary-report-health--${projectSummaryReport.fundingStatus.tone}`}
+                >
+                  <span>Funding status</span>
+                  <strong>{projectSummaryReport.fundingStatus.label}</strong>
+                  <small>{formatPercentLabel(projectSummaryReport.budgetCoveragePercent)} budget coverage</small>
+                </div>
+              </div>
+            </section>
+
+            <section className="project-summary-report-ring-grid">
+              <article className="project-summary-report-ring-card" data-tone="budget">
+                <div
+                  className="project-summary-report-ring"
+                  style={{ "--report-value": `${projectSummaryReport.budgetUsedPercent}%` }}
+                >
+                  <strong>{formatPercentLabel(projectSummaryReport.budgetUsedPercent)}</strong>
+                </div>
+                <div>
+                  <h4>Budget utilization</h4>
+                  <p>
+                    {formatCurrency(projectSummaryReport.spentAmount)} spent of{" "}
+                    {formatCurrency(projectSummaryReport.budgetAmount)}.
+                  </p>
+                </div>
+              </article>
+              <article className="project-summary-report-ring-card" data-tone="tasks">
+                <div
+                  className="project-summary-report-ring"
+                  style={{ "--report-value": `${projectSummaryReport.executionPercent}%` }}
+                >
+                  <strong>{formatPercentLabel(projectSummaryReport.executionPercent)}</strong>
+                </div>
+                <div>
+                  <h4>Execution pace</h4>
+                  <p>
+                    {projectSummaryReport.taskTotals.done} of {projectSummaryReport.totalTasks} tasks complete.{" "}
+                    {projectSummaryReport.completionLabel}.
+                  </p>
+                </div>
+              </article>
+              <article className="project-summary-report-ring-card" data-tone="proof">
+                <div
+                  className="project-summary-report-ring"
+                  style={{ "--report-value": `${projectSummaryReport.proofCoveragePercent}%` }}
+                >
+                  <strong>{formatPercentLabel(projectSummaryReport.proofCoveragePercent)}</strong>
+                </div>
+                <div>
+                  <h4>Expense compliance</h4>
+                  <p>
+                    {projectSummaryReport.expenseGuardrail} across {projectSummaryReport.expenseCount} expense
+                    record{projectSummaryReport.expenseCount === 1 ? "" : "s"}.
+                  </p>
+                </div>
+              </article>
+            </section>
+
+            <section className="project-summary-report-grid">
+              <article className="project-summary-report-card">
+                <div className="project-summary-report-card-head">
+                  <h4>Financial position</h4>
+                  <span>
+                    {formatPercentLabel(projectSummaryReport.trendDeltaPercent)} in{" "}
+                    {projectSummaryReport.trendWindowLabel}
+                  </span>
+                </div>
+                <div className="project-summary-report-financial-grid">
+                  <div className="project-summary-report-financial-item">
+                    <span>Total budget</span>
+                    <strong>{formatCurrency(projectSummaryReport.budgetAmount)}</strong>
+                  </div>
+                  <div className="project-summary-report-financial-item">
+                    <span>Spent</span>
+                    <strong>{formatCurrency(projectSummaryReport.spentAmount)}</strong>
+                  </div>
+                  <div className="project-summary-report-financial-item">
+                    <span>Remaining</span>
+                    <strong>{formatCurrency(projectSummaryReport.remainingAmount)}</strong>
+                  </div>
+                  <div className="project-summary-report-financial-item">
+                    <span>Expected revenue</span>
+                    <strong>{formatCurrency(projectSummaryReport.expectedRevenueAmount)}</strong>
+                  </div>
+                </div>
+
+                <div className="project-summary-report-funding-grid">
+                  <div className="project-summary-report-funding-item">
+                    <span>Funds committed</span>
+                    <strong>{formatCurrency(projectSummaryReport.fundsCommittedAmount)}</strong>
+                  </div>
+                  <div className="project-summary-report-funding-item">
+                    <span>Funding gap</span>
+                    <strong>{formatCurrency(projectSummaryReport.fundingGapAmount)}</strong>
+                  </div>
+                  <div className="project-summary-report-funding-item">
+                    <span>Monthly burn rate</span>
+                    <strong>{formatCurrency(projectSummaryReport.monthlyBurnRate)}</strong>
+                  </div>
+                  <div
+                    className={`project-summary-report-funding-item project-summary-report-funding-item--${projectSummaryReport.runwayStatus.tone}`}
+                  >
+                    <span>Runway</span>
+                    <strong>{formatReportMetricValue(projectSummaryReport.runwayMonths, "months")}</strong>
+                    <small>{projectSummaryReport.runwayStatus.label}</small>
+                  </div>
+                </div>
+
+                <div className="project-summary-report-category-list">
+                  <div className="project-summary-report-card-head project-summary-report-card-head--minor">
+                    <h5>Top expense categories</h5>
+                    <span>{projectSummaryReport.rangeExpensesCount} in selected range</span>
+                  </div>
+                  {projectSummaryReport.topCategories.length ? (
+                    projectSummaryReport.topCategories.map((item) => {
+                      const widthPercent =
+                        projectSummaryReport.topCategoryMax > 0
+                          ? (Number(item.amount) / projectSummaryReport.topCategoryMax) * 100
+                          : 0;
+                      return (
+                        <div className="project-summary-report-category-row" key={`summary-category-${item.category}`}>
+                          <div className="project-summary-report-category-meta">
+                            <span>{item.category}</span>
+                            <strong>{formatCurrency(item.amount)}</strong>
+                          </div>
+                          <div className="project-summary-report-category-track">
+                            <span style={{ width: `${Math.max(0, Math.min(100, widthPercent))}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="project-summary-report-empty">No expense activity captured in this range yet.</p>
+                  )}
+                </div>
+              </article>
+
+              <article className="project-summary-report-card">
+                <div className="project-summary-report-card-head">
+                  <h4>Delivery and milestones</h4>
+                  <span>{formatPercentLabel(projectSummaryReport.progressPercent)} project progress</span>
+                </div>
+
+                <div className="project-summary-report-delivery-grid">
+                  <div className="project-summary-report-delivery-item">
+                    <span>Open tasks</span>
+                    <strong>{projectSummaryReport.taskTotals.open}</strong>
+                  </div>
+                  <div className="project-summary-report-delivery-item">
+                    <span>In progress</span>
+                    <strong>{projectSummaryReport.taskTotals.in_progress}</strong>
+                  </div>
+                  <div className="project-summary-report-delivery-item">
+                    <span>Overdue</span>
+                    <strong>{projectSummaryReport.overdueTaskCount}</strong>
+                  </div>
+                  <div className="project-summary-report-delivery-item">
+                    <span>High priority</span>
+                    <strong>{projectSummaryReport.highPriorityActiveTaskCount}</strong>
+                  </div>
+                  <div className="project-summary-report-delivery-item">
+                    <span>Documents</span>
+                    <strong>{projectSummaryReport.documentsCount}</strong>
+                  </div>
+                  <div className="project-summary-report-delivery-item">
+                    <span>Notes</span>
+                    <strong>{projectSummaryReport.notesCount}</strong>
+                  </div>
+                </div>
+
+                <div className="project-summary-report-milestone-list">
+                  <div className="project-summary-report-card-head project-summary-report-card-head--minor">
+                    <h5>Milestone timeline</h5>
+                    <span>{formatPercentLabel(projectSummaryReport.milestoneCompletionPercent)} delivered</span>
+                  </div>
+                  {projectSummaryReport.milestoneRows.length ? (
+                    projectSummaryReport.milestoneRows.map((milestone) => (
+                      <div
+                        className={`project-summary-report-milestone-row is-${milestone.timelineTone}`}
+                        key={milestone.id}
+                      >
+                        <div className="project-summary-report-milestone-main">
+                          <strong>{milestone.title}</strong>
+                          <span>
+                            {milestone.assignee} • Due {milestone.dueLabel}
+                          </span>
+                        </div>
+                        <span className="project-summary-report-milestone-status">{milestone.statusLabel}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="project-summary-report-empty">No milestones captured yet.</p>
+                  )}
+                </div>
+
+                <div className="project-summary-report-support-block">
+                  <div className="project-summary-report-card-head project-summary-report-card-head--minor">
+                    <h5>Partner traction</h5>
+                    <span>{projectSummaryReport.linkedPartners.length} linked</span>
+                  </div>
+                  <p className="project-summary-report-support-text">
+                    {projectSummaryReport.linkedPartners.length
+                      ? projectSummaryReport.linkedPartners.join(", ")
+                      : "No linked partners yet. Use Organization Partners to map supporting institutions."}
+                  </p>
+                  <div
+                    className={`project-summary-report-ask project-summary-report-ask--${projectSummaryReport.fundingStatus.tone}`}
+                  >
+                    <span>Current donor ask</span>
+                    <strong>
+                      {projectSummaryReport.donorAskAmount !== null
+                        ? formatCurrency(projectSummaryReport.donorAskAmount)
+                        : "No immediate gap"}
+                    </strong>
+                    <p>{projectSummaryReport.donorAskSummary}</p>
+                  </div>
+                </div>
+              </article>
+            </section>
+
+            <section className="project-summary-report-grid project-summary-report-grid--tertiary">
+              <article className="project-summary-report-card">
+                <div className="project-summary-report-card-head">
+                  <h4>Value for Money</h4>
+                  <span>Unit-cost and leverage view</span>
+                </div>
+                <div className="project-summary-report-vfm-grid">
+                  <div className="project-summary-report-vfm-item">
+                    <span>Cost per member reached</span>
+                    <strong>{formatCurrency(projectSummaryReport.costPerMember)}</strong>
+                  </div>
+                  <div className="project-summary-report-vfm-item">
+                    <span>Cost per milestone delivered</span>
+                    <strong>{formatCurrency(projectSummaryReport.costPerCompletedMilestone)}</strong>
+                  </div>
+                  <div className="project-summary-report-vfm-item">
+                    <span>Leverage ratio</span>
+                    <strong>{formatReportMetricValue(projectSummaryReport.budgetLeverageRatio, "x")}</strong>
+                  </div>
+                </div>
+                <p className="project-summary-report-support-text">{projectSummaryReport.valueForMoneyNarrative}</p>
+              </article>
+
+              <article className="project-summary-report-card">
+                <div className="project-summary-report-card-head">
+                  <h4>Risk Register</h4>
+                  <span>
+                    {projectSummaryReport.riskHighCount} high, {projectSummaryReport.riskMediumCount} medium
+                  </span>
+                </div>
+                <div className="project-summary-report-risk-list">
+                  {projectSummaryReport.riskRegister.map((risk) => (
+                    <div className="project-summary-report-risk-row" key={risk.key}>
+                      <div className="project-summary-report-risk-head">
+                        <strong>{risk.risk}</strong>
+                        <span className={`project-summary-report-risk-level is-${risk.tone}`}>
+                          {risk.tone.toUpperCase()}
+                        </span>
+                      </div>
+                      <p>
+                        Likelihood: {risk.likelihood} | Impact: {risk.impact} | Owner: {risk.owner} | Review:{" "}
+                        {risk.reviewDate}
+                      </p>
+                      <small>{risk.mitigation}</small>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </section>
+
+            <section className="project-summary-report-grid project-summary-report-grid--secondary">
+              <article className="project-summary-report-card">
+                <div className="project-summary-report-card-head">
+                  <h4>KPI Baseline Tracker</h4>
+                  <span>Baseline to current to target</span>
+                </div>
+                <div className="project-summary-report-kpi-table">
+                  <div className="project-summary-report-kpi-row project-summary-report-kpi-row--head">
+                    <span>Indicator</span>
+                    <span>Baseline</span>
+                    <span>Current</span>
+                    <span>Target</span>
+                    <span>Progress</span>
+                  </div>
+                  {projectSummaryReport.kpiTracker.map((kpi) => (
+                    <div className="project-summary-report-kpi-row" key={kpi.key}>
+                      <strong>{kpi.label}</strong>
+                      <span>{formatReportMetricValue(kpi.baseline, kpi.unit)}</span>
+                      <span>{formatReportMetricValue(kpi.current, kpi.unit)}</span>
+                      <span>{formatReportMetricValue(kpi.target, kpi.unit)}</span>
+                      <span>{formatPercentLabel(kpi.progressToTarget)}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="project-summary-report-card">
+                <div className="project-summary-report-card-head">
+                  <h4>Recent expenses</h4>
+                  <span>Latest 5</span>
+                </div>
+                <div className="project-summary-report-expense-feed">
+                  {projectSummaryReport.recentExpensesFeed.length ? (
+                    projectSummaryReport.recentExpensesFeed.map((row) => (
+                      <div className="project-summary-report-expense-row" key={row.id}>
+                        <div>
+                          <strong>{row.title}</strong>
+                          <span>
+                            {row.vendor} • {row.dateLabel}
+                          </span>
+                        </div>
+                        <div className="project-summary-report-expense-row-right">
+                          <strong>{formatCurrency(row.amount)}</strong>
+                          <small className={row.hasProof ? "is-proof" : "is-missing-proof"}>
+                            {row.hasProof ? "Proof attached" : "Missing proof"}
+                          </small>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="project-summary-report-empty">No expense records yet.</p>
+                  )}
+                </div>
+              </article>
+            </section>
+
+            <section className="project-summary-report-grid project-summary-report-grid--tertiary">
+              <article className="project-summary-report-card">
+                <div className="project-summary-report-card-head">
+                  <h4>Monitoring and Evaluation Plan</h4>
+                  <span>Indicator management matrix</span>
+                </div>
+                <div className="project-summary-report-me-list">
+                  {projectSummaryReport.mePlan.map((indicator) => (
+                    <div className="project-summary-report-me-row" key={`me-${indicator.key}`}>
+                      <div className="project-summary-report-me-main">
+                        <strong>{indicator.label}</strong>
+                        <span>
+                          Baseline {formatReportMetricValue(indicator.baseline, indicator.unit)} | Current{" "}
+                          {formatReportMetricValue(indicator.current, indicator.unit)} | Target{" "}
+                          {formatReportMetricValue(indicator.target, indicator.unit)}
+                        </span>
+                      </div>
+                      <p>
+                        Source: {indicator.dataSource} | Frequency: {indicator.frequency}
+                      </p>
+                      <small>Verification: {indicator.verification}</small>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="project-summary-report-card">
+                <div className="project-summary-report-card-head">
+                  <h4>Sustainability and Continuity</h4>
+                  <span>{formatPercentLabel(projectSummaryReport.sustainabilityScore)} score</span>
+                </div>
+                <div className="project-summary-report-sustainability-head">
+                  <span className={`project-summary-report-risk-level is-${projectSummaryReport.sustainabilityScore >= 85 ? "low" : projectSummaryReport.sustainabilityScore >= 70 ? "medium" : "high"}`}>
+                    {projectSummaryReport.sustainabilityLabel}
+                  </span>
+                  <p className="project-summary-report-support-text">
+                    Long-term continuity based on financial viability, local capacity, and governance controls.
+                  </p>
+                </div>
+                <div className="project-summary-report-sustainability-list">
+                  {projectSummaryReport.sustainabilityPillars.map((pillar) => (
+                    <div className="project-summary-report-sustainability-item" key={pillar.key}>
+                      <strong>{pillar.title}</strong>
+                      <span>{pillar.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </section>
+          </div>
+        ) : null}
       </DataModal>
 
       <DataModal

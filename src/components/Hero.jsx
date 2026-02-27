@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { Icon } from "./icons.jsx";
 
 export default function Hero({ data }) {
   const template = data?.heroTemplate ?? "default";
@@ -10,7 +11,7 @@ export default function Hero({ data }) {
     : 2000;
   const variant = data?.heroVariant ?? "default";
   const headline = data?.heroHeadline ?? "";
-  const eyebrow = data?.orgTagline ?? "";
+  const eyebrow = data?.heroEyebrow ?? "";
   const intro = Array.isArray(data?.heroIntro)
     ? data.heroIntro
     : data?.heroIntro
@@ -28,6 +29,7 @@ export default function Hero({ data }) {
   const heroActions = Array.isArray(actions)
     ? actions.filter((a) => String(a.label).trim() !== "Start free trial")
     : [];
+  const primaryHeroAction = heroActions[0] ?? null;
   const panelTitle = data?.whatWeDoTitle ?? "";
   const panelItems = Array.isArray(data?.whatWeDo) ? data.whatWeDo : [];
   const [activeIndex, setActiveIndex] = useState(0);
@@ -110,53 +112,103 @@ export default function Hero({ data }) {
     return () => window.clearInterval(intervalId);
   }, [heroImages.length, intervalMs]);
 
+  const splitHeadline = (value) => {
+    const safeValue = String(value || "").trim();
+    if (!safeValue) return null;
+    const words = safeValue.split(/\s+/);
+    if (words.length < 2) return safeValue;
+    const accent = words.pop();
+    const prefix = words.join(" ");
+    return (
+      <>
+        {prefix} <span className="hero-title-accent">{accent}</span>
+      </>
+    );
+  };
+
+  const hasHeroCarousel = heroImages.length > 1;
+  const activeHeroImage = heroImages[activeIndex] || null;
+  const activeHeroImageSrc = activeHeroImage?.src || heroBackgroundImage || "";
+  const heroCoverStyle = activeHeroImageSrc
+    ? {
+        "--hero-cover-image": `url("${String(activeHeroImageSrc).replace(/"/g, '\\"')}")`,
+      }
+    : undefined;
+
+  const goToPreviousHeroImage = () => {
+    if (!hasHeroCarousel) return;
+    setActiveIndex((current) => (current - 1 + heroImages.length) % heroImages.length);
+  };
+
+  const goToNextHeroImage = () => {
+    if (!hasHeroCarousel) return;
+    setActiveIndex((current) => (current + 1) % heroImages.length);
+  };
+
   if (template === "minimal") {
     return (
-      <section ref={heroRef} className={`hero hero-minimal ${mounted ? "is-mounted has-parallax" : ""}`}>
-        <div className="container hero-minimal-inner">
+      <section
+        ref={heroRef}
+        className={`hero hero-minimal hero-minimal-cover ${mounted ? "is-mounted has-parallax" : ""}`}
+        style={heroCoverStyle}
+      >
+        <div className="container hero-minimal-inner hero-minimal-cover-inner">
           <div className="hero-minimal-card">
-            {eyebrow ? <p className="hero-eyebrow">{eyebrow}</p> : null}
-            {headline ? <h1 className={isLongHeadline ? "hero-long-headline" : ""}>{headline}</h1> : null}
-            {intro.map((line, index) => (
-              <p key={`${line}-${index}`}>{line}</p>
-            ))}
+            {headline ? (
+              <h1 className={isLongHeadline ? "hero-long-headline" : ""}>{splitHeadline(headline)}</h1>
+            ) : null}
+            {intro[0] ? <p>{intro[0]}</p> : null}
 
-            {heroActions.length ? (
+            {primaryHeroAction ? (
               <div className="hero-actions">
-                {heroActions.map((item) => (
-                  <a
-                    key={item.label}
-                    className={`btn ${
-                      item.style === "ghost"
-                        ? "btn-ghost"
-                        : item.style === "outline"
-                          ? "btn-outline"
-                          : "btn-primary"
-                    }`}
-                    href={item.href}
-                  >
-                    {item.label}
-                  </a>
-                ))}
+                <a
+                  className={`btn ${
+                    primaryHeroAction.style === "ghost"
+                      ? "btn-ghost"
+                      : primaryHeroAction.style === "outline"
+                        ? "btn-outline"
+                        : "btn-primary"
+                  }`}
+                  href={primaryHeroAction.href}
+                >
+                  {primaryHeroAction.label}
+                </a>
               </div>
             ) : null}
-
-            {secondaryLink?.href ? (
-              <p className="hero-secondary">
-                {secondaryLink.prefix ? <span>{secondaryLink.prefix} </span> : null}
-                <a href={secondaryLink.href}>{secondaryLink.label}</a>
-              </p>
-            ) : null}
-          </div>
-
-          <div className="hero-minimal-media">
-            {heroBackgroundImage ? (
-              <img src={heroBackgroundImage} alt={headline || "Hero"} loading="eager" />
-            ) : (
-              <div className="hero-minimal-placeholder" aria-hidden="true"></div>
-            )}
           </div>
         </div>
+
+        {hasHeroCarousel ? (
+          <div className="hero-minimal-controls">
+            <button
+              type="button"
+              onClick={goToPreviousHeroImage}
+              className="hero-minimal-control prev"
+              aria-label="Previous hero image"
+            >
+              <Icon name="arrow-left" size={15} />
+            </button>
+            <button
+              type="button"
+              onClick={goToNextHeroImage}
+              className="hero-minimal-control next"
+              aria-label="Next hero image"
+            >
+              <Icon name="arrow-right" size={15} />
+            </button>
+          </div>
+        ) : null}
+
+        {hasHeroCarousel ? (
+          <div className="hero-minimal-indicators" aria-hidden="true">
+            {heroImages.map((_, index) => (
+              <span
+                key={`hero-minimal-indicator-${index}`}
+                className={index === activeIndex ? "is-active" : ""}
+              />
+            ))}
+          </div>
+        ) : null}
       </section>
     );
   }

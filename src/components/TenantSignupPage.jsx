@@ -218,7 +218,13 @@ export default function TenantSignupPage() {
       navigate(`/tenant/${nextSlug}/dashboard`);
     } catch (err) {
       const msg = err?.message || "Unable to create workspace. Please try again.";
-      if (msg.toLowerCase().includes("duplicate")) {
+      if (err?.code === "TENANT_NAME_TAKEN") {
+        setError("That workspace/company name is already in use. Please pick another.");
+      } else if (err?.code === "TENANT_SLUG_TAKEN") {
+        setError("That workspace name is already in use. Please pick another workspace name.");
+      } else if (err?.code === "TENANT_NAME_INVALID") {
+        setError("Workspace name cannot be blank.");
+      } else if (msg.toLowerCase().includes("duplicate")) {
         setError("That workspace name is already in use. Please pick another.");
       } else {
         setError(msg);
@@ -259,7 +265,7 @@ export default function TenantSignupPage() {
                 </p>
               ) : (
                 <p className="tenant-helper">
-                  Invited member? Use the <a href="/register">member invite</a> page instead.
+                  Joining with invite number/code? Use <a href="/register">/register</a> instead.
                 </p>
               )}
               <form onSubmit={handleSubmit} className="tenant-signup-form">

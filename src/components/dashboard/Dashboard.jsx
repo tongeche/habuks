@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import DashboardLayout from "./DashboardLayout.jsx";
+import { DashboardLayout } from "./DashboardLayout.jsx";
 import DashboardOverview from "./DashboardOverview.jsx";
-import ProjectsPage from "./ProjectsPage.jsx";
+import { ProjectsPage } from "./ProjectsPage.jsx";
 import JppProjectPage from "./JppProjectPage.jsx";
-import JgfProjectPage from "./JgfProjectPage.jsx";
+import { JgfProjectPage } from "./JgfProjectPage.jsx";
 import ReportsPage from "./ReportsPage.jsx";
 import NewsPage from "./NewsPage.jsx";
 import MeetingsPage from "./MeetingsPage.jsx";
@@ -183,6 +183,7 @@ export default function Dashboard() {
         return (
           <ProjectsPage
             user={user}
+            tenantRole={tenantRole}
             setActivePage={setActivePage}
             tenantId={tenantInfo?.id}
             onManageProject={(project) => {
@@ -201,6 +202,7 @@ export default function Dashboard() {
         return (
           <JppProjectPage
             user={user}
+            tenantRole={tenantRole}
             tenantId={tenantInfo?.id}
             activeProjectId={activeJppProjectId}
             onProjectChange={setActiveJppProjectId}
@@ -210,6 +212,7 @@ export default function Dashboard() {
         return (
           <JgfProjectPage
             user={user}
+            tenantRole={tenantRole}
             tenantId={tenantInfo?.id}
             activeProjectId={activeJgfProjectId}
             onProjectChange={setActiveJgfProjectId}
@@ -226,7 +229,15 @@ export default function Dashboard() {
       case "meetings":
         return <MeetingsPage user={user} tenantId={tenantInfo?.id} />;
       case "members":
-        return <MembersPage tenantInfo={tenantInfo} />;
+        return (
+          <MembersPage
+            tenantInfo={tenantInfo}
+            tenantId={tenantInfo?.id}
+            user={user}
+            tenantRole={tenantRole}
+            setActivePage={setActivePage}
+          />
+        );
       case "settings":
         return (
           <SettingsPage

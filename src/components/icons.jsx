@@ -256,6 +256,12 @@ export const Icon = ({ name, size = 18, className = "" }) => {
           <circle cx="12" cy="9" r="2.5" />
         </svg>
       );
+    case "phone":
+      return (
+        <svg {...common} aria-hidden="true">
+          <path d="M22 16.9v2.8a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 3.3 5.2 2 2 0 0 1 5.2 3h2.8a2 2 0 0 1 2 1.7c.12.9.33 1.77.64 2.6a2 2 0 0 1-.45 2.1L9.03 10.6a16 16 0 0 0 4.36 4.36l1.2-1.16a2 2 0 0 1 2.1-.45c.83.31 1.7.52 2.6.64A2 2 0 0 1 22 16.9z" />
+        </svg>
+      );
     case "target":
       return (
         <svg {...common} aria-hidden="true">

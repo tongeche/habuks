@@ -32,6 +32,13 @@ import {
   getTenantSiteTemplates,
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
+import {
+  DEFAULT_TENANT_TEMPLATE_KEY,
+  TENANT_TEMPLATE_ONE_KEY,
+  getTenantTemplatePreset,
+  getTenantTemplateSelectOptions,
+  normalizeTenantTemplateKey,
+} from "../../lib/tenantSiteShell.js";
 
 const initialMemberForm = {
   name: "",
@@ -145,8 +152,25 @@ const tenantConfigSteps = [
   },
 ];
 
+const TEMPLATE_SECTION_OUTLINES = {
+  [TENANT_TEMPLATE_ONE_KEY]: {
+    title: "Minimal template section outline",
+    sections: [
+      "Header and navigation",
+      "Hero (clean minimal spotlight)",
+      "Programs section",
+      "Objectives and goals",
+      "Impact highlights",
+      "Call-to-action banner",
+      "Testimonials",
+      "Contact section",
+      "Footer",
+    ],
+  },
+};
+
 const initialTenantConfig = {
-  templateKey: "",
+  templateKey: DEFAULT_TENANT_TEMPLATE_KEY,
   name: "",
   tagline: "",
   logoUrl: "",
@@ -158,6 +182,27 @@ const initialTenantConfig = {
   navItems: [],
   footerLinks: [],
   socialLinks: [],
+  programsTitle: "",
+  programsDescription: "",
+  programsItemsText: "",
+  objectivesTitle: "",
+  objectivesDescription: "",
+  objectivesText: "",
+  goalsText: "",
+  impactTitle: "",
+  impactDescription: "",
+  impactItemsText: "",
+  testimonialsTitle: "",
+  testimonialsDescription: "",
+  testimonialsItemsText: "",
+  ctaTitle: "",
+  ctaDescription: "",
+  ctaLabel: "",
+  ctaHref: "",
+  publicContactTitle: "",
+  publicContactIntro: "",
+  publicContactPanelTitle: "",
+  publicContactPanelDescription: "",
   features: { ...DEFAULT_TENANT_FEATURES },
 };
 
@@ -192,6 +237,116 @@ const sanitizeLinkList = (items, extraKeys = []) => {
     })
     .filter((item) => item.label && item.href);
 };
+
+const toSafeObject = (value) => (value && typeof value === "object" ? value : {});
+const toSafeArray = (value) => (Array.isArray(value) ? value : []);
+const toText = (value) => String(value || "").trim();
+
+const normalizeLineColumns = (line) =>
+  String(line || "")
+    .split("|")
+    .map((part) => part.trim());
+
+const joinLineColumns = (columns) => {
+  const values = [...columns];
+  while (values.length && !values[values.length - 1]) {
+    values.pop();
+  }
+  return values.join(" | ");
+};
+
+const parseLines = (value) =>
+  String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+const serializeSimpleList = (items) =>
+  toSafeArray(items)
+    .map((item) => toText(item))
+    .filter(Boolean)
+    .join("\n");
+
+const parseProgramsLines = (value) =>
+  parseLines(value)
+    .map((line) => {
+      const [title, description, tag, status] = normalizeLineColumns(line);
+      if (!title) return null;
+      return {
+        title,
+        ...(description ? { description } : {}),
+        ...(tag ? { tag } : {}),
+        ...(status ? { status } : {}),
+      };
+    })
+    .filter(Boolean);
+
+const serializeProgramsLines = (items) =>
+  toSafeArray(items)
+    .map((item) => {
+      const source = toSafeObject(item);
+      const title = toText(source.title || source.name || source.code);
+      if (!title) return "";
+      const description = toText(source.description || source.short_description || source.overview);
+      const tag = toText(source.tag || source.type || source.module_key);
+      const status = toText(source.status);
+      return joinLineColumns([title, description, tag, status]);
+    })
+    .filter(Boolean)
+    .join("\n");
+
+const parseImpactLines = (value) =>
+  parseLines(value)
+    .map((line) => {
+      const [rawValue, label, detail] = normalizeLineColumns(line);
+      const metricValue = toText(rawValue);
+      if (!metricValue || !label) return null;
+      return {
+        value: metricValue,
+        label,
+        ...(detail ? { detail } : {}),
+      };
+    })
+    .filter(Boolean);
+
+const serializeImpactLines = (items) =>
+  toSafeArray(items)
+    .map((item) => {
+      const source = toSafeObject(item);
+      const metricValue = toText(source.value);
+      const label = toText(source.label);
+      if (!metricValue || !label) return "";
+      const detail = toText(source.detail);
+      return joinLineColumns([metricValue, label, detail]);
+    })
+    .filter(Boolean)
+    .join("\n");
+
+const parseTestimonialLines = (value) =>
+  parseLines(value)
+    .map((line) => {
+      const [quote, name, role] = normalizeLineColumns(line);
+      if (!quote || !name) return null;
+      return {
+        quote,
+        name,
+        ...(role ? { role } : {}),
+      };
+    })
+    .filter(Boolean);
+
+const serializeTestimonialLines = (items) =>
+  toSafeArray(items)
+    .map((item) => {
+      const source = toSafeObject(item);
+      const quote = toText(source.quote || source.message || source.text);
+      const name = toText(source.name || source.author);
+      if (!quote || !name) return "";
+      const role = toText(source.role || source.title);
+      return joinLineColumns([quote, name, role]);
+    })
+    .filter(Boolean)
+    .join("\n");
 
 const adminModules = [
   {
@@ -297,12 +452,20 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
   const [tenantConfigStep, setTenantConfigStep] = useState(0);
   const [tenantSiteData, setTenantSiteData] = useState({});
   const [tenantRecord, setTenantRecord] = useState(null);
-  const [templateOptions, setTemplateOptions] = useState([]);
+  const [templateOptions, setTemplateOptions] = useState(() => getTenantTemplateSelectOptions([]));
   const [templateLoading, setTemplateLoading] = useState(false);
 
   const selectedTemplate = useMemo(() => {
     return templateOptions.find((template) => template.key === tenantConfig.templateKey);
   }, [templateOptions, tenantConfig.templateKey]);
+  const selectedTemplatePreset = useMemo(
+    () => getTenantTemplatePreset(tenantConfig.templateKey),
+    [tenantConfig.templateKey]
+  );
+  const selectedTemplateOutline = useMemo(
+    () => TEMPLATE_SECTION_OUTLINES[selectedTemplatePreset?.key] || null,
+    [selectedTemplatePreset?.key]
+  );
   const [welfareForm, setWelfareForm] = useState(initialWelfareForm);
   const [expenseForm, setExpenseForm] = useState(initialExpenseForm);
   const [saleForm, setSaleForm] = useState(initialSaleForm);
@@ -638,11 +801,28 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
         baseSiteData?.footer?.quickLinks ?? baseSiteData?.nav
       );
       const socialLinks = normalizeLinkList(siteData?.socialLinks, baseSiteData?.socialLinks, ["icon"]);
+      const programsSection = toSafeObject(siteData?.programsSection);
+      const objectivesSection = toSafeObject(siteData?.objectivesSection);
+      const impactSection = toSafeObject(siteData?.impactStrip);
+      const testimonialsSection = toSafeObject(siteData?.testimonialsSection);
+      const ctaBannerSection = toSafeObject(siteData?.ctaBanner);
+      const contactSection = toSafeObject(siteData?.contact);
+      const programItems = toSafeArray(programsSection.items).length
+        ? programsSection.items
+        : siteData?.publicPrograms ?? siteData?.public_programs;
+      const testimonialItems = toSafeArray(testimonialsSection.items).length
+        ? testimonialsSection.items
+        : siteData?.testimonials;
+      const ctaAction = toSafeObject(ctaBannerSection.cta);
 
       setTenantRecord(tenant);
       setTenantSiteData(siteData);
+      const normalizedTemplateKey = normalizeTenantTemplateKey(
+        siteData?.templateKey ?? siteData?.template_key ?? ""
+      );
+      const selectedPreset = getTenantTemplatePreset(normalizedTemplateKey);
       setTenantConfig({
-        templateKey: siteData?.templateKey ?? "",
+        templateKey: selectedPreset?.key || normalizedTemplateKey,
         name: siteData?.orgName ?? tenant?.name ?? "",
         tagline: siteData?.orgTagline ?? tenant?.tagline ?? "",
         logoUrl: siteData?.logoUrl ?? tenant?.logo_url ?? "",
@@ -654,6 +834,27 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
         navItems,
         footerLinks,
         socialLinks,
+        programsTitle: toText(programsSection.title),
+        programsDescription: toText(programsSection.description),
+        programsItemsText: serializeProgramsLines(programItems),
+        objectivesTitle: toText(objectivesSection.title),
+        objectivesDescription: toText(objectivesSection.description),
+        objectivesText: serializeSimpleList(objectivesSection.objectives),
+        goalsText: serializeSimpleList(objectivesSection.goals),
+        impactTitle: toText(impactSection.title),
+        impactDescription: toText(impactSection.description),
+        impactItemsText: serializeImpactLines(impactSection.items),
+        testimonialsTitle: toText(testimonialsSection.title),
+        testimonialsDescription: toText(testimonialsSection.description),
+        testimonialsItemsText: serializeTestimonialLines(testimonialItems),
+        ctaTitle: toText(ctaBannerSection.title),
+        ctaDescription: toText(ctaBannerSection.description),
+        ctaLabel: toText(ctaAction.label),
+        ctaHref: toText(ctaAction.href),
+        publicContactTitle: toText(contactSection.title),
+        publicContactIntro: toText(contactSection.intro),
+        publicContactPanelTitle: toText(contactSection.panelTitle),
+        publicContactPanelDescription: toText(contactSection.panelDescription),
         features,
       });
       setTenantConfigStep(0);
@@ -668,8 +869,9 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
     setTemplateLoading(true);
     try {
       const templates = await getTenantSiteTemplates();
-      setTemplateOptions(templates || []);
+      setTemplateOptions(getTenantTemplateSelectOptions(templates || []));
     } catch (error) {
+      setTemplateOptions(getTenantTemplateSelectOptions([]));
       setErrorMessage(error.message || "Failed to load website templates.");
     } finally {
       setTemplateLoading(false);
@@ -894,10 +1096,38 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
       const contactPhone = tenantConfig.contact_phone.trim();
       const locationValue = tenantConfig.location.trim();
       const orgBioValue = tenantConfig.orgBio.trim();
+      const programsTitleValue = tenantConfig.programsTitle.trim();
+      const programsDescriptionValue = tenantConfig.programsDescription.trim();
+      const programsItems = parseProgramsLines(tenantConfig.programsItemsText);
+      const objectivesTitleValue = tenantConfig.objectivesTitle.trim();
+      const objectivesDescriptionValue = tenantConfig.objectivesDescription.trim();
+      const objectivesItems = parseLines(tenantConfig.objectivesText);
+      const goalsItems = parseLines(tenantConfig.goalsText);
+      const impactTitleValue = tenantConfig.impactTitle.trim();
+      const impactDescriptionValue = tenantConfig.impactDescription.trim();
+      const impactItems = parseImpactLines(tenantConfig.impactItemsText);
+      const testimonialsTitleValue = tenantConfig.testimonialsTitle.trim();
+      const testimonialsDescriptionValue = tenantConfig.testimonialsDescription.trim();
+      const testimonialItems = parseTestimonialLines(tenantConfig.testimonialsItemsText);
+      const ctaTitleValue = tenantConfig.ctaTitle.trim();
+      const ctaDescriptionValue = tenantConfig.ctaDescription.trim();
+      const ctaLabelValue = tenantConfig.ctaLabel.trim();
+      const ctaHrefValue = tenantConfig.ctaHref.trim();
+      const contactTitleValue = tenantConfig.publicContactTitle.trim();
+      const contactIntroValue = tenantConfig.publicContactIntro.trim();
+      const contactPanelTitleValue = tenantConfig.publicContactPanelTitle.trim();
+      const contactPanelDescriptionValue = tenantConfig.publicContactPanelDescription.trim();
+      const ctaActionValue =
+        ctaLabelValue && ctaHrefValue
+          ? {
+              label: ctaLabelValue,
+              href: ctaHrefValue,
+            }
+          : null;
 
       const nextSiteData = {
         ...(tenantSiteData || {}),
-        templateKey: tenantConfig.templateKey || null,
+        templateKey: normalizeTenantTemplateKey(tenantConfig.templateKey),
         orgName: nameValue,
         orgTagline: taglineValue || null,
         logoUrl: logoValue || null,
@@ -908,6 +1138,10 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
         features: { ...(tenantConfig.features || {}) },
         contact: {
           ...(tenantSiteData?.contact ?? {}),
+          title: contactTitleValue || null,
+          intro: contactIntroValue || null,
+          panelTitle: contactPanelTitleValue || null,
+          panelDescription: contactPanelDescriptionValue || null,
           email: contactEmail || null,
           phone: contactPhone || null,
           location: locationValue || null,
@@ -919,6 +1153,37 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
         aboutSection: {
           ...(tenantSiteData?.aboutSection ?? {}),
           description: orgBioValue || "",
+        },
+        programsSection: {
+          ...(tenantSiteData?.programsSection ?? {}),
+          title: programsTitleValue || null,
+          description: programsDescriptionValue || null,
+          items: programsItems,
+        },
+        objectivesSection: {
+          ...(tenantSiteData?.objectivesSection ?? {}),
+          title: objectivesTitleValue || null,
+          description: objectivesDescriptionValue || null,
+          objectives: objectivesItems,
+          goals: goalsItems,
+        },
+        impactStrip: {
+          ...(tenantSiteData?.impactStrip ?? {}),
+          title: impactTitleValue || null,
+          description: impactDescriptionValue || null,
+          items: impactItems,
+        },
+        testimonialsSection: {
+          ...(tenantSiteData?.testimonialsSection ?? {}),
+          title: testimonialsTitleValue || null,
+          description: testimonialsDescriptionValue || null,
+          items: testimonialItems,
+        },
+        ctaBanner: {
+          ...(tenantSiteData?.ctaBanner ?? {}),
+          title: ctaTitleValue || null,
+          description: ctaDescriptionValue || null,
+          cta: ctaActionValue,
         },
       };
 
@@ -934,12 +1199,15 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
 
       setTenantRecord(updated);
       setTenantSiteData(updated?.site_data ?? nextSiteData);
+      const normalizedTemplateKey = normalizeTenantTemplateKey(
+        updated?.site_data?.templateKey ?? tenantConfig.templateKey
+      );
       if (typeof onTenantUpdated === "function") {
         onTenantUpdated(updated);
       }
       setTenantConfig((prev) => ({
         ...prev,
-        templateKey: tenantConfig.templateKey,
+        templateKey: normalizedTemplateKey,
         name: nameValue,
         tagline: taglineValue,
         logoUrl: logoValue,
@@ -947,6 +1215,27 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
         contact_phone: contactPhone,
         location: locationValue,
         orgBio: orgBioValue,
+        programsTitle: programsTitleValue,
+        programsDescription: programsDescriptionValue,
+        programsItemsText: serializeProgramsLines(programsItems),
+        objectivesTitle: objectivesTitleValue,
+        objectivesDescription: objectivesDescriptionValue,
+        objectivesText: serializeSimpleList(objectivesItems),
+        goalsText: serializeSimpleList(goalsItems),
+        impactTitle: impactTitleValue,
+        impactDescription: impactDescriptionValue,
+        impactItemsText: serializeImpactLines(impactItems),
+        testimonialsTitle: testimonialsTitleValue,
+        testimonialsDescription: testimonialsDescriptionValue,
+        testimonialsItemsText: serializeTestimonialLines(testimonialItems),
+        ctaTitle: ctaTitleValue,
+        ctaDescription: ctaDescriptionValue,
+        ctaLabel: ctaLabelValue,
+        ctaHref: ctaHrefValue,
+        publicContactTitle: contactTitleValue,
+        publicContactIntro: contactIntroValue,
+        publicContactPanelTitle: contactPanelTitleValue,
+        publicContactPanelDescription: contactPanelDescriptionValue,
       }));
       setStatusMessage("Tenant settings updated.");
     } catch (error) {
@@ -2088,7 +2377,6 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
                           value={tenantConfig.templateKey}
                           onChange={handleTenantConfigChange}
                         >
-                          <option value="">No template (custom)</option>
                           {templateOptions.map((template) => (
                             <option key={template.key} value={template.key}>
                               {template.label}
@@ -2101,9 +2389,22 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
                           <p className="admin-help">{selectedTemplate.description}</p>
                         ) : (
                           <p className="admin-help">
-                            Choose a shared layout and override content per tenant.
+                            This workspace uses the shared public website template.
                           </p>
                         )}
+                        {selectedTemplateOutline ? (
+                          <div className="admin-template-outline" role="note" aria-label="Template section outline">
+                            <p className="admin-template-outline-title">{selectedTemplateOutline.title}</p>
+                            <ol className="admin-template-outline-list">
+                              {selectedTemplateOutline.sections.map((section, index) => (
+                                <li key={`${selectedTemplatePreset?.key || "template"}-outline-${section}`}>
+                                  <span className="admin-template-outline-index">{index + 1}</span>
+                                  <span>{section}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   </>
@@ -2448,6 +2749,7 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
                         />
                       </div>
                     </div>
+
                   </>
                 )}
               </div>

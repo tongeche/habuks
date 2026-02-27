@@ -12,7 +12,9 @@
     "test:coverage": "vitest --coverage",
     "templates:upload": "node scripts/upload-organization-templates.mjs",
     "seed:demo": "bash -lc 'set -a; source .env; set +a; psql \"$SUPABASE_PULLING\" -v ON_ERROR_STOP=1 -f supabase/seed_demo.sql -f supabase/seed_demo_project_tables.sql'",
-    "seed:demo:projects": "bash -lc 'set -a; source .env; set +a; psql \"$SUPABASE_PULLING\" -v ON_ERROR_STOP=1 -f supabase/seed_demo_project_tables.sql'"
+    "seed:demo:projects": "bash -lc 'set -a; source .env; set +a; psql \"$SUPABASE_PULLING\" -v ON_ERROR_STOP=1 -f supabase/seed_demo_project_tables.sql'",
+    "seed:demo:heavy": "bash -lc 'set -a; source .env; set +a; psql \"$SUPABASE_PULLING\" -v ON_ERROR_STOP=1 -f supabase/seed_demo.sql -f supabase/seed_demo_project_tables_heavy.sql'",
+    "seed:demo:heavy:projects": "bash -lc 'set -a; source .env; set +a; psql \"$SUPABASE_PULLING\" -v ON_ERROR_STOP=1 -f supabase/seed_demo_project_tables_heavy.sql'"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.90.0",

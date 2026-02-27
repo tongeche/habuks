@@ -102,10 +102,11 @@ const downloadDocs = [
   { key: "inventory", label: "Inventory Checklist" },
 ];
 
-export default function JgfProjectPage({ user, tenantId, activeProjectId, onProjectChange }) {
+function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProjectChange }) {
   const today = new Date().toISOString().slice(0, 10);
-  const canManage = ["admin", "superadmin", "project_manager"].includes(user?.role);
-  const canViewAllProjects = ["admin", "superadmin"].includes(user?.role);
+  const effectiveRole = String(tenantRole || user?.role || "member").toLowerCase();
+  const canManage = ["admin", "superadmin", "project_manager"].includes(effectiveRole);
+  const canViewAllProjects = ["admin", "superadmin"].includes(effectiveRole);
 
   const initialBatchForm = {
     batch_code: "",
@@ -1983,3 +1984,6 @@ export default function JgfProjectPage({ user, tenantId, activeProjectId, onProj
     </div>
   );
 }
+
+export { JgfProjectPage };
+export default JgfProjectPage;

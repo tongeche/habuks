@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "../icons.jsx";
-import { signOut, createMagicLinkInvite } from "../../lib/dataService.js";
+import { signOut, createMagicLinkInvite, getProjects } from "../../lib/dataService.js";
 import UserDropdown from "./UserDropdown.jsx";
 import DataModal from "./DataModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
@@ -72,7 +72,7 @@ const baseMenuItems = [
   },
   {
     key: "members",
-    label: "Members",
+    label: "People",
     icon: "users",
     group: "people",
     accent: "#6366f1",
@@ -112,7 +112,43 @@ const baseMenuItems = [
   },
 ];
 
-function DashboardLayout({
+const createInviteForm = () => ({
+  name: "",
+  email: "",
+  phone_number: "",
+  role: "member",
+  notes: "",
+  project_access_scope: "selected",
+  project_ids: [],
+});
+
+const normalizeInviteProjectScope = (scope) => {
+  const normalized = String(scope || "").trim().toLowerCase();
+  if (normalized === "all" || normalized === "selected" || normalized === "none") {
+    return normalized;
+  }
+  return "none";
+};
+
+const normalizeInviteProjectIds = (projectIds) => {
+  if (!Array.isArray(projectIds)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      projectIds
+        .map((projectId) => Number.parseInt(String(projectId || ""), 10))
+        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
+    )
+  );
+};
+
+const isInviteAdminRole = (role) => {
+  const normalized = String(role || "").trim().toLowerCase();
+  return normalized === "admin" || normalized === "superadmin";
+};
+
+export function DashboardLayout({
   activePage,
   setActivePage,
   children,
@@ -131,13 +167,9 @@ function DashboardLayout({
   const [sidebarHovered, setSidebarHovered] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showResponseModal, setShowResponseModal] = useState(false);
-  const [inviteForm, setInviteForm] = useState({
-    name: "",
-    email: "",
-    phone_number: "",
-    role: "member",
-    notes: "",
-  });
+  const [inviteForm, setInviteForm] = useState(() => createInviteForm());
+  const [inviteProjects, setInviteProjects] = useState([]);
+  const [loadingInviteProjects, setLoadingInviteProjects] = useState(false);
   const [responseData, setResponseData] = useState({
     type: "success",
     title: "",
@@ -155,6 +187,7 @@ function DashboardLayout({
   const brandTagline = tenant?.tagline || "";
   const logoUrl = tenant?.logoUrl || "/assets/logo.png";
   const homeHref = tenant?.slug ? `/tenant/${tenant.slug}` : "/";
+  const activeTenantId = tenant?.id || user?.tenant_id || null;
   const allowedPages = access?.allowedPages || new Set();
   const menuItems = baseMenuItems
     .map((item) => {
@@ -207,7 +240,43 @@ function DashboardLayout({
 
   // Invite handlers
   const handleInviteFormChange = (field, value) => {
-    setInviteForm((prev) => ({ ...prev, [field]: value }));
+    setInviteForm((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === "role") {
+        if (isInviteAdminRole(value)) {
+          next.project_access_scope = "all";
+          next.project_ids = [];
+        } else {
+          const currentScope = normalizeInviteProjectScope(prev.project_access_scope);
+          next.project_access_scope = currentScope === "all" ? "selected" : currentScope;
+        }
+      }
+      if (field === "project_access_scope") {
+        const normalizedScope = normalizeInviteProjectScope(value);
+        next.project_access_scope = normalizedScope;
+        if (normalizedScope !== "selected") {
+          next.project_ids = [];
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleInviteProjectToggle = (projectId) => {
+    const parsedProjectId = Number.parseInt(String(projectId || ""), 10);
+    if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+      return;
+    }
+    setInviteForm((prev) => {
+      const current = normalizeInviteProjectIds(prev.project_ids);
+      const hasProject = current.includes(parsedProjectId);
+      return {
+        ...prev,
+        project_ids: hasProject
+          ? current.filter((id) => id !== parsedProjectId)
+          : [...current, parsedProjectId],
+      };
+    });
   };
 
   const handleInviteSubmit = async (e) => {
@@ -229,17 +298,31 @@ function DashboardLayout({
 
       // Get tenant ID from the current page context
       // For now, we'll need to pass it from the parent or get it from user context
-      const tenantId = tenant?.id || user?.tenant_id;
-      if (!tenantId) {
+      if (!activeTenantId) {
         throw new Error("Tenant ID is not available");
+      }
+
+      const role = String(inviteForm.role || "member").trim().toLowerCase();
+      const adminInvite = isInviteAdminRole(role);
+      const projectAccessScope = adminInvite
+        ? "all"
+        : normalizeInviteProjectScope(inviteForm.project_access_scope || "selected");
+      const selectedProjectIds =
+        projectAccessScope === "selected"
+          ? normalizeInviteProjectIds(inviteForm.project_ids)
+          : [];
+      if (!adminInvite && projectAccessScope === "selected" && inviteProjects.length > 0 && selectedProjectIds.length === 0) {
+        throw new Error("Select at least one project or choose a different project access scope.");
       }
 
       const payload = {
         email: inviteForm.email,
         phone_number: inviteForm.phone_number || null,
-        role: inviteForm.role || "member",
+        role: role || "member",
         notes: inviteForm.notes || null,
-        tenant_id: tenantId,
+        tenant_id: activeTenantId,
+        project_access_scope: projectAccessScope,
+        project_ids: selectedProjectIds,
       };
 
       const result = await createMagicLinkInvite(payload);
@@ -248,19 +331,13 @@ function DashboardLayout({
       setResponseData({
         type: "success",
         title: "Invite Created!",
-        message: `Share this invite number with ${inviteForm.email}. They can use it to join the workspace.`,
+        message: `Share this invite number with ${inviteForm.email}. They can join at /register (or /join).`,
         code: result?.inviteNumber,
       });
       setShowResponseModal(true);
 
       // Reset form
-      setInviteForm({
-        name: "",
-        email: "",
-        phone_number: "",
-        role: "member",
-        notes: "",
-      });
+      setInviteForm(createInviteForm());
       setShowInviteModal(false);
     } catch (error) {
       setResponseData({
@@ -277,18 +354,45 @@ function DashboardLayout({
 
   const closeInviteModal = () => {
     setShowInviteModal(false);
-    setInviteForm({
-      name: "",
-      email: "",
-      phone_number: "",
-      role: "member",
-      notes: "",
-    });
+    setInviteForm(createInviteForm());
   };
 
   const closeResponseModal = () => {
     setShowResponseModal(false);
   };
+
+  useEffect(() => {
+    if (!showInviteModal || !activeTenantId) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingInviteProjects(true);
+    getProjects(activeTenantId)
+      .then((data) => {
+        if (cancelled) return;
+        setInviteProjects(Array.isArray(data) ? data : []);
+      })
+      .catch((error) => {
+        console.error("Error loading invite projects:", error);
+        if (cancelled) return;
+        setInviteProjects([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingInviteProjects(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showInviteModal, activeTenantId]);
+
+  const inviteProjectIds = normalizeInviteProjectIds(inviteForm.project_ids);
+  const inviteRoleIsAdmin = isInviteAdminRole(inviteForm.role);
+  const inviteProjectScope = inviteRoleIsAdmin
+    ? "all"
+    : normalizeInviteProjectScope(inviteForm.project_access_scope);
 
   const toggleSection = (key) => {
     setOpenSections((prev) => {
@@ -574,6 +678,51 @@ function DashboardLayout({
                 <option value="supervisor">Supervisor</option>
               </select>
             </div>
+
+            {!inviteRoleIsAdmin && (
+              <div className="data-modal-field data-modal-field--full">
+                <label>Project Access</label>
+                <select
+                  value={inviteProjectScope}
+                  onChange={(e) => handleInviteFormChange("project_access_scope", e.target.value)}
+                  disabled={submittingInvite}
+                >
+                  <option value="selected">Selected projects</option>
+                  <option value="all">All projects</option>
+                  <option value="none">No project access yet</option>
+                </select>
+              </div>
+            )}
+
+            {!inviteRoleIsAdmin && inviteProjectScope === "selected" && (
+              <div className="data-modal-field data-modal-field--full">
+                <label>Projects</label>
+                <div className="data-modal-checkbox-list">
+                  {loadingInviteProjects ? (
+                    <p className="data-modal-hint">Loading projects...</p>
+                  ) : inviteProjects.length ? (
+                    inviteProjects.map((project) => {
+                      const projectId = Number.parseInt(String(project?.id || ""), 10);
+                      if (!Number.isInteger(projectId) || projectId <= 0) return null;
+                      const checked = inviteProjectIds.includes(projectId);
+                      return (
+                        <label key={projectId} className="data-modal-checkbox-item">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => handleInviteProjectToggle(projectId)}
+                            disabled={submittingInvite}
+                          />
+                          <span>{project?.name || `Project ${projectId}`}</span>
+                        </label>
+                      );
+                    })
+                  ) : (
+                    <p className="data-modal-hint">No projects available in this workspace yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="data-modal-field data-modal-field--full">
               <label>Notes</label>

@@ -82,10 +82,11 @@ const toDateKey = (value) => {
   return String(value).slice(0, 10);
 };
 
-export default function JppProjectPage({ user, tenantId, activeProjectId, onProjectChange }) {
+export default function JppProjectPage({ user, tenantRole, tenantId, activeProjectId, onProjectChange }) {
   const today = new Date().toISOString().slice(0, 10);
-  const canManage = ["admin", "superadmin", "project_manager"].includes(user?.role);
-  const canViewAllProjects = ["admin", "superadmin"].includes(user?.role);
+  const effectiveRole = String(tenantRole || user?.role || "member").toLowerCase();
+  const canManage = ["admin", "superadmin", "project_manager"].includes(effectiveRole);
+  const canViewAllProjects = ["admin", "superadmin"].includes(effectiveRole);
 
   const initialBatchForm = {
     batch_code: "",

@@ -1,3 +1,5 @@
+import { Icon } from "./icons.jsx";
+
 const mapFallbackPrograms = (projects) =>
   projects.map((project) => ({
     title: project.name ?? project.code ?? "Program",
@@ -15,6 +17,26 @@ const mapFallbackPrograms = (projects) =>
     image: project.image ?? null,
   }));
 
+const toText = (value) => String(value || "").trim();
+
+const clampWords = (value, maxWords = 20) => {
+  const source = toText(value);
+  if (!source) return "";
+  const words = source.split(/\s+/);
+  if (words.length <= maxWords) return source;
+  return `${words.slice(0, maxWords).join(" ")}…`;
+};
+
+const resolveProgramIcon = (item = {}) => {
+  const source = `${toText(item?.tag)} ${toText(item?.title)} ${toText(item?.description)}`.toLowerCase();
+  if (source.includes("food") || source.includes("hunger") || source.includes("nutrition")) return "heart";
+  if (source.includes("health") || source.includes("medical") || source.includes("treatment")) return "check-circle";
+  if (source.includes("transport") || source.includes("logistics") || source.includes("delivery")) return "truck";
+  if (source.includes("training") || source.includes("education") || source.includes("youth")) return "users";
+  if (source.includes("agri") || source.includes("farm")) return "layers";
+  return "target";
+};
+
 export default function ProgramsGrid({ data }) {
   const section = data?.programsSection ?? {};
   const id = section.id ?? "programs";
@@ -28,6 +50,24 @@ export default function ProgramsGrid({ data }) {
     : fallbackProjects.length
       ? mapFallbackPrograms(fallbackProjects)
       : [];
+  const visibleItems = items.slice(0, 5);
+  const promoTitle = toText(section.promoTitle) || "Contribute Today To Make A Difference";
+  const promoDescription =
+    toText(section.promoDescription) ||
+    toText(data?.ctaBanner?.description) ||
+    "Your contribution makes change possible today.";
+  const promoAction = data?.tenantCta ?? data?.ctaBanner?.cta ?? { label: "Join us now", href: "#contact" };
+  const promoImage =
+    toText(section?.promoImage?.src || section?.promoImage) ||
+    toText(data?.heroBackgroundImage || data?.heroImages?.[0]?.src || visibleItems[0]?.image?.src);
+  const promoStyle = promoImage
+    ? {
+        backgroundImage: `linear-gradient(160deg, rgba(6, 25, 43, 0.82), rgba(13, 56, 52, 0.56)), url("${promoImage.replace(
+          /"/g,
+          '\\"'
+        )}")`,
+      }
+    : undefined;
 
   if (!items.length && !title && !description) {
     return null;
@@ -42,43 +82,51 @@ export default function ProgramsGrid({ data }) {
       </div>
 
       <div className="container programs-grid">
-        {items.map((item, index) => {
-          const highlights = Array.isArray(item.highlights) ? item.highlights : [];
+        {visibleItems.map((item, index) => {
           const image = item.image ?? {};
           const cta = item.cta ?? {};
+          const summary = clampWords(item.description || item.overview || item.detail || item.highlights?.[0], 20);
+          const iconName = resolveProgramIcon(item);
 
           return (
-            <article className="program-card" key={`${item.title}-${index}`}>
-              <div className="program-card-top">
-                {item.tag ? <span className="program-tag">{item.tag}</span> : null}
-                {item.status ? <span className="program-status">{item.status}</span> : null}
+            <article className="program-card program-card--inspire" key={`${item.title}-${index}`}>
+              <div className="program-card-media">
+                {image?.src ? (
+                  <img src={image.src} alt={image.alt ?? item.title ?? "Program"} loading="lazy" />
+                ) : (
+                  <div className="program-card-media-placeholder" aria-hidden="true"></div>
+                )}
+                <span className="program-card-badge" aria-hidden="true">
+                  <Icon name={iconName} size={16} />
+                </span>
               </div>
 
-              {item.title ? <h3>{item.title}</h3> : null}
-              {item.description ? <p className="program-description">{item.description}</p> : null}
-
-              {image?.src ? (
-                <div className="program-image">
-                  <img src={image.src} alt={image.alt ?? ""} loading="lazy" />
-                </div>
-              ) : null}
-
-              {highlights.length ? (
-                <ul className="program-highlights">
-                  {highlights.slice(0, 3).map((point) => (
-                    <li key={point}>{point}</li>
-                  ))}
-                </ul>
-              ) : null}
+              <div className="program-card-content">
+                {item.title ? <h3>{item.title}</h3> : null}
+                {summary ? <p className="program-description">{summary}</p> : null}
+                {item.tag ? <p className="program-card-meta">{item.tag}</p> : null}
+              </div>
 
               {cta?.label ? (
-                <a className="btn btn-dark" href={cta.href ?? "#"}>
+                <a className="program-card-link" href={cta.href ?? "#"}>
                   {cta.label}
                 </a>
               ) : null}
             </article>
           );
         })}
+
+        <article className="program-card program-card--promo">
+          <div className="program-card-promo-surface" style={promoStyle}>
+            <h3>{promoTitle}</h3>
+            {promoDescription ? <p>{clampWords(promoDescription, 24)}</p> : null}
+            {promoAction?.label ? (
+              <a className="program-promo-btn" href={promoAction?.href ?? "#contact"}>
+                {promoAction.label}
+              </a>
+            ) : null}
+          </div>
+        </article>
       </div>
     </section>
   );

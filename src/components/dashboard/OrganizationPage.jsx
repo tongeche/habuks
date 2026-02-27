@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createOrganizationActivity,
   createMemberAdmin,
+  createProjectMemberAssignments,
   createTenantMembership,
   createMagicLinkInvite,
   deleteOrganizationActivities,
@@ -12,12 +13,16 @@ import {
   getOrganizationTemplateDownloadUrl,
   getOrganizationTemplates,
   getProjectsWithMembership,
+  getTenantProjectMediaLibrary,
   getTenantById,
+  leaveProject,
   renameOrganizationDocument,
+  uploadBirdPhoto,
   uploadOrganizationDocument,
   uploadMemberAvatar,
   updateOrganizationActivity,
   updateMemberAdmin,
+  setIgaProjectVisibility,
   updateTenant,
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
@@ -32,6 +37,13 @@ const ORG_TABS = [
   { key: "activities", label: "Activities" },
   { key: "partners", label: "Partners" },
   { key: "templates", label: "Templates" },
+];
+const ORG_EDITOR_STEPS = [
+  { key: "basic", label: "Basic info", note: "Identity and public profile visibility." },
+  { key: "contacts", label: "Contacts", note: "Operational contacts and address." },
+  { key: "about", label: "About", note: "Mission and vision content." },
+  { key: "web", label: "Web", note: "Programs and visibility. Other sections auto-sync." },
+  { key: "media", label: "Media", note: "Website images from projects or uploads." },
 ];
 
 const PARTNER_KIND_OPTIONS = [
@@ -95,6 +107,42 @@ const ORGANIZATION_OVERVIEW_RANGE_LOOKUP = ORGANIZATION_OVERVIEW_RANGE_OPTIONS.r
   },
   {}
 );
+const createInviteForm = () => ({
+  name: "",
+  email: "",
+  phone_number: "",
+  role: "member",
+  notes: "",
+  project_access_scope: "selected",
+  project_ids: [],
+});
+
+const normalizeInviteProjectScope = (scope) => {
+  const normalized = String(scope || "").trim().toLowerCase();
+  if (normalized === "all" || normalized === "selected" || normalized === "none") {
+    return normalized;
+  }
+  return "none";
+};
+
+const normalizeInviteProjectIds = (projectIds) => {
+  if (!Array.isArray(projectIds)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      projectIds
+        .map((projectId) => Number.parseInt(String(projectId || ""), 10))
+        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
+    )
+  );
+};
+
+const isInviteAdminRole = (role) => {
+  const normalized = String(role || "").trim().toLowerCase();
+  return normalized === "admin" || normalized === "superadmin";
+};
+
 const getTemplateCardTone = (category) => {
   const normalized = String(category || "")
     .trim()
@@ -205,6 +253,12 @@ const normalizeDateInputValue = (value) => {
   const text = String(value).trim();
   if (!text) return "";
   return text.slice(0, 10);
+};
+
+const parsePositiveInt = (value) => {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
 };
 
 const normalizeCsvHeader = (value) =>
@@ -406,6 +460,231 @@ const safeObject = (value) => {
   return value;
 };
 
+const asText = (value) => String(value || "").trim();
+const asArray = (value) => (Array.isArray(value) ? value : []);
+
+const getProgramsSection = (siteData) => safeObject(safeObject(siteData).programsSection);
+const getWebsiteMediaSection = (siteData) => safeObject(safeObject(siteData).websiteMedia);
+
+const buildProjectWebsiteSettings = (projects, siteData) => {
+  const section = getProgramsSection(siteData);
+  const settingsById = new Map();
+
+  asArray(section.projectSettings).forEach((entry) => {
+    const safeEntry = safeObject(entry);
+    const projectId = asText(safeEntry.project_id || safeEntry.projectId || safeEntry.id);
+    if (!projectId) return;
+    settingsById.set(projectId, {
+      is_visible: safeEntry.is_visible !== false,
+      href: asText(safeEntry.href || safeEntry.link || safeEntry.url),
+    });
+  });
+
+  return asArray(projects)
+    .map((project, index) => {
+      const safeProject = safeObject(project);
+      const projectId = asText(safeProject.id);
+      if (!projectId) return null;
+      const existing = settingsById.get(projectId);
+      return {
+        project_id: projectId,
+        project_name: asText(safeProject.name) || `Project ${index + 1}`,
+        project_status: asText(safeProject.status) || "active",
+        is_visible: existing ? Boolean(existing.is_visible) : safeProject.is_visible !== false,
+        href: existing ? asText(existing.href) : "",
+      };
+    })
+    .filter(Boolean);
+};
+
+const serializeProjectWebsiteSettings = (rows) =>
+  asArray(rows)
+    .map((row) => {
+      const safeRow = safeObject(row);
+      const projectId = asText(safeRow.project_id);
+      if (!projectId) return null;
+      const href = asText(safeRow.href);
+      return {
+        project_id: projectId,
+        is_visible: safeRow.is_visible !== false,
+        ...(href ? { href } : {}),
+      };
+    })
+    .filter(Boolean);
+
+const toStorageSegment = (value, fallback = "global") => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return normalized || fallback;
+};
+
+const createWebsiteMediaRow = (value, index = 0) => {
+  const source = safeObject(value);
+  const src = asText(source.src || source.image_url || source.imageUrl || source.url);
+  if (!src) return null;
+  const projectId = asText(source.project_id || source.projectId);
+  const projectName = asText(source.project_name || source.projectName);
+  const sourceType = asText(source.source).toLowerCase() === "project" ? "project" : "upload";
+  const id = asText(source.id) || `website-media-${sourceType}-${index + 1}`;
+  return {
+    id,
+    src,
+    alt: asText(source.alt) || `${projectName || "Organization"} image`,
+    source: sourceType,
+    project_id: projectId,
+    project_name: projectName,
+    is_primary: source.is_primary === true || source.isPrimary === true,
+  };
+};
+
+const buildWebsiteMediaRows = (siteData) => {
+  const websiteMedia = getWebsiteMediaSection(siteData);
+  const configuredRows = asArray(websiteMedia.images)
+    .map((item, index) => createWebsiteMediaRow(item, index))
+    .filter(Boolean);
+  const legacyRows = asArray(safeObject(siteData).heroImages)
+    .map((item, index) => createWebsiteMediaRow(item, index))
+    .filter(Boolean);
+  const sourceRows = configuredRows.length ? configuredRows : legacyRows;
+  const heroBackgroundImage = asText(
+    websiteMedia.heroBackgroundImage ||
+      safeObject(siteData).heroBackgroundImage ||
+      safeObject(siteData).heroImage
+  );
+  const deduped = [];
+  const seen = new Set();
+  sourceRows.forEach((row, index) => {
+    const src = asText(row?.src);
+    if (!src || seen.has(src)) return;
+    seen.add(src);
+    deduped.push({
+      ...row,
+      id: asText(row?.id) || `website-media-${index + 1}`,
+    });
+  });
+  const primarySource = deduped.find((row) => row.is_primary) || null;
+  const primaryImage =
+    (heroBackgroundImage && deduped.find((row) => row.src === heroBackgroundImage)) ||
+    primarySource ||
+    deduped[0] ||
+    null;
+  return deduped.map((row) => ({
+    ...row,
+    is_primary: primaryImage ? row.src === primaryImage.src : false,
+  }));
+};
+
+const serializeWebsiteMediaRows = (rows) => {
+  const normalized = asArray(rows)
+    .map((row, index) => createWebsiteMediaRow(row, index))
+    .filter(Boolean);
+  const primary = normalized.find((row) => row.is_primary) || normalized[0] || null;
+  const images = normalized.map((row, index) => ({
+    id: asText(row.id) || `website-media-${index + 1}`,
+    src: row.src,
+    alt: asText(row.alt) || `Organization image ${index + 1}`,
+    source: row.source === "project" ? "project" : "upload",
+    project_id: normalizeOptional(row.project_id),
+    project_name: normalizeOptional(row.project_name),
+    is_primary: primary ? row.src === primary.src : false,
+  }));
+  return {
+    images,
+    heroBackgroundImage: primary?.src || null,
+  };
+};
+
+const buildProjectWebsiteMediaOptions = (projects, projectMediaLibrary) => {
+  const projectById = new Map(
+    asArray(projects)
+      .map((project, index) => {
+        const source = safeObject(project);
+        const projectId = asText(source.id);
+        if (!projectId) return null;
+        return [
+          projectId,
+          {
+            id: projectId,
+            name: asText(source.name) || `Project ${index + 1}`,
+            status: asText(source.status) || "active",
+            image_url: asText(source.image_url || source.imageUrl),
+          },
+        ];
+      })
+      .filter(Boolean)
+  );
+
+  const rows = [];
+  const seen = new Set();
+  const addRow = (value, index = 0) => {
+    const source = safeObject(value);
+    const src = asText(source.src || source.image_url || source.imageUrl || source.url);
+    const projectId = asText(source.project_id || source.projectId || source.id);
+    if (!src || !projectId) return;
+    const dedupeKey = `${projectId}|${src}`;
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+
+    const project = projectById.get(projectId);
+    const projectName = asText(source.project_name || source.projectName || project?.name);
+    const projectStatus = asText(source.project_status || source.projectStatus || project?.status || "active");
+    const mediaKind = asText(source.media_kind || source.mediaKind).toLowerCase() === "cover"
+      ? "cover"
+      : "gallery";
+    const mediaCaption = asText(source.media_caption || source.mediaCaption || source.caption);
+
+    rows.push({
+      id: asText(source.id) || `project-media-${projectId}-${index + 1}`,
+      src,
+      alt:
+        asText(source.alt) ||
+        mediaCaption ||
+        `${projectName || "Project"} ${mediaKind === "cover" ? "cover image" : "gallery image"}`,
+      source: "project",
+      project_id: projectId,
+      project_name: projectName || `Project ${projectId}`,
+      project_status: projectStatus,
+      media_kind: mediaKind,
+      media_caption: mediaCaption,
+    });
+  };
+
+  asArray(projects).forEach((project, index) => {
+    const source = safeObject(project);
+    addRow(
+      {
+        id: `project-cover-${asText(source.id) || index + 1}`,
+        src: asText(source.image_url || source.imageUrl),
+        project_id: asText(source.id),
+        project_name: asText(source.name) || `Project ${index + 1}`,
+        project_status: asText(source.status) || "active",
+        media_kind: "cover",
+      },
+      index
+    );
+  });
+
+  asArray(projectMediaLibrary).forEach((row, index) => {
+    const source = safeObject(row);
+    addRow(
+      {
+        id: `project-gallery-${asText(source.project_id) || "project"}-${asText(source.id) || index + 1}`,
+        src: asText(source.image_url || source.src),
+        project_id: asText(source.project_id),
+        media_kind: "gallery",
+        media_caption: asText(source.caption),
+      },
+      index + asArray(projects).length
+    );
+  });
+
+  return rows.slice(0, 200);
+};
+
 const getOrganizationProfile = (siteData) => {
   const safeSiteData = safeObject(siteData);
   const profile = safeObject(safeSiteData.organization_profile);
@@ -468,7 +747,9 @@ const buildSiteDataWithProfilePatch = (siteData, profilePatch) => {
 };
 
 const createOrganizationForm = (tenantRecord) => {
-  const profile = getOrganizationProfile(tenantRecord?.site_data);
+  const siteData = safeObject(tenantRecord?.site_data);
+  const profile = getOrganizationProfile(siteData);
+  const programsSection = getProgramsSection(siteData);
   return {
     name: String(tenantRecord?.name || "").trim(),
     tagline: String(tenantRecord?.tagline || "").trim(),
@@ -479,6 +760,8 @@ const createOrganizationForm = (tenantRecord) => {
     website: String(profile.website || "").trim(),
     mission: String(profile.mission || "").trim(),
     vision: String(profile.vision || "").trim(),
+    programs_title: asText(programsSection.title),
+    programs_description: asText(programsSection.description),
     is_public: Boolean(tenantRecord?.is_public ?? true),
   };
 };
@@ -737,6 +1020,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const [tenantRecord, setTenantRecord] = useState(tenant || null);
   const [members, setMembers] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [projectMediaLibrary, setProjectMediaLibrary] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [meetings, setMeetings] = useState([]);
   const [organizationTemplates, setOrganizationTemplates] = useState([]);
@@ -776,10 +1060,16 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
   const [showOrgModal, setShowOrgModal] = useState(false);
   const [orgForm, setOrgForm] = useState(() => createOrganizationForm(tenant));
+  const [orgFormStep, setOrgFormStep] = useState(ORG_EDITOR_STEPS[0].key);
+  const [projectWebsiteSettings, setProjectWebsiteSettings] = useState([]);
+  const [websiteMediaRows, setWebsiteMediaRows] = useState([]);
+  const [websiteMediaError, setWebsiteMediaError] = useState("");
+  const [uploadingWebsiteMedia, setUploadingWebsiteMedia] = useState(false);
   const [orgFormError, setOrgFormError] = useState("");
   const [savingOrg, setSavingOrg] = useState(false);
 
   const [showMemberModal, setShowMemberModal] = useState(false);
+  const [showMemberProjectAccessModal, setShowMemberProjectAccessModal] = useState(false);
   const [showMemberEditorModal, setShowMemberEditorModal] = useState(false);
   const [editingMemberId, setEditingMemberId] = useState("");
   const [memberForm, setMemberForm] = useState(() => createMemberForm());
@@ -788,20 +1078,19 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const [savingMember, setSavingMember] = useState(false);
   const [importingMembers, setImportingMembers] = useState(false);
   const [uploadingMemberAvatar, setUploadingMemberAvatar] = useState(false);
+  const [memberProjectRows, setMemberProjectRows] = useState([]);
+  const [memberProjectSelectedIds, setMemberProjectSelectedIds] = useState([]);
+  const [memberProjectOriginalIds, setMemberProjectOriginalIds] = useState([]);
+  const [loadingMemberProjectAccess, setLoadingMemberProjectAccess] = useState(false);
+  const [savingMemberProjectAccess, setSavingMemberProjectAccess] = useState(false);
+  const [memberProjectAccessError, setMemberProjectAccessError] = useState("");
 
-  // Choice modal for Add vs Invite
-  const [showChoiceModal, setShowChoiceModal] = useState(false);
+  const [showMemberImportChoiceModal, setShowMemberImportChoiceModal] = useState(false);
 
   // Invite modal states
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showResponseModal, setShowResponseModal] = useState(false);
-  const [inviteForm, setInviteForm] = useState({
-    name: "",
-    email: "",
-    phone_number: "",
-    role: "member",
-    notes: "",
-  });
+  const [inviteForm, setInviteForm] = useState(() => createInviteForm());
   const [responseData, setResponseData] = useState({
     type: "success",
     title: "",
@@ -830,6 +1119,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const memberAvatarInputRef = useRef(null);
   const memberImportInputRef = useRef(null);
   const organizationDocumentInputRef = useRef(null);
+  const websiteMediaInputRef = useRef(null);
   const documentSearchInputRef = useRef(null);
   const templateSearchInputRef = useRef(null);
   const partnerLogoInputRef = useRef(null);
@@ -845,6 +1135,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         setTenantRecord(null);
         setMembers([]);
         setProjects([]);
+        setProjectMediaLibrary([]);
         setDocuments([]);
         setMeetings([]);
         setOrganizationTemplates([]);
@@ -863,11 +1154,20 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setOrganizationDocumentsError("");
       setTemplatesError("");
 
-      const [tenantResult, membersResult, projectsResult, documentsResult, meetingsResult, templatesResult] =
+      const [
+        tenantResult,
+        membersResult,
+        projectsResult,
+        projectMediaResult,
+        documentsResult,
+        meetingsResult,
+        templatesResult,
+      ] =
         await Promise.allSettled([
           getTenantById(tenantId),
           getMembersAdmin(tenantId),
           getProjectsWithMembership(user?.id, tenantId),
+          getTenantProjectMediaLibrary(tenantId, { perProjectLimit: 12 }),
           getDocuments(tenantId),
           getMeetings(tenantId),
           getOrganizationTemplates(tenantId),
@@ -899,6 +1199,13 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         setProjects([]);
         errors.push("Failed to load projects.");
         console.error("Organization projects load error:", projectsResult.reason);
+      }
+
+      if (projectMediaResult.status === "fulfilled") {
+        setProjectMediaLibrary(Array.isArray(projectMediaResult.value) ? projectMediaResult.value : []);
+      } else {
+        setProjectMediaLibrary([]);
+        console.error("Organization project media load error:", projectMediaResult.reason);
       }
 
       if (documentsResult.status === "fulfilled") {
@@ -945,6 +1252,10 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const partners = useMemo(
     () => getOrganizationPartners(tenantRecord?.site_data),
     [tenantRecord?.site_data]
+  );
+  const projectWebsiteMediaOptions = useMemo(
+    () => buildProjectWebsiteMediaOptions(projects, projectMediaLibrary),
+    [projects, projectMediaLibrary]
   );
 
   useEffect(() => {
@@ -1404,6 +1715,76 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     return members.find((member) => String(member?.id || "") === selectedMemberIds[0]) || null;
   }, [members, selectedMemberIds]);
 
+  const loadMemberProjectAccess = useCallback(
+    async (memberId) => {
+      const parsedMemberId = parsePositiveInt(memberId);
+      if (!parsedMemberId || !tenantId) {
+        setMemberProjectRows([]);
+        setMemberProjectSelectedIds([]);
+        setMemberProjectOriginalIds([]);
+        return;
+      }
+
+      setLoadingMemberProjectAccess(true);
+      setMemberProjectAccessError("");
+
+      try {
+        const rows = await getProjectsWithMembership(parsedMemberId, tenantId);
+        const normalizedRows = (Array.isArray(rows) ? rows : [])
+          .map((project) => {
+            const projectId = parsePositiveInt(project?.id);
+            if (!projectId) return null;
+            const projectLeaderId = parsePositiveInt(project?.project_leader);
+            const isProjectLeader = projectLeaderId === parsedMemberId;
+            const hasMembership = Boolean(project?.membership) || isProjectLeader;
+            return {
+              ...project,
+              project_id: projectId,
+              has_membership: hasMembership,
+              project_leader_locked: isProjectLeader,
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || "")));
+
+        const assignedIds = normalizedRows
+          .filter((project) => project.has_membership)
+          .map((project) => project.project_id);
+
+        setMemberProjectRows(normalizedRows);
+        setMemberProjectSelectedIds(assignedIds);
+        setMemberProjectOriginalIds(assignedIds);
+      } catch (error) {
+        console.error("Error loading member project access:", error);
+        setMemberProjectRows([]);
+        setMemberProjectSelectedIds([]);
+        setMemberProjectOriginalIds([]);
+        setMemberProjectAccessError(error?.message || "Failed to load project access.");
+      } finally {
+        setLoadingMemberProjectAccess(false);
+      }
+    },
+    [tenantId]
+  );
+
+  useEffect(() => {
+    if (!showMemberProjectAccessModal) return;
+    const memberId = parsePositiveInt(selectedMember?.id);
+    if (!memberId || !tenantId) {
+      setMemberProjectRows([]);
+      setMemberProjectSelectedIds([]);
+      setMemberProjectOriginalIds([]);
+      return;
+    }
+    loadMemberProjectAccess(memberId);
+  }, [showMemberProjectAccessModal, selectedMember?.id, tenantId, loadMemberProjectAccess]);
+
+  useEffect(() => {
+    if (!showMemberProjectAccessModal) return;
+    if (selectedMember) return;
+    setShowMemberProjectAccessModal(false);
+  }, [showMemberProjectAccessModal, selectedMember]);
+
   const selectedMeeting = useMemo(() => {
     if (selectedMeetingIds.length !== 1) return null;
     return meetings.find((meeting) => String(meeting?.id || "") === selectedMeetingIds[0]) || null;
@@ -1464,6 +1845,11 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const triggerMemberImportPicker = () => {
     if (savingMember || importingMembers) return;
     memberImportInputRef.current?.click();
+  };
+
+  const openMemberImportChoiceModal = () => {
+    if (savingMember || importingMembers) return;
+    setShowMemberImportChoiceModal(true);
   };
 
   const downloadMemberImportTemplate = () => {
@@ -2304,6 +2690,148 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     setShowMemberEditorModal(true);
   };
 
+  const openMemberProjectAccessModal = () => {
+    if (!selectedMember) return;
+    setMemberProjectAccessError("");
+    setShowMemberProjectAccessModal(true);
+  };
+
+  const openMemberProjectAccessForMember = (memberId) => {
+    const normalizedMemberId = String(memberId || "").trim();
+    if (!normalizedMemberId) return;
+    setSelectedMemberIds([normalizedMemberId]);
+    setMemberProjectAccessError("");
+    setShowMemberProjectAccessModal(true);
+  };
+
+  const closeMemberProjectAccessModal = () => {
+    if (savingMemberProjectAccess) return;
+    setShowMemberProjectAccessModal(false);
+    setMemberProjectRows([]);
+    setMemberProjectSelectedIds([]);
+    setMemberProjectOriginalIds([]);
+    setMemberProjectAccessError("");
+  };
+
+  const toggleMemberProjectAccess = (projectId) => {
+    const parsedProjectId = parsePositiveInt(projectId);
+    if (!parsedProjectId) return;
+    setMemberProjectSelectedIds((prev) => {
+      const exists = prev.includes(parsedProjectId);
+      return exists ? prev.filter((id) => id !== parsedProjectId) : [...prev, parsedProjectId];
+    });
+    if (memberProjectAccessError) {
+      setMemberProjectAccessError("");
+    }
+  };
+
+  const handleSaveMemberProjectAccess = async (event) => {
+    event.preventDefault();
+    if (!tenantId) {
+      setMemberProjectAccessError("Tenant context is missing.");
+      return;
+    }
+
+    const memberId = parsePositiveInt(selectedMember?.id);
+    if (!memberId) {
+      setMemberProjectAccessError("Select one member to edit project access.");
+      return;
+    }
+
+    const lockedProjectIds = new Set(
+      memberProjectRows
+        .filter((project) => project.project_leader_locked)
+        .map((project) => project.project_id)
+        .filter(Boolean)
+    );
+    const desiredIds = Array.from(
+      new Set([
+        ...memberProjectSelectedIds.filter((projectId) => parsePositiveInt(projectId)),
+        ...Array.from(lockedProjectIds),
+      ])
+    );
+    const desiredSet = new Set(desiredIds);
+    const originalSet = new Set(
+      memberProjectOriginalIds.filter((projectId) => parsePositiveInt(projectId))
+    );
+
+    const toAdd = desiredIds.filter((projectId) => !originalSet.has(projectId));
+    const toRemove = Array.from(originalSet).filter(
+      (projectId) => !desiredSet.has(projectId) && !lockedProjectIds.has(projectId)
+    );
+
+    if (!toAdd.length && !toRemove.length) {
+      setNotice({
+        type: "warning",
+        message: "No project access changes to save.",
+      });
+      return;
+    }
+
+    setSavingMemberProjectAccess(true);
+    setMemberProjectAccessError("");
+
+    let addSuccess = 0;
+    let removeSuccess = 0;
+    const failures = [];
+
+    try {
+      for (const projectId of toAdd) {
+        try {
+          await createProjectMemberAssignments(
+            projectId,
+            [
+              {
+                member_id: memberId,
+                role: "Member",
+                term_start: new Date().toISOString().slice(0, 10),
+              },
+            ],
+            tenantId
+          );
+          addSuccess += 1;
+        } catch (error) {
+          console.error("Error assigning member to project:", error);
+          failures.push(error?.message || `Project ${projectId} assignment failed.`);
+        }
+      }
+
+      for (const projectId of toRemove) {
+        try {
+          await leaveProject(projectId, memberId, tenantId);
+          removeSuccess += 1;
+        } catch (error) {
+          console.error("Error removing member from project:", error);
+          failures.push(error?.message || `Project ${projectId} removal failed.`);
+        }
+      }
+
+      if (failures.length) {
+        setMemberProjectAccessError(
+          `Applied ${addSuccess + removeSuccess} changes. ${failures.length} failed.`
+        );
+      } else {
+        const actionParts = [];
+        if (addSuccess > 0) {
+          actionParts.push(`added to ${addSuccess} project${addSuccess === 1 ? "" : "s"}`);
+        }
+        if (removeSuccess > 0) {
+          actionParts.push(`removed from ${removeSuccess} project${removeSuccess === 1 ? "" : "s"}`);
+        }
+        setNotice({
+          type: "success",
+          message: `${selectedMember?.name || "Member"} ${actionParts.join(" and ")}.`,
+        });
+        setShowMemberProjectAccessModal(false);
+      }
+
+      await loadMemberProjectAccess(memberId);
+      await loadWorkspace({ silent: true });
+    } finally {
+      setSavingMemberProjectAccess(false);
+    }
+  };
+
   const handleMemberFormChange = (field, value) => {
     setMemberForm((prev) => ({ ...prev, [field]: value }));
     if (memberFormError) {
@@ -2400,7 +2928,43 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
   // Invite handlers
   const handleInviteFormChange = (field, value) => {
-    setInviteForm((prev) => ({ ...prev, [field]: value }));
+    setInviteForm((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === "role") {
+        if (isInviteAdminRole(value)) {
+          next.project_access_scope = "all";
+          next.project_ids = [];
+        } else {
+          const currentScope = normalizeInviteProjectScope(prev.project_access_scope);
+          next.project_access_scope = currentScope === "all" ? "selected" : currentScope;
+        }
+      }
+      if (field === "project_access_scope") {
+        const normalizedScope = normalizeInviteProjectScope(value);
+        next.project_access_scope = normalizedScope;
+        if (normalizedScope !== "selected") {
+          next.project_ids = [];
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleInviteProjectToggle = (projectId) => {
+    const parsedProjectId = Number.parseInt(String(projectId || ""), 10);
+    if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+      return;
+    }
+    setInviteForm((prev) => {
+      const current = normalizeInviteProjectIds(prev.project_ids);
+      const hasProject = current.includes(parsedProjectId);
+      return {
+        ...prev,
+        project_ids: hasProject
+          ? current.filter((id) => id !== parsedProjectId)
+          : [...current, parsedProjectId],
+      };
+    });
   };
 
   const handleInviteSubmit = async (e) => {
@@ -2420,12 +2984,27 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         return;
       }
 
+      const role = String(inviteForm.role || "member").trim().toLowerCase();
+      const adminInvite = isInviteAdminRole(role);
+      const projectAccessScope = adminInvite
+        ? "all"
+        : normalizeInviteProjectScope(inviteForm.project_access_scope || "selected");
+      const selectedProjectIds =
+        projectAccessScope === "selected"
+          ? normalizeInviteProjectIds(inviteForm.project_ids)
+          : [];
+      if (!adminInvite && projectAccessScope === "selected" && projects.length > 0 && selectedProjectIds.length === 0) {
+        throw new Error("Select at least one project or choose a different project access scope.");
+      }
+
       const payload = {
         email: inviteForm.email,
         phone_number: inviteForm.phone_number || null,
-        role: inviteForm.role || "member",
+        role: role || "member",
         notes: inviteForm.notes || null,
         tenant_id: tenantId,
+        project_access_scope: projectAccessScope,
+        project_ids: selectedProjectIds,
       };
 
       const result = await createMagicLinkInvite(payload);
@@ -2434,19 +3013,13 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setResponseData({
         type: "success",
         title: "Invite Created!",
-        message: `Share this invite number with ${inviteForm.email}. They can use it to join the workspace.`,
+        message: `Share this invite number with ${inviteForm.email}. They can join at /register (or /join).`,
         code: result?.inviteNumber,
       });
       setShowResponseModal(true);
 
       // Reset form
-      setInviteForm({
-        name: "",
-        email: "",
-        phone_number: "",
-        role: "member",
-        notes: "",
-      });
+      setInviteForm(createInviteForm());
       setShowInviteModal(false);
     } catch (error) {
       setResponseData({
@@ -2463,18 +3036,18 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
   const closeInviteModal = () => {
     setShowInviteModal(false);
-    setInviteForm({
-      name: "",
-      email: "",
-      phone_number: "",
-      role: "member",
-      notes: "",
-    });
+    setInviteForm(createInviteForm());
   };
 
   const closeResponseModal = () => {
     setShowResponseModal(false);
   };
+
+  const inviteProjectIds = normalizeInviteProjectIds(inviteForm.project_ids);
+  const inviteRoleIsAdmin = isInviteAdminRole(inviteForm.role);
+  const inviteProjectScope = inviteRoleIsAdmin
+    ? "all"
+    : normalizeInviteProjectScope(inviteForm.project_access_scope);
 
   const handleSaveMember = async (event) => {
     event.preventDefault();
@@ -2573,6 +3146,10 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
   const openOrgEditor = () => {
     setOrgForm(createOrganizationForm(tenantRecord));
+    setProjectWebsiteSettings(buildProjectWebsiteSettings(projects, tenantRecord?.site_data));
+    setWebsiteMediaRows(buildWebsiteMediaRows(tenantRecord?.site_data));
+    setWebsiteMediaError("");
+    setOrgFormStep(ORG_EDITOR_STEPS[0].key);
     setOrgFormError("");
     setShowOrgModal(true);
   };
@@ -2580,6 +3157,128 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const handleOrgFormChange = (field, value) => {
     setOrgForm((prev) => ({ ...prev, [field]: value }));
     if (orgFormError) setOrgFormError("");
+  };
+
+  const handleProgramWebsiteSettingChange = (projectId, field, value) => {
+    const targetProjectId = String(projectId || "").trim();
+    if (!targetProjectId) return;
+    setProjectWebsiteSettings((prev) =>
+      prev.map((row) => {
+        if (String(row?.project_id || "").trim() !== targetProjectId) return row;
+        return {
+          ...row,
+          [field]: field === "is_visible" ? Boolean(value) : String(value || ""),
+        };
+      })
+    );
+    if (orgFormError) setOrgFormError("");
+  };
+
+  const handleAddProjectWebsiteMedia = (option) => {
+    const candidate = createWebsiteMediaRow(option, websiteMediaRows.length);
+    if (!candidate?.src) return;
+    setWebsiteMediaRows((prev) => {
+      const existing = asArray(prev);
+      if (existing.some((row) => asText(row?.src) === candidate.src)) {
+        return existing;
+      }
+      const nextRow = {
+        ...candidate,
+        is_primary: existing.length === 0,
+      };
+      return [...existing, nextRow];
+    });
+    if (websiteMediaError) {
+      setWebsiteMediaError("");
+    }
+  };
+
+  const handleSetPrimaryWebsiteMedia = (targetId) => {
+    const nextTarget = asText(targetId);
+    if (!nextTarget) return;
+    setWebsiteMediaRows((prev) =>
+      asArray(prev).map((row) => ({
+        ...row,
+        is_primary: asText(row?.id) === nextTarget,
+      }))
+    );
+  };
+
+  const handleRemoveWebsiteMedia = (targetId) => {
+    const nextTarget = asText(targetId);
+    if (!nextTarget) return;
+    setWebsiteMediaRows((prev) => {
+      const remaining = asArray(prev).filter((row) => asText(row?.id) !== nextTarget);
+      const hasPrimary = remaining.some((row) => row.is_primary);
+      if (!hasPrimary && remaining.length) {
+        return remaining.map((row, index) => ({
+          ...row,
+          is_primary: index === 0,
+        }));
+      }
+      return remaining;
+    });
+  };
+
+  const triggerWebsiteMediaUploadPicker = () => {
+    if (savingOrg || uploadingWebsiteMedia) return;
+    websiteMediaInputRef.current?.click();
+  };
+
+  const handleWebsiteMediaUploadSelection = async (event) => {
+    const input = event?.target;
+    const file = input?.files?.[0] || null;
+    if (!file) return;
+    input.value = "";
+
+    if (!tenantId) {
+      setWebsiteMediaError("Tenant context is missing. Cannot upload website media.");
+      return;
+    }
+
+    setUploadingWebsiteMedia(true);
+    if (websiteMediaError) {
+      setWebsiteMediaError("");
+    }
+
+    try {
+      const tenantSegment = toStorageSegment(tenantId, "global");
+      const upload = await uploadBirdPhoto(file, {
+        folder: `tenants/${tenantSegment}/site/media`,
+      });
+      const src = asText(upload?.publicUrl || upload?.path);
+      if (!src) {
+        throw new Error("Media upload succeeded but no URL was returned.");
+      }
+
+      setWebsiteMediaRows((prev) => {
+        const existing = asArray(prev);
+        if (existing.some((row) => asText(row?.src) === src)) {
+          return existing;
+        }
+        return [
+          ...existing,
+          {
+            id: `website-upload-${Date.now()}`,
+            src,
+            alt: `${asText(tenantRecord?.name) || "Organization"} media image`,
+            source: "upload",
+            project_id: "",
+            project_name: "",
+            is_primary: existing.length === 0,
+          },
+        ];
+      });
+      setNotice({
+        type: "success",
+        message: "Website image uploaded. Save organization to publish it.",
+      });
+    } catch (error) {
+      console.error("Error uploading organization website media:", error);
+      setWebsiteMediaError(error?.message || "Failed to upload website media.");
+    } finally {
+      setUploadingWebsiteMedia(false);
+    }
   };
 
   const handleSaveOrganization = async (event) => {
@@ -2601,8 +3300,34 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       const existingSiteData = safeObject(tenantRecord?.site_data);
       const existingProfile = getOrganizationProfile(existingSiteData);
       const existingPartners = getOrganizationPartners(existingSiteData);
+      const existingProgramsSection = getProgramsSection(existingSiteData);
+      const nextProjectSettings = serializeProjectWebsiteSettings(projectWebsiteSettings);
+      const nextWebsiteMedia = serializeWebsiteMediaRows(websiteMediaRows);
 
-      const nextSiteData = buildSiteDataWithProfilePatch(existingSiteData, {
+      const visibilityLookup = new Map(
+        projects
+          .map((project) => {
+            const projectId = asText(project?.id);
+            if (!projectId) return null;
+            return [projectId, project?.is_visible !== false];
+          })
+          .filter(Boolean)
+      );
+      const visibilityUpdates = nextProjectSettings.filter((row) => {
+        const currentVisibility = visibilityLookup.get(row.project_id);
+        if (typeof currentVisibility !== "boolean") return false;
+        return currentVisibility !== Boolean(row.is_visible);
+      });
+
+      if (visibilityUpdates.length) {
+        await Promise.all(
+          visibilityUpdates.map((row) =>
+            setIgaProjectVisibility(row.project_id, row.is_visible !== false, tenantId)
+          )
+        );
+      }
+
+      const profilePatchedSiteData = buildSiteDataWithProfilePatch(existingSiteData, {
         ...existingProfile,
         registration_number: normalizeOptional(orgForm.registration_number),
         website: normalizeOptional(orgForm.website),
@@ -2610,6 +3335,43 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         vision: normalizeOptional(orgForm.vision),
         partners: existingPartners,
       });
+      const nextSiteData = {
+        ...profilePatchedSiteData,
+        programsSection: {
+          ...existingProgramsSection,
+          title: normalizeOptional(orgForm.programs_title),
+          description: normalizeOptional(orgForm.programs_description),
+          projectSettings: nextProjectSettings,
+        },
+        websiteMedia: nextWebsiteMedia,
+        heroImages: nextWebsiteMedia.images.map((image) => ({
+          src: image.src,
+          alt: image.alt,
+        })),
+        heroBackgroundImage: nextWebsiteMedia.heroBackgroundImage,
+        heroImage: nextWebsiteMedia.heroBackgroundImage,
+        impactStrip: {
+          ...safeObject(existingSiteData.impactStrip),
+          items: [],
+        },
+        testimonialsSection: {
+          ...safeObject(existingSiteData.testimonialsSection),
+          items: [],
+        },
+        ctaBanner: {
+          ...safeObject(existingSiteData.ctaBanner),
+          cta: null,
+        },
+        contact: {
+          ...safeObject(existingSiteData.contact),
+          title: null,
+          intro: null,
+          panelTitle: null,
+          panelDescription: null,
+          actions: [],
+        },
+        testimonials: [],
+      };
 
       const updated = await updateTenant(tenantId, {
         name: orgForm.name,
@@ -2623,6 +3385,8 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
       setTenantRecord(updated);
       setOrgForm(createOrganizationForm(updated));
+      setProjectWebsiteSettings(buildProjectWebsiteSettings(projects, updated?.site_data));
+      setWebsiteMediaRows(buildWebsiteMediaRows(updated?.site_data));
       onTenantUpdated?.(updated);
       setNotice({ type: "success", message: "Organization profile saved." });
       setShowOrgModal(false);
@@ -3326,161 +4090,98 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     );
   };
 
-  const renderMembersTab = () => (
-    <article className="org-shell-panel org-shell-panel--table">
-      <div className="project-detail-section-head">
-        <h4>Organization Members</h4>
-        <div className="project-detail-section-head-actions">
-          {selectedMemberIds.length > 0 ? (
-            <>
-              <button
-                type="button"
-                className="project-detail-action ghost"
-                disabled={selectedMemberIds.length !== 1 || savingMember}
-                onClick={() => setShowMemberModal(true)}
-              >
-                View selected
-              </button>
-              <button
-                type="button"
-                className="project-detail-action ghost"
-                disabled={selectedMemberIds.length !== 1 || savingMember}
-                onClick={openEditSelectedMemberModal}
-              >
-                Edit selected
-              </button>
-            </>
-          ) : null}
-          <button
-            type="button"
-            className="project-detail-action ghost"
-            title="Download import template"
-            aria-label="Download import template"
-            onClick={downloadMemberImportTemplate}
-            disabled={savingMember || importingMembers}
-          >
-            Template CSV
-          </button>
-          <button
-            type="button"
-            className="project-detail-action ghost icon-only"
-            title="Import users"
-            aria-label="Import users"
-            onClick={triggerMemberImportPicker}
-            disabled={savingMember || importingMembers}
-          >
-            <Icon name="upload" size={16} />
-          </button>
-          <button
-            type="button"
-            className="project-detail-action ghost icon-only"
-            title="Export users"
-            aria-label="Export users"
-            onClick={exportMembersCsv}
-            disabled={savingMember}
-          >
-            <Icon name="download" size={16} />
-          </button>
-          <input
-            ref={memberImportInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            className="project-documents-file-input"
-            onChange={handleMemberImportFileSelection}
-            disabled={savingMember || importingMembers}
-          />
-          <button
-            type="button"
-            className="project-detail-action"
-            onClick={() => setShowChoiceModal(true)}
-            disabled={savingMember || importingMembers}
-          >
-            New member
-          </button>
+  const renderMembersTab = () => {
+    const activeMembersCount = members.filter(
+      (member) => String(member?.status || "active").trim().toLowerCase() === "active"
+    ).length;
+    const projectsWithTeams = projects.filter((project) => Number(project?.member_count || 0) > 0).length;
+    const projectsWithoutTeams = Math.max(projects.length - projectsWithTeams, 0);
+
+    return (
+      <article className="org-shell-panel org-shell-panel--table">
+        <div className="project-detail-section-head">
+          <h4>Member Management Simplified</h4>
+          <div className="project-detail-section-head-actions organization-members-actions">
+            <button
+              type="button"
+              className="project-detail-action icon-only"
+              onClick={openCreateMemberModal}
+              title="New member profile"
+              aria-label="Create new member profile"
+            >
+              <Icon name="plus" size={16} />
+            </button>
+            <button
+              type="button"
+              className="project-detail-action ghost organization-members-action-invite"
+              onClick={() => setShowInviteModal(true)}
+              disabled={submittingInvite}
+              title="Invite member"
+              aria-label="Invite member"
+            >
+              <Icon name="mail" size={15} />
+              <span className="organization-members-action-invite-label">Invite member</span>
+            </button>
+            <button
+              type="button"
+              className="project-detail-action ghost icon-only"
+              onClick={openMemberImportChoiceModal}
+              disabled={savingMember || importingMembers}
+              title="Import members from CSV"
+              aria-label="Import members from CSV"
+            >
+              <Icon name="upload" size={16} />
+            </button>
+          </div>
         </div>
-      </div>
 
-      <div className="project-detail-filters">
-        <label className="project-detail-filter project-detail-filter--search">
-          <span>Search</span>
-          <input
-            type="search"
-            placeholder="Search by full name, telephone, email"
-            value={memberSearch}
-            onChange={(event) => setMemberSearch(event.target.value)}
-          />
-        </label>
-      </div>
+        <p className="org-shell-muted">
+          Create offline member records here, invite members to self-register, or import them in bulk from CSV.
+        </p>
 
-      <div className="project-expenses-selection-note">{selectedMemberIds.length} selected</div>
-      <div className="project-expenses-selection-note">
-        Showing {memberRows.length} of {members.length} members.
-      </div>
+        <div className="organization-members-summary-grid">
+          <article className="organization-members-summary-card">
+            <span>Total members</span>
+            <strong>{members.length}</strong>
+          </article>
+          <article className="organization-members-summary-card">
+            <span>Active members</span>
+            <strong>{activeMembersCount}</strong>
+          </article>
+          <article className="organization-members-summary-card">
+            <span>Projects with teams</span>
+            <strong>{projectsWithTeams}</strong>
+          </article>
+          <article className="organization-members-summary-card">
+            <span>Projects without teams</span>
+            <strong>{projectsWithoutTeams}</strong>
+          </article>
+        </div>
 
-      <div className="projects-table-wrap project-expenses-table-wrap">
-        <table className="projects-table-view project-expenses-table">
-          <thead>
-            <tr>
-              <th className="projects-table-check">
-                <input
-                  type="checkbox"
-                  checked={memberAllSelected}
-                  onChange={() => toggleSelectAll(memberRowIds, selectedMemberIds, setSelectedMemberIds)}
-                />
-              </th>
-              <th className="org-shell-member-icon-col">Icon</th>
-              <th>Full names</th>
-              <th>Telephone</th>
-              <th>Email</th>
-            </tr>
-          </thead>
-          <tbody>
-            {memberRows.length ? (
-              memberRows.map((member) => {
-                const memberId = String(member?.id || "");
-                const avatarUrl = getMemberAvatarUrl(member);
-                return (
-                  <tr key={memberId || member?.email || member?.name}>
-                    <td className="projects-table-check">
-                      <input
-                        type="checkbox"
-                        checked={selectedMemberIds.includes(memberId)}
-                        onChange={() => toggleSelection(memberId, setSelectedMemberIds)}
-                        aria-label={`Select member ${member?.name || memberId}`}
-                      />
-                    </td>
-                    <td className="org-shell-member-icon-cell">
-                      {avatarUrl ? (
-                        <img
-                          src={avatarUrl}
-                          alt={`${member?.name || "Member"} avatar`}
-                          className="org-shell-member-icon"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <span className="org-shell-member-icon-fallback" aria-hidden="true">
-                          <Icon name="member" size={16} />
-                        </span>
-                      )}
-                    </td>
-                    <td>{member?.name || `Member #${memberId}`}</td>
-                    <td>{member?.phone_number || "—"}</td>
-                    <td>{member?.email || "—"}</td>
-                  </tr>
-                );
-              })
-            ) : (
-              <tr>
-                <td colSpan={5}>
-                  <div className="org-shell-empty">No members found for this query.</div>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </article>
-  );
+        <article className="organization-members-manual-card">
+          <div className="organization-members-manual-copy">
+            <h5>Manual member creation</h5>
+            <p>
+              Use this for staff and field members who should be tracked in organization records even if they
+              do not sign in.
+            </p>
+          </div>
+          <p className="organization-members-manual-note">
+            Use the upload icon to import members. The import flow shows template download before upload.
+          </p>
+        </article>
+
+        <input
+          ref={memberImportInputRef}
+          type="file"
+          className="project-documents-file-input"
+          accept=".csv,text/csv"
+          onChange={handleMemberImportFileSelection}
+          disabled={savingMember || importingMembers}
+        />
+      </article>
+    );
+  };
 
   const renderDocumentsTab = () => (
     <article className="org-shell-panel org-shell-panel--table org-file-manager-card">
@@ -4361,6 +5062,9 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     );
   };
 
+  const activeOrgEditorStep =
+    ORG_EDITOR_STEPS.find((step) => step.key === orgFormStep) || ORG_EDITOR_STEPS[0];
+
   return (
     <div className="org-shell">
       <section className="org-shell-card org-shell-card--workspace">
@@ -4428,123 +5132,368 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       <DataModal
         open={showOrgModal}
         onClose={() => {
-          if (savingOrg) return;
+          if (savingOrg || uploadingWebsiteMedia) return;
           setShowOrgModal(false);
+          setOrgFormStep(ORG_EDITOR_STEPS[0].key);
+          setWebsiteMediaError("");
         }}
         title="Edit Organization"
-        subtitle="Update public profile, contact info, and governance summary fields."
+        subtitle="Update profile, website content sections, media, and program visibility."
         icon="briefcase"
       >
         <form className="data-modal-form" onSubmit={handleSaveOrganization}>
           {orgFormError ? <p className="data-modal-feedback data-modal-feedback--error">{orgFormError}</p> : null}
-
-          <div className="data-modal-grid">
-            <label className="data-modal-field">
-              Organization name
-              <input
-                type="text"
-                value={orgForm.name}
-                onChange={(event) => handleOrgFormChange("name", event.target.value)}
-                disabled={savingOrg}
-                required
-              />
-            </label>
-            <label className="data-modal-field">
-              Registration number
-              <input
-                type="text"
-                value={orgForm.registration_number}
-                onChange={(event) =>
-                  handleOrgFormChange("registration_number", event.target.value)
-                }
-                disabled={savingOrg}
-              />
-            </label>
-            <label className="data-modal-field">
-              Contact email
-              <input
-                type="email"
-                value={orgForm.contact_email}
-                onChange={(event) => handleOrgFormChange("contact_email", event.target.value)}
-                disabled={savingOrg}
-              />
-            </label>
-            <label className="data-modal-field">
-              Contact phone
-              <input
-                type="tel"
-                value={orgForm.contact_phone}
-                onChange={(event) => handleOrgFormChange("contact_phone", event.target.value)}
-                disabled={savingOrg}
-              />
-            </label>
-            <label className="data-modal-field data-modal-field--full">
-              Tagline
-              <input
-                type="text"
-                value={orgForm.tagline}
-                onChange={(event) => handleOrgFormChange("tagline", event.target.value)}
-                disabled={savingOrg}
-              />
-            </label>
-            <label className="data-modal-field">
-              Location
-              <input
-                type="text"
-                value={orgForm.location}
-                onChange={(event) => handleOrgFormChange("location", event.target.value)}
-                disabled={savingOrg}
-              />
-            </label>
-            <label className="data-modal-field">
-              Website
-              <input
-                type="text"
-                value={orgForm.website}
-                onChange={(event) => handleOrgFormChange("website", event.target.value)}
-                disabled={savingOrg}
-                placeholder="https://..."
-              />
-            </label>
-            <label className="data-modal-field data-modal-field--full">
-              Mission
-              <textarea
-                rows="3"
-                value={orgForm.mission}
-                onChange={(event) => handleOrgFormChange("mission", event.target.value)}
-                disabled={savingOrg}
-              />
-            </label>
-            <label className="data-modal-field data-modal-field--full">
-              Vision
-              <textarea
-                rows="3"
-                value={orgForm.vision}
-                onChange={(event) => handleOrgFormChange("vision", event.target.value)}
-                disabled={savingOrg}
-              />
-            </label>
-            <label className="data-modal-field data-modal-field--full org-modal-toggle-field">
-              <span>Public tenant profile</span>
-              <input
-                type="checkbox"
-                checked={Boolean(orgForm.is_public)}
-                onChange={(event) => handleOrgFormChange("is_public", event.target.checked)}
-                disabled={savingOrg}
-              />
-            </label>
+          <div className="data-modal-tabs org-modal-tabs" role="tablist" aria-label="Organization editor sections">
+            {ORG_EDITOR_STEPS.map((step) => (
+              <button
+                key={`org-editor-step-${step.key}`}
+                type="button"
+                className={`data-modal-tab ${orgFormStep === step.key ? "active" : ""}`}
+                onClick={() => setOrgFormStep(step.key)}
+              >
+                {step.label}
+              </button>
+            ))}
           </div>
+          <p className="data-modal-hint org-modal-step-note">{activeOrgEditorStep.note}</p>
+
+          {orgFormStep === "basic" ? (
+            <div className="data-modal-grid">
+              <label className="data-modal-field">
+                Organization name
+                <input
+                  type="text"
+                  value={orgForm.name}
+                  onChange={(event) => handleOrgFormChange("name", event.target.value)}
+                  disabled={savingOrg}
+                  required
+                />
+              </label>
+              <label className="data-modal-field">
+                Registration number
+                <input
+                  type="text"
+                  value={orgForm.registration_number}
+                  onChange={(event) => handleOrgFormChange("registration_number", event.target.value)}
+                  disabled={savingOrg}
+                />
+              </label>
+              <label className="data-modal-field data-modal-field--full">
+                Tagline
+                <input
+                  type="text"
+                  value={orgForm.tagline}
+                  onChange={(event) => handleOrgFormChange("tagline", event.target.value)}
+                  disabled={savingOrg}
+                />
+              </label>
+              <label className="data-modal-field data-modal-field--full org-modal-toggle-field">
+                <span>Public tenant profile</span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(orgForm.is_public)}
+                  onChange={(event) => handleOrgFormChange("is_public", event.target.checked)}
+                  disabled={savingOrg}
+                />
+              </label>
+            </div>
+          ) : null}
+
+          {orgFormStep === "contacts" ? (
+            <div className="data-modal-grid">
+              <label className="data-modal-field">
+                Contact email
+                <input
+                  type="email"
+                  value={orgForm.contact_email}
+                  onChange={(event) => handleOrgFormChange("contact_email", event.target.value)}
+                  disabled={savingOrg}
+                />
+              </label>
+              <label className="data-modal-field">
+                Contact phone
+                <input
+                  type="tel"
+                  value={orgForm.contact_phone}
+                  onChange={(event) => handleOrgFormChange("contact_phone", event.target.value)}
+                  disabled={savingOrg}
+                />
+              </label>
+              <label className="data-modal-field data-modal-field--full">
+                Location
+                <input
+                  type="text"
+                  value={orgForm.location}
+                  onChange={(event) => handleOrgFormChange("location", event.target.value)}
+                  disabled={savingOrg}
+                />
+              </label>
+            </div>
+          ) : null}
+
+          {orgFormStep === "about" ? (
+            <div className="data-modal-grid">
+              <label className="data-modal-field data-modal-field--full">
+                Mission
+                <textarea
+                  rows="4"
+                  value={orgForm.mission}
+                  onChange={(event) => handleOrgFormChange("mission", event.target.value)}
+                  disabled={savingOrg}
+                />
+              </label>
+              <label className="data-modal-field data-modal-field--full">
+                Vision
+                <textarea
+                  rows="4"
+                  value={orgForm.vision}
+                  onChange={(event) => handleOrgFormChange("vision", event.target.value)}
+                  disabled={savingOrg}
+                />
+              </label>
+            </div>
+          ) : null}
+
+          {orgFormStep === "web" ? (
+            <div className="data-modal-grid">
+              <label className="data-modal-field data-modal-field--full">
+                Website
+                <input
+                  type="text"
+                  value={orgForm.website}
+                  onChange={(event) => handleOrgFormChange("website", event.target.value)}
+                  disabled={savingOrg}
+                  placeholder="https://..."
+                />
+              </label>
+              <div className="data-modal-field data-modal-field--full org-modal-section-intro">
+                <strong>Website content and program visibility</strong>
+                <small>
+                  Programs are pulled from existing projects. Impact, testimonials, CTA, and contact details auto-sync from organization and project data.
+                </small>
+              </div>
+              <label className="data-modal-field">
+                Programs section title
+                <input
+                  type="text"
+                  value={orgForm.programs_title}
+                  onChange={(event) => handleOrgFormChange("programs_title", event.target.value)}
+                  disabled={savingOrg}
+                  placeholder="Programs"
+                />
+              </label>
+              <label className="data-modal-field">
+                Programs section description
+                <input
+                  type="text"
+                  value={orgForm.programs_description}
+                  onChange={(event) => handleOrgFormChange("programs_description", event.target.value)}
+                  disabled={savingOrg}
+                  placeholder="Programs and initiatives currently published by this workspace."
+                />
+              </label>
+              <div className="data-modal-field data-modal-field--full">
+                Program links and visibility
+                {projectWebsiteSettings.length ? (
+                  <div className="org-modal-program-list">
+                    {projectWebsiteSettings.map((row) => (
+                      <div key={`org-program-visibility-${row.project_id}`} className="org-modal-program-row">
+                        <div className="org-modal-program-row-head">
+                          <div className="org-modal-program-meta">
+                            <strong>{row.project_name}</strong>
+                            <small>{toDisplayLabel(row.project_status || "active")}</small>
+                          </div>
+                          <label className="org-modal-program-toggle">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(row.is_visible)}
+                              onChange={(event) =>
+                                handleProgramWebsiteSettingChange(
+                                  row.project_id,
+                                  "is_visible",
+                                  event.target.checked
+                                )
+                              }
+                              disabled={savingOrg}
+                            />
+                            <span>{row.is_visible ? "Visible" : "Hidden"}</span>
+                          </label>
+                        </div>
+                        <input
+                          type="text"
+                          value={row.href}
+                          onChange={(event) =>
+                            handleProgramWebsiteSettingChange(row.project_id, "href", event.target.value)
+                          }
+                          disabled={savingOrg}
+                          placeholder="Optional public link (defaults to #contact)"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="data-modal-hint">
+                    No projects yet. Create projects first, then control website visibility here.
+                  </span>
+                )}
+              </div>
+              <div className="data-modal-field data-modal-field--full org-modal-auto-list">
+                <strong>Auto-generated sections</strong>
+                <ul>
+                  <li>Impact is generated from visible project totals and partner/location signals.</li>
+                  <li>Testimonials are generated from partner notes and published project summaries.</li>
+                  <li>CTA automatically links to the contact section (#contact).</li>
+                  <li>Contact always uses organization email, phone, and location from the Contacts tab.</li>
+                </ul>
+              </div>
+            </div>
+          ) : null}
+
+          {orgFormStep === "media" ? (
+            <div className="data-modal-grid">
+              {websiteMediaError ? (
+                <p className="data-modal-feedback data-modal-feedback--error data-modal-field--full">
+                  {websiteMediaError}
+                </p>
+              ) : null}
+              <div className="data-modal-field data-modal-field--full org-modal-section-intro">
+                <strong>Website media library</strong>
+                <small>
+                  Add images for the public website hero and section visuals. Choose project images
+                  or upload new files.
+                </small>
+              </div>
+
+              <div className="data-modal-field data-modal-field--full">
+                <span className="org-modal-media-row-title">Upload new image</span>
+                <div className="org-modal-media-upload">
+                  <button
+                    type="button"
+                    className="project-detail-action ghost"
+                    onClick={triggerWebsiteMediaUploadPicker}
+                    disabled={savingOrg || uploadingWebsiteMedia}
+                  >
+                    <Icon name="upload" size={14} />
+                    <span>{uploadingWebsiteMedia ? "Uploading..." : "Upload image"}</span>
+                  </button>
+                  <small>Accepted files: JPG, PNG, WEBP, GIF. Uploaded images are stored per workspace.</small>
+                </div>
+                <input
+                  ref={websiteMediaInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="project-documents-file-input"
+                  onChange={handleWebsiteMediaUploadSelection}
+                  disabled={savingOrg || uploadingWebsiteMedia}
+                />
+              </div>
+
+              <div className="data-modal-field data-modal-field--full">
+                <span className="org-modal-media-row-title">Select from project images</span>
+                {projectWebsiteMediaOptions.length ? (
+                  <div className="org-modal-media-pool">
+                    {projectWebsiteMediaOptions.map((option) => {
+                      const isSelected = websiteMediaRows.some(
+                        (row) => asText(row?.src) === asText(option?.src)
+                      );
+                      return (
+                        <article key={option.id} className="org-modal-media-card">
+                          <div className="org-modal-media-preview">
+                            <img src={option.src} alt={option.alt} loading="lazy" />
+                          </div>
+                          <div className="org-modal-media-copy">
+                            <strong>{option.project_name}</strong>
+                            <small>
+                              {option.media_kind === "cover"
+                                ? "Cover image"
+                                : option.media_caption
+                                  ? `Gallery: ${option.media_caption}`
+                                  : "Gallery image"}
+                              {" • "}
+                              {toDisplayLabel(option.project_status || "active")}
+                            </small>
+                          </div>
+                          <button
+                            type="button"
+                            className="project-detail-action ghost"
+                            onClick={() => handleAddProjectWebsiteMedia(option)}
+                            disabled={savingOrg || uploadingWebsiteMedia || isSelected}
+                          >
+                            {isSelected ? "Added" : "Add"}
+                          </button>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <span className="data-modal-hint">
+                    No project images yet. Add project cover or gallery images in Projects, or upload new files
+                    here.
+                  </span>
+                )}
+              </div>
+
+              <div className="data-modal-field data-modal-field--full">
+                <span className="org-modal-media-row-title">Selected website images</span>
+                {websiteMediaRows.length ? (
+                  <div className="org-modal-media-selection">
+                    {websiteMediaRows.map((item, index) => (
+                      <article key={item.id} className="org-modal-media-selected-card">
+                        <div className="org-modal-media-selected-preview">
+                          <img src={item.src} alt={item.alt} loading="lazy" />
+                        </div>
+                        <div className="org-modal-media-selected-copy">
+                          <strong>{item.project_name || `Uploaded image ${index + 1}`}</strong>
+                          <small>{item.source === "project" ? "Project image" : "Uploaded image"}</small>
+                        </div>
+                        <div className="org-modal-media-selected-actions">
+                          <button
+                            type="button"
+                            className={`project-detail-action ghost${item.is_primary ? " is-active" : ""}`}
+                            onClick={() => handleSetPrimaryWebsiteMedia(item.id)}
+                            disabled={savingOrg || uploadingWebsiteMedia || item.is_primary}
+                          >
+                            {item.is_primary ? "Primary" : "Set primary"}
+                          </button>
+                          <button
+                            type="button"
+                            className="project-detail-action ghost"
+                            onClick={() => handleRemoveWebsiteMedia(item.id)}
+                            disabled={savingOrg || uploadingWebsiteMedia}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="data-modal-hint">
+                    No website images selected yet. Add from projects or upload at least one image.
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           <div className="data-modal-actions">
             <button
               type="button"
               className="data-modal-btn"
-              onClick={() => setShowOrgModal(false)}
-              disabled={savingOrg}
+              onClick={() => {
+                setShowOrgModal(false);
+                setOrgFormStep(ORG_EDITOR_STEPS[0].key);
+                setWebsiteMediaError("");
+              }}
+              disabled={savingOrg || uploadingWebsiteMedia}
             >
               Cancel
             </button>
-            <button type="submit" className="data-modal-btn data-modal-btn--primary" disabled={savingOrg}>
+            <button
+              type="submit"
+              className="data-modal-btn data-modal-btn--primary"
+              disabled={savingOrg || uploadingWebsiteMedia}
+            >
               {savingOrg ? "Saving..." : "Save organization"}
             </button>
           </div>
@@ -4926,26 +5875,97 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         ) : null}
       </DataModal>
 
-      {/* Choice Modal: Add vs Invite */}
+      <DataModal
+        open={showMemberProjectAccessModal && Boolean(selectedMember)}
+        onClose={closeMemberProjectAccessModal}
+        title={selectedMember ? `${selectedMember.name} project access` : "Member project access"}
+        subtitle="Add or remove project access after signup."
+        icon="layers"
+      >
+        <form className="data-modal-form" onSubmit={handleSaveMemberProjectAccess}>
+          {memberProjectAccessError ? (
+            <p className="data-modal-feedback data-modal-feedback--error">{memberProjectAccessError}</p>
+          ) : null}
+
+          <div className="data-modal-grid">
+            <div className="data-modal-field data-modal-field--full">
+              <label>Projects</label>
+              {loadingMemberProjectAccess ? (
+                <p className="data-modal-hint">Loading projects...</p>
+              ) : memberProjectRows.length ? (
+                <>
+                  <div className="data-modal-checkbox-list">
+                    {memberProjectRows.map((project) => {
+                      const projectId = parsePositiveInt(project?.project_id);
+                      if (!projectId) return null;
+                      const checked = memberProjectSelectedIds.includes(projectId);
+                      const locked = Boolean(project?.project_leader_locked);
+                      return (
+                        <label
+                          key={`member-project-access-${projectId}`}
+                          className="data-modal-checkbox-item"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleMemberProjectAccess(projectId)}
+                            disabled={savingMemberProjectAccess || locked}
+                          />
+                          <span>
+                            {project?.name || `Project ${projectId}`}
+                            {locked ? " (project lead)" : ""}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {memberProjectRows.some((project) => project?.project_leader_locked) ? (
+                    <p className="data-modal-hint">
+                      Project lead assignments are locked and cannot be removed here.
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <p className="data-modal-hint">No projects exist in this workspace yet.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="data-modal-actions">
+            <button
+              type="button"
+              className="data-modal-btn"
+              onClick={closeMemberProjectAccessModal}
+              disabled={savingMemberProjectAccess}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="data-modal-btn data-modal-btn--primary"
+              disabled={
+                savingMemberProjectAccess || loadingMemberProjectAccess || !memberProjectRows.length
+              }
+            >
+              {savingMemberProjectAccess ? "Saving..." : "Save access"}
+            </button>
+          </div>
+        </form>
+      </DataModal>
+
       <ChoiceModal
-        open={showChoiceModal}
-        onClose={() => setShowChoiceModal(false)}
-        title="Add New Member"
-        message="How would you like to add this member?"
-        option1Label="Add Member"
-        option1Icon="user-plus"
-        option1Description="Create a member profile directly"
-        onOption1Click={() => {
-          setShowChoiceModal(false);
-          openCreateMemberModal();
-        }}
-        option2Label="Invite Member"
-        option2Icon="mail"
-        option2Description="Send an invite for them to register"
-        onOption2Click={() => {
-          setShowChoiceModal(false);
-          setShowInviteModal(true);
-        }}
+        open={showMemberImportChoiceModal}
+        onClose={() => setShowMemberImportChoiceModal(false)}
+        title="Import members"
+        message="Before upload, download the CSV template so your columns match the expected format."
+        option1Label="Download template"
+        option1Icon="download"
+        option1Description="Get the latest members CSV template."
+        onOption1Click={downloadMemberImportTemplate}
+        option2Label="Upload CSV"
+        option2Icon="upload"
+        option2Description="Continue with a completed members CSV file."
+        onOption2Click={triggerMemberImportPicker}
       />
 
       {/* Invite Modal */}
@@ -5005,6 +6025,49 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
                 <option value="supervisor">Supervisor</option>
               </select>
             </div>
+
+            {!inviteRoleIsAdmin && (
+              <div className="data-modal-field data-modal-field--full">
+                <label>Project Access</label>
+                <select
+                  value={inviteProjectScope}
+                  onChange={(e) => handleInviteFormChange("project_access_scope", e.target.value)}
+                  disabled={submittingInvite}
+                >
+                  <option value="selected">Selected projects</option>
+                  <option value="all">All projects</option>
+                  <option value="none">No project access yet</option>
+                </select>
+              </div>
+            )}
+
+            {!inviteRoleIsAdmin && inviteProjectScope === "selected" && (
+              <div className="data-modal-field data-modal-field--full">
+                <label>Projects</label>
+                <div className="data-modal-checkbox-list">
+                  {projects.length ? (
+                    projects.map((project) => {
+                      const projectId = Number.parseInt(String(project?.id || ""), 10);
+                      if (!Number.isInteger(projectId) || projectId <= 0) return null;
+                      const checked = inviteProjectIds.includes(projectId);
+                      return (
+                        <label key={projectId} className="data-modal-checkbox-item">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => handleInviteProjectToggle(projectId)}
+                            disabled={submittingInvite}
+                          />
+                          <span>{project?.name || `Project ${projectId}`}</span>
+                        </label>
+                      );
+                    })
+                  ) : (
+                    <p className="data-modal-hint">No projects available in this workspace yet.</p>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="data-modal-field data-modal-field--full">
               <label>Notes</label>

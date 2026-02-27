@@ -596,17 +596,58 @@ export async function getProjects(tenantId) {
   if (error) {
     markSupabaseUnavailable(error);
     console.error("Error fetching projects:", error);
-    return mockProjects;
+    return [];
   }
 
   return data || [];
+}
+
+export async function getPublicTenantProjects(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  const limit = Number.parseInt(String(options?.limit || 8), 10);
+  const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 24) : 8;
+
+  let selectColumns =
+    "id, tenant_id, code, name, description, short_description, image_url, status, start_date, end_date, is_visible";
+
+  let query = supabase
+    .from("iga_projects")
+    .select(selectColumns)
+    .eq("is_visible", true)
+    .order("start_date", { ascending: false })
+    .limit(safeLimit);
+  query = applyTenantFilter(query, tenantId);
+
+  let { data, error } = await query;
+
+  if (error && isMissingColumnError(error, "is_visible")) {
+    selectColumns =
+      "id, tenant_id, code, name, description, short_description, image_url, status, start_date, end_date";
+    let fallbackQuery = supabase
+      .from("iga_projects")
+      .select(selectColumns)
+      .order("start_date", { ascending: false })
+      .limit(safeLimit);
+    fallbackQuery = applyTenantFilter(fallbackQuery, tenantId);
+    ({ data, error } = await fallbackQuery);
+  }
+
+  if (error) {
+    console.warn("Public tenant projects are unavailable:", error?.message || error);
+    return [];
+  }
+
+  return Array.isArray(data) ? data : [];
 }
 
 /**
  * Get projects with member's participation status
  */
 export async function getProjectsWithMembership(memberId, tenantId) {
-  // Mock data for development or when no projects exist
+  // Mock data for development only (when Supabase is unavailable)
   const mockProjects = [
     {
       id: 1,
@@ -663,13 +704,12 @@ export async function getProjectsWithMembership(memberId, tenantId) {
     if (projectsError) {
       markSupabaseUnavailable(projectsError);
       console.error("Error fetching projects:", projectsError);
-      return mockProjects;
+      return [];
     }
 
-    // If no projects in database, return mock data
+    // No projects exist in this workspace.
     if (!projects || projects.length === 0) {
-      console.log("No projects found in database, using mock data");
-      return mockProjects;
+      return [];
     }
 
     const projectIds = projects
@@ -784,7 +824,7 @@ export async function getProjectsWithMembership(memberId, tenantId) {
     return projectsWithCounts;
   } catch (error) {
     console.error("Error in getProjectsWithMembership:", error);
-    return mockProjects;
+    return [];
   }
 }
 
@@ -983,6 +1023,57 @@ export async function getProjectEditorData(projectId, tenantId) {
     member_assignments: memberAssignments || [],
     gallery: gallery || [],
   };
+}
+
+export async function getTenantProjectMediaLibrary(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+  if (!tenantId) {
+    return [];
+  }
+
+  const perProjectLimit = Number.parseInt(String(options?.perProjectLimit || 12), 10);
+  const safePerProjectLimit =
+    Number.isInteger(perProjectLimit) && perProjectLimit > 0
+      ? Math.min(perProjectLimit, 50)
+      : 12;
+
+  let query = supabase
+    .from("project_gallery")
+    .select("id, project_id, image_url, caption, is_primary, display_order, created_at")
+    .order("project_id", { ascending: true })
+    .order("is_primary", { ascending: false })
+    .order("display_order", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+  const { data, error } = await query;
+
+  if (error && isMissingRelationError(error, "project_gallery")) {
+    console.warn("Project gallery relation missing. Media pool disabled:", error?.message || error);
+    return [];
+  }
+  if (error) {
+    console.error("Error fetching tenant project media library:", error);
+    return [];
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    return [];
+  }
+
+  const perProjectCounter = new Map();
+  return data.filter((row) => {
+    const projectId = Number.parseInt(String(row?.project_id || ""), 10);
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      return false;
+    }
+    const count = perProjectCounter.get(projectId) || 0;
+    if (count >= safePerProjectLimit) {
+      return false;
+    }
+    perProjectCounter.set(projectId, count + 1);
+    return true;
+  });
 }
 
 export async function updateIgaProject(projectId, payload = {}, tenantId) {
@@ -7293,6 +7384,27 @@ function generateSimpleInviteNumber() {
   return String(Math.floor(Math.random() * 10000000)).padStart(7, "0");
 }
 
+function normalizeInviteProjectScope(scope) {
+  const normalized = String(scope || "").trim().toLowerCase();
+  if (normalized === "all" || normalized === "selected" || normalized === "none") {
+    return normalized;
+  }
+  return "none";
+}
+
+function normalizeInviteProjectIds(projectIds) {
+  if (!Array.isArray(projectIds)) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      projectIds
+        .map((projectId) => Number.parseInt(String(projectId || ""), 10))
+        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
+    )
+  );
+}
+
 export async function createMagicLinkInvite(payload) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
@@ -7300,6 +7412,9 @@ export async function createMagicLinkInvite(payload) {
 
   const inviteNumber = generateSimpleInviteNumber();
   const expiresAt = payload.expires_at || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // Default 7 days
+  const projectAccessScope = normalizeInviteProjectScope(payload.project_access_scope);
+  const projectIds =
+    projectAccessScope === "selected" ? normalizeInviteProjectIds(payload.project_ids) : [];
 
   const insertPayload = {
     email: normalizeOptional(payload.email),
@@ -7311,6 +7426,8 @@ export async function createMagicLinkInvite(payload) {
     tenant_id: normalizeOptional(payload.tenant_id),
     expires_at: expiresAt,
     notes: normalizeOptional(payload.notes),
+    project_access_scope: projectAccessScope,
+    project_ids: projectIds,
   };
 
   const { data, error } = await supabase
@@ -7324,6 +7441,170 @@ export async function createMagicLinkInvite(payload) {
   }
 
   return { invite: data, inviteNumber };
+}
+
+export async function getProjectMagicLinkInvites(projectId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const parsedProjectId = Number.parseInt(String(projectId || ""), 10);
+  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase.rpc("get_project_magic_link_invites", {
+    p_project_id: parsedProjectId,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createProjectMagicLinkInvite(payload) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const parsedProjectId = Number.parseInt(String(payload?.project_id || payload?.projectId || ""), 10);
+  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    throw new Error("Valid project id is required.");
+  }
+
+  const email = normalizeOptional(payload?.email);
+  if (!email) {
+    throw new Error("Invite email is required.");
+  }
+
+  const role = normalizeOptional(payload?.role) || "member";
+
+  const { data, error } = await supabase.rpc("create_project_magic_link_invite", {
+    p_project_id: parsedProjectId,
+    p_email: email,
+    p_role: role,
+    p_phone_number: normalizeOptional(payload?.phone_number),
+    p_notes: normalizeOptional(payload?.notes),
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  const invite = Array.isArray(data) ? data[0] || null : null;
+  if (!invite) {
+    throw new Error("Failed to create invite.");
+  }
+
+  return {
+    invite,
+    inviteNumber: invite.invite_number || null,
+  };
+}
+
+export async function getTenantMagicLinkInvites(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  if (!tenantId) {
+    return [];
+  }
+
+  const limit = Number.parseInt(String(options?.limit || ""), 10);
+  let query = supabase
+    .from("magic_link_invites")
+    .select(
+      "id, tenant_id, email, phone_number, role, status, invite_number, created_at, expires_at, used_at, used_by, project_access_scope, project_ids"
+    )
+    .order("created_at", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  if (Number.isInteger(limit) && limit > 0) {
+    query = query.limit(limit);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getProjectMemberAssignmentsSummary(tenantId, memberId = null) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  let query = supabase
+    .from("iga_committee_members")
+    .select("id, project_id, member_id, role, term_start")
+    .order("project_id", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+
+  const parsedMemberId = Number.parseInt(String(memberId || ""), 10);
+  if (Number.isInteger(parsedMemberId) && parsedMemberId > 0) {
+    query = query.eq("member_id", parsedMemberId);
+  }
+
+  const { data: assignmentRows, error: assignmentError } = await query;
+  if (assignmentError) {
+    throw assignmentError;
+  }
+
+  const rows = Array.isArray(assignmentRows) ? assignmentRows : [];
+  if (!rows.length) {
+    return [];
+  }
+
+  const projectIds = Array.from(
+    new Set(
+      rows
+        .map((row) => Number.parseInt(String(row?.project_id || ""), 10))
+        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
+    )
+  );
+
+  const projectNameById = new Map();
+  if (projectIds.length) {
+    let projectsQuery = supabase
+      .from("iga_projects")
+      .select("id, name, module_key, status")
+      .in("id", projectIds);
+    projectsQuery = applyTenantFilter(projectsQuery, tenantId);
+    const { data: projectRows, error: projectsError } = await projectsQuery;
+    if (projectsError) {
+      throw projectsError;
+    }
+    (projectRows || []).forEach((project) => {
+      const projectId = Number.parseInt(String(project?.id || ""), 10);
+      if (!Number.isInteger(projectId) || projectId <= 0) return;
+      projectNameById.set(projectId, {
+        id: projectId,
+        name: project?.name || `Project ${projectId}`,
+        module_key: project?.module_key || "",
+        status: project?.status || "",
+      });
+    });
+  }
+
+  return rows.map((row) => {
+    const parsedProjectId = Number.parseInt(String(row?.project_id || ""), 10);
+    const parsedMemberRef = Number.parseInt(String(row?.member_id || ""), 10);
+    const projectInfo = projectNameById.get(parsedProjectId) || null;
+    return {
+      id: row?.id,
+      project_id: parsedProjectId,
+      member_id: parsedMemberRef,
+      role: row?.role || "Member",
+      term_start: row?.term_start || null,
+      project_name: projectInfo?.name || (Number.isInteger(parsedProjectId) ? `Project ${parsedProjectId}` : "Project"),
+      project_module_key: projectInfo?.module_key || "",
+      project_status: projectInfo?.status || "",
+    };
+  });
 }
 
 export async function verifyMagicLinkInvite(inviteNumber) {
@@ -7370,6 +7651,27 @@ export async function markMagicLinkInviteUsed(inviteId, memberId) {
   }
 
   return data?.[0] || null;
+}
+
+export async function applyMagicLinkInviteProjectAccess(inviteId, memberId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  if (!inviteId || !memberId) {
+    return [];
+  }
+
+  const { data, error } = await supabase.rpc("apply_magic_link_invite_project_access", {
+    p_invite_id: inviteId,
+    p_member_id: memberId,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
 }
 
 export async function getWelfareAccounts(tenantId) {
@@ -7782,6 +8084,31 @@ function getMockProjects() {
 // TENANTS (MULTI-TENANT SAAS)
 // ===================================
 
+const normalizeTenantWorkspaceName = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+const buildTenantError = (message, code) => {
+  const error = new Error(message);
+  if (code) {
+    error.code = code;
+  }
+  return error;
+};
+
+const isTenantNameUniqueViolation = (error) => {
+  if (String(error?.code || "") !== "23505") return false;
+  const payload = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return payload.includes("tenants_name_normalized_unique_idx");
+};
+
+const isTenantSlugUniqueViolation = (error) => {
+  if (String(error?.code || "") !== "23505") return false;
+  const payload = `${error?.message || ""} ${error?.details || ""}`.toLowerCase();
+  return payload.includes("tenants_slug_key");
+};
+
 export async function createTenant(payload) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
@@ -7795,7 +8122,7 @@ export async function createTenant(payload) {
   }
 
   const insertPayload = {
-    name,
+    name: normalizeTenantWorkspaceName(name),
     slug: String(slug).toLowerCase(),
     tagline: normalizeOptional(payload?.tagline),
     contact_email: normalizeOptional(payload?.contact_email),
@@ -7813,10 +8140,111 @@ export async function createTenant(payload) {
     .single();
 
   if (error) {
+    if (isTenantNameUniqueViolation(error)) {
+      throw buildTenantError(
+        "That workspace/company name is already in use. Please choose another name.",
+        "TENANT_NAME_TAKEN"
+      );
+    }
+    if (isTenantSlugUniqueViolation(error)) {
+      throw buildTenantError(
+        "That workspace URL name is already in use. Please choose another workspace name.",
+        "TENANT_SLUG_TAKEN"
+      );
+    }
+    if (String(error?.code || "") === "23514") {
+      throw buildTenantError(
+        "Workspace name cannot be blank.",
+        "TENANT_NAME_INVALID"
+      );
+    }
     throw error;
   }
 
   return data;
+}
+
+const normalizeWorkspaceLookupValue = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+const workspaceLookupToSlug = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+export async function findInviteSignupTenants(workspaceName) {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  const normalizedWorkspace = normalizeWorkspaceLookupValue(workspaceName);
+  if (!normalizedWorkspace) {
+    return [];
+  }
+
+  const slugCandidate = workspaceLookupToSlug(normalizedWorkspace);
+  const tenantSelect = "id, name, slug, created_at";
+
+  const [slugResult, nameResult] = await Promise.all([
+    slugCandidate
+      ? supabase
+          .from("tenants")
+          .select(tenantSelect)
+          .eq("slug", slugCandidate)
+          .order("created_at", { ascending: false })
+          .limit(5)
+      : Promise.resolve({ data: [], error: null }),
+    supabase
+      .from("tenants")
+      .select(tenantSelect)
+      .ilike("name", normalizedWorkspace)
+      .order("created_at", { ascending: false })
+      .limit(5),
+  ]);
+
+  const slugError = slugResult?.error || null;
+  const nameError = nameResult?.error || null;
+  if (slugError && nameError) {
+    throw slugError;
+  }
+
+  const merged = new Map();
+  (slugResult?.data || []).forEach((tenant) => {
+    if (tenant?.id) {
+      merged.set(String(tenant.id), tenant);
+    }
+  });
+  (nameResult?.data || []).forEach((tenant) => {
+    if (tenant?.id) {
+      merged.set(String(tenant.id), tenant);
+    }
+  });
+
+  if (merged.size > 0) {
+    return Array.from(merged.values());
+  }
+
+  const safeWorkspacePattern = normalizedWorkspace.replace(/[%_]/g, "").trim();
+  if (safeWorkspacePattern.length < 3) {
+    return [];
+  }
+
+  const { data: fuzzyMatches, error: fuzzyError } = await supabase
+    .from("tenants")
+    .select(tenantSelect)
+    .ilike("name", `%${safeWorkspacePattern}%`)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  if (fuzzyError) {
+    throw fuzzyError;
+  }
+
+  return fuzzyMatches || [];
 }
 
 export async function getTenantBySlug(slug) {
@@ -8019,6 +8447,32 @@ export async function createTenantMembership({ tenantId, memberId, role = "membe
   }
 
   return data;
+}
+
+export async function recoverMagicLinkTenantMembership(memberId, preferredSlug = null) {
+  if (!shouldUseSupabase()) {
+    return null;
+  }
+
+  if (!memberId) {
+    return null;
+  }
+
+  const { data, error } = await supabase.rpc("recover_magic_link_tenant_membership", {
+    p_member_id: memberId,
+    p_preferred_slug: normalizeOptional(preferredSlug),
+  });
+
+  if (error) {
+    markSupabaseUnavailable(error);
+    throw error;
+  }
+
+  if (!Array.isArray(data) || data.length === 0) {
+    return null;
+  }
+
+  return data[0] || null;
 }
 
 export async function getTenantMemberships(memberId) {
