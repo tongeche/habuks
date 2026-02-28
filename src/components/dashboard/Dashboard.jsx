@@ -7,7 +7,7 @@ import JppProjectPage from "./JppProjectPage.jsx";
 import { JgfProjectPage } from "./JgfProjectPage.jsx";
 import ReportsPage from "./ReportsPage.jsx";
 import NewsPage from "./NewsPage.jsx";
-import MeetingsPage from "./MeetingsPage.jsx";
+import { MeetingsPage } from "./MeetingsPage.jsx";
 import MembersPage from "./MembersPage.jsx";
 import FinanceRecordsPage from "./FinanceRecordsPage.jsx";
 import SettingsPage from "./SettingsPage.jsx";

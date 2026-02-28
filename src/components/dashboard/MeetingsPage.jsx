@@ -545,7 +545,7 @@ const createActivityForm = (defaults = {}) => ({
       : [],
 });
 
-export default function MeetingsPage({ user, tenantId, access, setActivePage }) {
+function MeetingsPage({ user, tenantId, access, setActivePage }) {
   const { formatCurrency, formatFieldLabel } = useTenantCurrency();
   const [meetings, setMeetings] = useState([]);
   const [meetingParticipants, setMeetingParticipants] = useState([]);
@@ -2712,50 +2712,28 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                     </select>
                   </label>
                   <div className="data-modal-field data-modal-field--full">
-                    <div
-                      style={{
-                        border: "1px solid #dbe3ee",
-                        borderRadius: "12px",
-                        padding: "1rem",
-                        background: "#f8fbff",
-                        display: "grid",
-                        gap: "0.5rem",
-                      }}
-                    >
+                    <div className="activities-modal-card">
                       <strong>Meeting leadership</strong>
-                      <small style={{ color: "#64748b" }}>
+                      <small className="activities-modal-help">
                         Leadership is pulled automatically from organization settings.
                       </small>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                          gap: "0.75rem",
-                          marginTop: "0.35rem",
-                        }}
-                      >
+                      <div className="activities-modal-info-grid">
                         <div>
-                          <span style={{ display: "block", color: "#64748b", fontSize: "0.82rem" }}>
-                            Chairperson
-                          </span>
+                          <span className="activities-modal-card-label">Chairperson</span>
                           <strong>{organizationLeadershipNames.chairperson || "Not assigned"}</strong>
                         </div>
                         <div>
-                          <span style={{ display: "block", color: "#64748b", fontSize: "0.82rem" }}>
-                            Secretary
-                          </span>
+                          <span className="activities-modal-card-label">Secretary</span>
                           <strong>{organizationLeadershipNames.secretary || "Not assigned"}</strong>
                         </div>
                         <div>
-                          <span style={{ display: "block", color: "#64748b", fontSize: "0.82rem" }}>
-                            Treasurer
-                          </span>
+                          <span className="activities-modal-card-label">Treasurer</span>
                           <strong>{organizationLeadershipNames.treasurer || "Not assigned"}</strong>
                         </div>
                       </div>
                       {!organizationLeadershipIds.chairperson_member_id ||
                       !organizationLeadershipIds.secretary_member_id ? (
-                        <small style={{ color: "#b45309" }}>
+                        <small className="activities-modal-help activities-modal-help--warning">
                           Set chairperson and secretary in organization settings to auto-fill
                           governance documents.
                         </small>
@@ -2763,15 +2741,8 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                     </div>
                   </div>
                   <div className="data-modal-field data-modal-field--full">
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "minmax(0, 1fr) auto",
-                        gap: "0.75rem",
-                        alignItems: "end",
-                      }}
-                    >
-                      <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                    <div className="activities-modal-split-row">
+                      <label className="data-modal-field activities-modal-inline-field">
                         Quick agenda preset
                         <select
                           value={selectedAgendaPresetKey}
@@ -2806,36 +2777,29 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                         Add preset
                       </button>
                     </div>
-                    <small style={{ color: "#64748b", display: "block", marginTop: "0.45rem" }}>
+                    <small className="activities-modal-help">
                       Presets add agenda items with ready-made discussion and resolution drafts so the
                       minutes wizard starts nearly complete.
                     </small>
                   </div>
                   <div className="data-modal-field data-modal-field--full">
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
-                      <label style={{ margin: 0 }}>Agenda items</label>
+                    <div className="activities-modal-header-row">
+                      <label className="activities-modal-label-reset">Agenda items</label>
                       <button type="button" className="data-modal-inline-btn" onClick={addAgendaItem}>
                         <Icon name="plus" size={14} />
                         Add agenda item
                       </button>
                     </div>
-                    <small style={{ color: "#64748b", display: "block", marginTop: "0.35rem" }}>
+                    <small className="activities-modal-help">
                       Each item becomes a numbered section in the generated minutes.
                     </small>
-                    <div style={{ display: "grid", gap: "0.85rem", marginTop: "0.9rem" }}>
+                    <div className="activities-modal-stack activities-modal-stack--spaced">
                       {(formData.agenda_items || []).map((item, index) => (
                         <div
                           key={`meeting-agenda-item-${index}`}
-                          style={{
-                            border: "1px solid #dbe3ee",
-                            borderRadius: "12px",
-                            padding: "1rem",
-                            background: "#f8fbff",
-                            display: "grid",
-                            gap: "0.75rem",
-                          }}
+                          className="activities-modal-card activities-modal-agenda-item"
                         >
-                          <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "center" }}>
+                          <div className="activities-modal-header-row">
                             <strong>Item {index + 1}</strong>
                             <button
                               type="button"
@@ -2846,7 +2810,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                               Remove
                             </button>
                           </div>
-                          <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                          <label className="data-modal-field activities-modal-inline-field">
                             Title
                             <input
                               type="text"
@@ -2857,7 +2821,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                               placeholder="e.g. Review of previous action items"
                             />
                           </label>
-                          <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                          <label className="data-modal-field activities-modal-inline-field">
                             Discussion notes
                             <textarea
                               rows="3"
@@ -2868,9 +2832,9 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                               placeholder="Capture the discussion points for this agenda item."
                             />
                           </label>
-                          <div style={{ display: "grid", gap: "0.5rem" }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "center" }}>
-                              <span style={{ fontSize: "0.92rem", fontWeight: 600 }}>Resolutions</span>
+                          <div className="activities-modal-resolution-group">
+                            <div className="activities-modal-header-row">
+                              <span className="activities-modal-section-title">Resolutions</span>
                               <button
                                 type="button"
                                 className="data-modal-inline-btn"
@@ -2883,7 +2847,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                             {(item.resolutions || [""]).map((resolution, resolutionIndex) => (
                               <div
                                 key={`meeting-agenda-resolution-${index}-${resolutionIndex}`}
-                                style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
+                                className="activities-modal-inline-row"
                               >
                                 <input
                                   type="text"
@@ -3031,12 +2995,12 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                       </label>
                     ))
                   ) : (
-                    <p style={{ color: "#999", padding: "1rem" }}>No members available</p>
+                    <p className="activities-modal-empty-text">No members available</p>
                   )}
                 </div>
               </div>
               <div className="data-modal-field data-modal-field--full">
-                <p style={{ fontSize: "0.875rem", color: "#666", marginTop: "0.5rem" }}>
+                <p className="activities-modal-meta-text">
                   Selected: {(formData.assignees || []).length} assignee{(formData.assignees || []).length !== 1 ? "s" : ""}
                 </p>
               </div>
@@ -3048,31 +3012,25 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
               {isMeetingType(formData.type) ? (
                 <>
                   <div className="data-modal-field data-modal-field--full">
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-                        gap: "0.75rem",
-                      }}
-                    >
-                      <div style={{ border: "1px solid #dbe3ee", borderRadius: "12px", padding: "0.9rem", background: "#f8fbff" }}>
-                        <small style={{ color: "#64748b", display: "block" }}>Invited</small>
+                    <div className="activities-modal-summary-grid">
+                      <div className="activities-modal-summary-card">
+                        <small className="activities-modal-card-label">Invited</small>
                         <strong>{draftMeetingParticipantSummary.invited}</strong>
                       </div>
-                      <div style={{ border: "1px solid #dbe3ee", borderRadius: "12px", padding: "0.9rem", background: "#f8fbff" }}>
-                        <small style={{ color: "#64748b", display: "block" }}>Confirmed</small>
+                      <div className="activities-modal-summary-card">
+                        <small className="activities-modal-card-label">Confirmed</small>
                         <strong>{draftMeetingParticipantSummary.confirmed}</strong>
                       </div>
-                      <div style={{ border: "1px solid #dbe3ee", borderRadius: "12px", padding: "0.9rem", background: "#f8fbff" }}>
-                        <small style={{ color: "#64748b", display: "block" }}>Apologies</small>
+                      <div className="activities-modal-summary-card">
+                        <small className="activities-modal-card-label">Apologies</small>
                         <strong>{draftMeetingParticipantSummary.apology}</strong>
                       </div>
-                      <div style={{ border: "1px solid #dbe3ee", borderRadius: "12px", padding: "0.9rem", background: "#f8fbff" }}>
-                        <small style={{ color: "#64748b", display: "block" }}>Marked present</small>
+                      <div className="activities-modal-summary-card">
+                        <small className="activities-modal-card-label">Marked present</small>
                         <strong>{draftMeetingParticipantSummary.attended}</strong>
                       </div>
                     </div>
-                    <small style={{ color: "#64748b", display: "block", marginTop: "0.75rem" }}>
+                    <small className="activities-modal-help">
                       Members can confirm or send apologies. When minutes are generated, any invitee
                       still not marked present is finalized as absent.
                     </small>
@@ -3081,7 +3039,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                   {currentMeetingParticipant && selectedActivity?.id ? (
                     <div className="data-modal-field data-modal-field--full">
                       <label>Your RSVP</label>
-                      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                      <div className="activities-modal-action-row">
                         <button
                           type="button"
                           className="data-modal-btn data-modal-btn--primary"
@@ -3107,7 +3065,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                           Decline
                         </button>
                       </div>
-                      <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
+                      <small className="activities-modal-help">
                         Current status:{" "}
                         <strong>
                           {String(currentMeetingParticipant.rsvp_status || "pending")
@@ -3121,15 +3079,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                   <div className="data-modal-field data-modal-field--full">
                     <label>Invited members</label>
                     {formData.audience_scope === "all_members" ? (
-                      <div
-                        style={{
-                          border: "1px dashed #cbd5e1",
-                          borderRadius: "12px",
-                          padding: "1rem",
-                          background: "#f8fafc",
-                          color: "#475569",
-                        }}
-                      >
+                      <div className="activities-modal-note">
                         All active tenant members will be invited automatically. You can still add
                         guest attendees below.
                       </div>
@@ -3155,7 +3105,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                             </label>
                           ))
                         ) : (
-                          <p style={{ color: "#999", padding: "1rem" }}>No members available</p>
+                          <p className="activities-modal-empty-text">No members available</p>
                         )}
                       </div>
                     )}
@@ -3191,54 +3141,35 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                     {!showNewSubscriberForm ? (
                       <button
                         type="button"
-                        className="data-modal-btn"
+                        className="data-modal-btn activities-modal-full-btn"
                         onClick={() => setShowNewSubscriberForm(true)}
-                        style={{ width: "100%" }}
                       >
                         + Add Guest Attendee
                       </button>
                     ) : (
-                      <div style={{ border: "1px solid #e0e0e0", borderRadius: "8px", padding: "1rem" }}>
-                        <h4 style={{ marginBottom: "1rem" }}>Add Guest Attendee</h4>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                      <div className="activities-modal-card activities-modal-guest-form">
+                        <h4 className="activities-modal-guest-title">Add Guest Attendee</h4>
+                        <div className="activities-modal-stack">
                           <input
                             type="text"
                             value={newSubscriber.name}
                             onChange={(e) => setNewSubscriber({ ...newSubscriber, name: e.target.value })}
                             placeholder="Full name"
-                            style={{
-                              padding: "0.75rem",
-                              border: "1px solid #ddd",
-                              borderRadius: "4px",
-                              fontSize: "0.875rem",
-                            }}
                           />
                           <input
                             type="email"
                             value={newSubscriber.email}
                             onChange={(e) => setNewSubscriber({ ...newSubscriber, email: e.target.value })}
                             placeholder="Email address"
-                            style={{
-                              padding: "0.75rem",
-                              border: "1px solid #ddd",
-                              borderRadius: "4px",
-                              fontSize: "0.875rem",
-                            }}
                           />
                           <input
                             type="text"
                             value={newSubscriber.contact}
                             onChange={(e) => setNewSubscriber({ ...newSubscriber, contact: e.target.value })}
                             placeholder="Phone number (optional)"
-                            style={{
-                              padding: "0.75rem",
-                              border: "1px solid #ddd",
-                              borderRadius: "4px",
-                              fontSize: "0.875rem",
-                            }}
                           />
                         </div>
-                        <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
+                        <div className="activities-modal-action-row activities-modal-action-row--spaced">
                           <button
                             type="button"
                             className="data-modal-btn"
@@ -3264,51 +3195,33 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                   <div className="data-modal-field data-modal-field--full">
                     <label>Roster status</label>
                     {!draftMeetingParticipants.length ? (
-                      <p style={{ color: "#64748b" }}>Save the meeting after choosing invitees to manage RSVPs and attendance.</p>
+                      <p className="activities-modal-help">
+                        Save the meeting after choosing invitees to manage RSVPs and attendance.
+                      </p>
                     ) : (
-                      <div style={{ display: "grid", gap: "0.75rem" }}>
+                      <div className="activities-modal-stack">
                         {draftMeetingParticipants.map((participant) => (
                           <div
                             key={`meeting-participant-${participant.id || participant.token}`}
-                            style={{
-                              border: "1px solid #dbe3ee",
-                              borderRadius: "12px",
-                              padding: "0.9rem",
-                              display: "grid",
-                              gap: "0.75rem",
-                              background: "#ffffff",
-                            }}
+                            className="activities-modal-participant-card"
                           >
-                            <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "flex-start" }}>
+                            <div className="activities-modal-participant-head">
                               <div>
                                 <strong>{participant.name}</strong>
-                                <div style={{ color: "#64748b", fontSize: "0.875rem" }}>
+                                <div className="activities-modal-participant-meta">
                                   {participant.participant_type === "subscriber"
                                     ? participant.email || "Guest attendee"
                                     : participant.role || participant.email || "Member"}
                                 </div>
                               </div>
                               <span
-                                style={{
-                                  padding: "0.2rem 0.55rem",
-                                  borderRadius: "999px",
-                                  background: participant.participant_type === "subscriber" ? "#eef2ff" : "#ecfeff",
-                                  color: "#0f172a",
-                                  fontSize: "0.75rem",
-                                  fontWeight: 600,
-                                }}
+                                className={`activities-modal-participant-tag${participant.participant_type === "subscriber" ? " is-guest" : ""}`}
                               >
                                 {participant.participant_type === "subscriber" ? "Guest" : "Member"}
                               </span>
                             </div>
-                            <div
-                              style={{
-                                display: "grid",
-                                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                                gap: "0.75rem",
-                              }}
-                            >
-                              <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                            <div className="activities-modal-info-grid">
+                              <label className="data-modal-field activities-modal-inline-field">
                                 RSVP
                                 <select
                                   value={participant.rsvp_status}
@@ -3327,7 +3240,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                                   <option value="apology">Apology</option>
                                 </select>
                               </label>
-                              <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                              <label className="data-modal-field activities-modal-inline-field">
                                 Attendance
                                 <select
                                   value={participant.attendance_status}
@@ -3377,7 +3290,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                           </label>
                         ))
                       ) : (
-                        <p style={{ color: "#999", padding: "1rem" }}>No members available</p>
+                        <p className="activities-modal-empty-text">No members available</p>
                       )}
                     </div>
                   </div>
@@ -3414,9 +3327,8 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                 <div className="data-modal-field data-modal-field--full">
                   <button
                     type="button"
-                    className="data-modal-btn"
+                    className="data-modal-btn activities-modal-full-btn"
                     onClick={() => setShowNewSubscriberForm(true)}
-                    style={{ marginTop: "1rem", width: "100%" }}
                   >
                     + Add New Attendee
                   </button>
@@ -3425,47 +3337,29 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
 
               {!isMeetingType(formData.type) && showNewSubscriberForm ? (
                 <div className="data-modal-field data-modal-field--full">
-                  <div style={{ border: "1px solid #e0e0e0", borderRadius: "8px", padding: "1rem", marginTop: "1rem" }}>
-                    <h4 style={{ marginBottom: "1rem" }}>Add New Attendee</h4>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                  <div className="activities-modal-card activities-modal-guest-form">
+                    <h4 className="activities-modal-guest-title">Add New Attendee</h4>
+                    <div className="activities-modal-stack">
                       <input
                         type="text"
                         value={newSubscriber.name}
                         onChange={(e) => setNewSubscriber({ ...newSubscriber, name: e.target.value })}
                         placeholder="Full name"
-                        style={{
-                          padding: "0.75rem",
-                          border: "1px solid #ddd",
-                          borderRadius: "4px",
-                          fontSize: "0.875rem",
-                        }}
                       />
                       <input
                         type="email"
                         value={newSubscriber.email}
                         onChange={(e) => setNewSubscriber({ ...newSubscriber, email: e.target.value })}
                         placeholder="Email address"
-                        style={{
-                          padding: "0.75rem",
-                          border: "1px solid #ddd",
-                          borderRadius: "4px",
-                          fontSize: "0.875rem",
-                        }}
                       />
                       <input
                         type="text"
                         value={newSubscriber.contact}
                         onChange={(e) => setNewSubscriber({ ...newSubscriber, contact: e.target.value })}
                         placeholder="Phone number (optional)"
-                        style={{
-                          padding: "0.75rem",
-                          border: "1px solid #ddd",
-                          borderRadius: "4px",
-                          fontSize: "0.875rem",
-                        }}
                       />
                     </div>
-                    <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
+                    <div className="activities-modal-action-row activities-modal-action-row--spaced">
                       <button
                         type="button"
                         className="data-modal-btn"
@@ -3490,7 +3384,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
 
               {!isMeetingType(formData.type) ? (
                 <div className="data-modal-field data-modal-field--full">
-                  <p style={{ fontSize: "0.875rem", color: "#666", marginTop: "0.5rem" }}>
+                  <p className="activities-modal-meta-text">
                     Total attendees: {(formData.attendees || []).length}
                   </p>
                 </div>
@@ -3501,26 +3395,14 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
           {activityTab === "minutes" && isMeetingType(formData.type) ? (
             <div className="data-modal-grid">
               <div className="data-modal-field data-modal-field--full">
-                <div
-                  style={{
-                    border: "1px solid #dbe3ee",
-                    borderRadius: "12px",
-                    padding: "1rem",
-                    background: "#f8fbff",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: "1rem",
-                    flexWrap: "wrap",
-                    alignItems: "center",
-                  }}
-                >
+                <div className="activities-modal-card activities-modal-card--row">
                   <div>
                     <strong>Quick draft</strong>
-                    <p style={{ margin: "0.35rem 0 0", color: "#64748b" }}>
+                    <p className="activities-modal-help">
                       Build a draft from the selected agenda and organization leadership roles, then
                       edit it freely before generating the PDF.
                     </p>
-                    <p style={{ margin: "0.35rem 0 0", color: "#64748b" }}>
+                    <p className="activities-modal-help">
                       Ask Habuks can draft the first formal version for you. If the AI path is not
                       available, the standard agenda-based draft still runs.
                     </p>
@@ -3655,22 +3537,10 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                 />
               </label>
               <div className="data-modal-field data-modal-field--full">
-                <div
-                  style={{
-                    border: "1px solid #dbe3ee",
-                    borderRadius: "12px",
-                    padding: "1rem",
-                    background: "#f8fbff",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: "1rem",
-                    flexWrap: "wrap",
-                    alignItems: "center",
-                  }}
-                >
+                <div className="activities-modal-card activities-modal-card--row">
                   <div>
                     <strong>Generate final minutes</strong>
-                    <p style={{ margin: "0.35rem 0 0", color: "#64748b" }}>
+                    <p className="activities-modal-help">
                       Finalizing minutes marks unrecorded invitees as absent, renders the PDF, and
                       stores it in organization documents.
                     </p>
@@ -3722,6 +3592,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
         title="Add source partner"
         subtitle="Create a partner and use it as an activity source."
         icon="users"
+        className="activities-data-modal"
       >
         <form
           className="data-modal-form"
@@ -3841,3 +3712,6 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     </div>
   );
 }
+
+export { MeetingsPage };
+export default MeetingsPage;
