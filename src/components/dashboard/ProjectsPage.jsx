@@ -6222,6 +6222,8 @@ export function ProjectsPage({
             : "Add a new income-generating activity for your group."
         }
         icon="briefcase"
+        className="project-submodal project-editor-modal"
+        bodyClassName="project-editor-modal-body"
       >
         {loadingProjectEditor ? (
           <div className="projects-editor-loading">
@@ -6314,7 +6316,7 @@ export function ProjectsPage({
         title={selectedProject?.name || "Project details"}
         subtitle={selectedProject ? getProjectSubtitle(selectedProject) : ""}
         icon="briefcase"
-        className="project-detail-modal"
+        className="project-submodal project-detail-modal"
         bodyClassName="project-detail-body"
       >
         {selectedProject && (
@@ -7874,6 +7876,7 @@ export function ProjectsPage({
             : "Send a secure invite to this project."
         }
         icon="mail"
+        className="project-submodal"
       >
         <form className="data-modal-form" onSubmit={handleProjectInviteSubmit}>
           {projectInviteFormError ? (
@@ -7963,7 +7966,7 @@ export function ProjectsPage({
             : ""
         }
         icon="trending-up"
-        className="project-summary-report-modal"
+        className="project-submodal project-summary-report-modal"
         bodyClassName="project-summary-report-body"
       >
         {projectSummaryReport ? (
@@ -8405,6 +8408,7 @@ export function ProjectsPage({
             : "Record a project expense to keep finances accurate."
         }
         icon="receipt"
+        className="project-submodal"
       >
         <form className="data-modal-form" onSubmit={handleExpenseFormSubmit}>
           {expenseFormError ? (
@@ -8634,6 +8638,7 @@ export function ProjectsPage({
         title="Expense Categories"
         subtitle="Create, rename, and archive categories for this project."
         icon="settings"
+        className="project-submodal"
       >
         <div className="project-expense-category-manager">
           <form className="project-expense-category-form" onSubmit={handleSaveExpenseCategory}>
@@ -8762,6 +8767,7 @@ export function ProjectsPage({
         title={`Delete ${selectedExpenses.length} expense${selectedExpenses.length === 1 ? "" : "s"}?`}
         subtitle="This action cannot be undone."
         icon="alert"
+        className="project-submodal"
       >
         <div className="projects-confirm-modal">
           <p>
@@ -8794,6 +8800,7 @@ export function ProjectsPage({
         title="Rename Document"
         subtitle="Update the selected project document name."
         icon="folder"
+        className="project-submodal"
       >
         <form className="data-modal-form" onSubmit={handleConfirmRenameSelectedDocument}>
           {documentRenameError ? (
@@ -8840,6 +8847,7 @@ export function ProjectsPage({
         title={`Delete ${selectedDocuments.length} document${selectedDocuments.length === 1 ? "" : "s"}?`}
         subtitle="This action cannot be undone."
         icon="alert"
+        className="project-submodal"
       >
         <div className="projects-confirm-modal">
           <p>
@@ -8872,6 +8880,7 @@ export function ProjectsPage({
         title={editingTaskId ? "Edit Task" : "Add Task"}
         subtitle="Assign tasks and deadlines to keep the project on track."
         icon="check-circle"
+        className="project-submodal"
       >
         <form className="data-modal-form" onSubmit={handleTaskFormSubmit}>
           {taskFormError ? (
@@ -8971,6 +8980,7 @@ export function ProjectsPage({
         title={editingNoteId ? "Edit Note" : "Add Note"}
         subtitle="Capture important decisions or context for the team."
         icon="notes"
+        className="project-submodal"
       >
         <form className="data-modal-form" onSubmit={handleNoteFormSubmit}>
           {noteFormError ? (
@@ -9030,6 +9040,7 @@ export function ProjectsPage({
         title={`Delete ${selectedTasks.length} task${selectedTasks.length === 1 ? "" : "s"}?`}
         subtitle="This action cannot be undone."
         icon="alert"
+        className="project-submodal"
       >
         <div className="projects-confirm-modal">
           <p>
@@ -9062,6 +9073,7 @@ export function ProjectsPage({
         title={`Delete ${selectedNotes.length} note${selectedNotes.length === 1 ? "" : "s"}?`}
         subtitle="This action cannot be undone."
         icon="alert"
+        className="project-submodal"
       >
         <div className="projects-confirm-modal">
           <p>

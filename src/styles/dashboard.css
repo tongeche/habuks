@@ -25081,43 +25081,63 @@
 }
 
 .dashboard-layout.is-dark .dashboard-nav-item {
-  border: 1px solid transparent;
-  background: rgba(6, 14, 27, 0.28);
+  position: relative;
+  border: none;
+  background: transparent;
   color: #c8d4e7;
 }
 
 .dashboard-layout.is-dark .dashboard-nav-item:hover {
-  background: linear-gradient(90deg, rgba(14, 28, 48, 0.92) 0%, rgba(9, 20, 37, 0.88) 100%);
-  border-color: rgba(96, 165, 250, 0.14);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  background: rgba(14, 28, 48, 0.72);
+  box-shadow: none;
 }
 
 .dashboard-layout.is-dark .dashboard-nav-icon {
   background: transparent;
-  border: 1px solid rgba(241, 245, 249, 0.82);
+  border: none;
   color: #f3f7ff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 10px 18px rgba(2, 6, 23, 0.12);
+  box-shadow: none;
 }
 
 .dashboard-layout.is-dark .dashboard-nav-item.active {
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.24) 0%, rgba(148, 163, 184, 0.1) 100%);
-  border-color: rgba(191, 219, 254, 0.18);
+    linear-gradient(90deg, rgba(255, 255, 255, 0.14) 0%, rgba(148, 163, 184, 0.06) 100%);
   color: #f8fbff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 14px 30px rgba(2, 6, 23, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.dashboard-layout.is-dark .dashboard-nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -0.55rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 26px;
+  border-radius: 999px;
+  background: #22d3ee;
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.38);
 }
 
 .dashboard-layout.is-dark .dashboard-nav-item.active .dashboard-nav-icon {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.9);
   color: #ffffff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 14px 22px rgba(96, 165, 250, 0.12);
+  background: transparent;
+  box-shadow: none;
+}
+
+.dashboard-layout.is-dark .dashboard-sidebar.is-collapsed .dashboard-nav-item {
+  border-radius: 14px;
+  padding: 0.78rem 0.5rem;
+}
+
+.dashboard-layout.is-dark .dashboard-sidebar.is-collapsed .dashboard-nav-item.active {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(148, 163, 184, 0.06) 100%);
+}
+
+.dashboard-layout.is-dark .dashboard-sidebar.is-collapsed .dashboard-nav-item.active::before {
+  left: -0.48rem;
+  height: 22px;
 }
 
 .dashboard-layout.is-dark .dashboard-nav-subitem {
@@ -25424,6 +25444,54 @@
   color: #dbeafe;
 }
 
+.dashboard-layout.is-dark .project-invite-status,
+.dashboard-layout.is-dark .project-task-badge,
+.dashboard-layout.is-dark .project-note-visibility {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.72);
+  color: #d8e4f5;
+}
+
+.dashboard-layout.is-dark .project-invite-status.is-pending,
+.dashboard-layout.is-dark .project-invite-status.is-sent,
+.dashboard-layout.is-dark .project-task-badge.is-status-open,
+.dashboard-layout.is-dark .project-task-badge.is-priority-low {
+  border-color: rgba(96, 165, 250, 0.34);
+  background: rgba(30, 64, 175, 0.18);
+  color: #bfdbfe;
+}
+
+.dashboard-layout.is-dark .project-invite-status.is-used,
+.dashboard-layout.is-dark .project-task-badge.is-status-done,
+.dashboard-layout.is-dark .project-note-visibility.is-project_team {
+  border-color: rgba(52, 211, 153, 0.3);
+  background: rgba(6, 95, 70, 0.24);
+  color: #a7f3d0;
+}
+
+.dashboard-layout.is-dark .project-invite-status.is-expired,
+.dashboard-layout.is-dark .project-invite-status.is-revoked,
+.dashboard-layout.is-dark .project-task-badge.is-priority-urgent,
+.dashboard-layout.is-dark .project-note-visibility.is-admins_only {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(127, 29, 29, 0.24);
+  color: #fecaca;
+}
+
+.dashboard-layout.is-dark .project-task-badge.is-priority-high,
+.dashboard-layout.is-dark .project-task-badge.is-status-in_progress {
+  border-color: rgba(251, 191, 36, 0.32);
+  background: rgba(120, 53, 15, 0.24);
+  color: #fde68a;
+}
+
+.dashboard-layout.is-dark .project-task-badge.is-priority-normal,
+.dashboard-layout.is-dark .project-task-badge.is-status-cancelled {
+  border-color: rgba(100, 116, 139, 0.72);
+  background: rgba(30, 41, 59, 0.72);
+  color: #cbd5e1;
+}
+
 .dashboard-layout.is-dark .project-documents-link.is-disabled {
   border-color: rgba(71, 85, 105, 0.62);
   background: rgba(15, 23, 42, 0.72);
@@ -25444,6 +25512,50 @@
 .dashboard-layout.is-dark .project-expense-upload-file-icon {
   background: rgba(59, 130, 246, 0.16);
   color: #bfdbfe;
+}
+
+.dashboard-layout.is-dark .project-expense-vendor-preview-text {
+  color: #9fe8df;
+}
+
+.dashboard-layout.is-dark .project-expense-vendor-fallback {
+  border-color: rgba(45, 212, 191, 0.24);
+  background: linear-gradient(145deg, rgba(6, 78, 59, 0.42), rgba(15, 118, 110, 0.28));
+  color: #ccfbf1;
+}
+
+.dashboard-layout.is-dark .project-expense-vendor-logo {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.dashboard-layout.is-dark .project-expense-category-actions .project-detail-action.ghost {
+  color: #dbeafe;
+}
+
+.dashboard-layout.is-dark .project-group-lane {
+  border-color: rgba(67, 84, 112, 0.72);
+  background: rgba(8, 18, 34, 0.9);
+}
+
+.dashboard-layout.is-dark .project-group-lane-head {
+  background: rgba(10, 20, 36, 0.94);
+  border-bottom-color: rgba(67, 84, 112, 0.72);
+}
+
+.dashboard-layout.is-dark .project-group-lane-title h5,
+.dashboard-layout.is-dark .project-group-lane-count {
+  color: #eef4ff;
+}
+
+.dashboard-layout.is-dark .project-group-lane-count,
+.dashboard-layout.is-dark .project-group-lane-add {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.dashboard-layout.is-dark .project-group-lane-add {
+  color: #d8e4f5;
 }
 
 .dashboard-layout.is-dark .project-editor-step-progress {
@@ -25522,31 +25634,997 @@
 }
 
 .dashboard-layout.is-dark .overview-home-activity-note {
-  background: linear-gradient(180deg, rgba(238, 242, 247, 0.96) 0%, rgba(226, 232, 240, 0.96) 100%);
-  border-color: rgba(255, 255, 255, 0.52);
-  box-shadow: 0 10px 22px rgba(2, 6, 23, 0.16);
+  background:
+    linear-gradient(180deg, rgba(12, 23, 40, 0.96) 0%, rgba(8, 16, 31, 0.98) 100%);
+  border-color: rgba(71, 85, 105, 0.74);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 14px 26px rgba(2, 6, 23, 0.2);
 }
 
 .dashboard-layout.is-dark .overview-home-activity-note span {
-  color: #53657f;
+  color: #d8e4f5;
 }
 
 .dashboard-layout.is-dark .overview-home-activity-note em {
-  color: #8090a9;
+  color: #8ea3c1;
 }
 
 .dashboard-layout.is-dark .overview-home-activity-note.tone-green {
-  border-color: rgba(134, 239, 172, 0.42);
+  border-color: rgba(52, 211, 153, 0.34);
+  background:
+    linear-gradient(180deg, rgba(7, 26, 27, 0.96) 0%, rgba(5, 17, 20, 0.98) 100%);
 }
 
 .dashboard-layout.is-dark .overview-home-activity-note.tone-blue {
-  border-color: rgba(147, 197, 253, 0.46);
+  border-color: rgba(96, 165, 250, 0.36);
+  background:
+    linear-gradient(180deg, rgba(8, 20, 39, 0.96) 0%, rgba(5, 14, 27, 0.98) 100%);
 }
 
 .dashboard-layout.is-dark .overview-home-activity-note.tone-amber {
-  border-color: rgba(253, 186, 116, 0.5);
+  border-color: rgba(251, 191, 36, 0.34);
+  background:
+    linear-gradient(180deg, rgba(29, 19, 11, 0.96) 0%, rgba(19, 12, 7, 0.98) 100%);
 }
 
 .dashboard-layout.is-dark .overview-home-activity-note.tone-rose {
-  border-color: rgba(251, 113, 133, 0.4);
+  border-color: rgba(244, 114, 182, 0.3);
+  background:
+    linear-gradient(180deg, rgba(31, 15, 27, 0.96) 0%, rgba(18, 9, 17, 0.98) 100%);
+}
+
+.dashboard-layout.is-dark .overview-home-activity-note.tone-neutral {
+  border-color: rgba(100, 116, 139, 0.44);
+  background:
+    linear-gradient(180deg, rgba(12, 23, 40, 0.96) 0%, rgba(8, 16, 31, 0.98) 100%);
+}
+
+/* ===== DARK MODE: PROJECTS PAGE + PROJECT EDITOR ===== */
+.dashboard-layout.is-dark .dashboard-nav-item-main {
+  gap: 0.9rem;
+}
+
+.dashboard-layout.is-dark .dashboard-nav-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.dashboard-layout.is-dark .dashboard-nav-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.dashboard-layout.is-dark .dashboard-sidebar.is-collapsed .dashboard-nav-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.dashboard-layout.is-dark .overview-home-activity-item .overview-home-activity-note,
+.dashboard-layout.is-dark .overview-home-activity-note,
+.dashboard-layout.is-dark .overview-home-activity-note.tone-green,
+.dashboard-layout.is-dark .overview-home-activity-note.tone-blue,
+.dashboard-layout.is-dark .overview-home-activity-note.tone-amber,
+.dashboard-layout.is-dark .overview-home-activity-note.tone-rose,
+.dashboard-layout.is-dark .overview-home-activity-note.tone-neutral {
+  background-color: rgba(9, 19, 35, 0.98);
+}
+
+.dashboard-layout.is-dark .projects-page-modern {
+  color: #dbe7f7;
+}
+
+.dashboard-layout.is-dark .projects-page-modern .page-header h1,
+.dashboard-layout.is-dark .projects-page-modern .page-header-text h1,
+.dashboard-layout.is-dark .empty-state h3 {
+  color: #eef4ff;
+}
+
+.dashboard-layout.is-dark .projects-page-modern .page-header-text p,
+.dashboard-layout.is-dark .empty-state p,
+.dashboard-layout.is-dark .loading-state,
+.dashboard-layout.is-dark .projects-editor-loading {
+  color: #92a7c6;
+}
+
+.dashboard-layout.is-dark .projects-toolbar {
+  margin-bottom: 1.6rem;
+}
+
+.dashboard-layout.is-dark .projects-filter-btn {
+  border-color: rgba(71, 85, 105, 0.72);
+  background:
+    linear-gradient(180deg, rgba(10, 20, 37, 0.94) 0%, rgba(7, 14, 28, 0.96) 100%);
+  color: #e7efff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 12px 24px rgba(2, 6, 23, 0.18);
+}
+
+.dashboard-layout.is-dark .projects-filter-btn svg {
+  color: #8ea3c1;
+}
+
+.dashboard-layout.is-dark .projects-filter-btn:hover {
+  border-color: rgba(96, 165, 250, 0.44);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 16px 28px rgba(2, 6, 23, 0.24);
+}
+
+.dashboard-layout.is-dark .projects-view-toggle {
+  border-color: rgba(71, 85, 105, 0.72);
+  background:
+    linear-gradient(180deg, rgba(8, 18, 34, 0.94) 0%, rgba(5, 12, 24, 0.96) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.dashboard-layout.is-dark .projects-view-btn {
+  color: #93a6c5;
+}
+
+.dashboard-layout.is-dark .projects-view-btn.active {
+  background: rgba(37, 99, 235, 0.2);
+  color: #eff6ff;
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.24);
+}
+
+.dashboard-layout.is-dark .projects-new-btn {
+  background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
+  box-shadow: 0 18px 34px rgba(37, 99, 235, 0.28);
+}
+
+.dashboard-layout.is-dark .projects-notice--warning {
+  border-color: rgba(251, 191, 36, 0.34);
+  background: rgba(120, 53, 15, 0.24);
+  color: #fde68a;
+}
+
+.dashboard-layout.is-dark .projects-notice--success {
+  border-color: rgba(74, 222, 128, 0.3);
+  background: rgba(6, 95, 70, 0.26);
+  color: #bbf7d0;
+}
+
+.dashboard-layout.is-dark .projects-notice--error {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(127, 29, 29, 0.28);
+  color: #fecaca;
+}
+
+.dashboard-layout.is-dark .projects-selection-actions {
+  border-color: rgba(67, 84, 112, 0.72);
+  background:
+    linear-gradient(180deg, rgba(10, 20, 36, 0.92) 0%, rgba(7, 14, 29, 0.94) 100%);
+}
+
+.dashboard-layout.is-dark .projects-selection-count {
+  color: #dce8f9;
+}
+
+.dashboard-layout.is-dark .projects-selection-btn {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.78);
+  color: #d8e4f5;
+}
+
+.dashboard-layout.is-dark .projects-selection-btn:hover {
+  border-color: rgba(96, 165, 250, 0.38);
+  color: #eff6ff;
+}
+
+.dashboard-layout.is-dark .projects-selection-btn.danger {
+  border-color: rgba(248, 113, 113, 0.34);
+  color: #fecaca;
+}
+
+.dashboard-layout.is-dark .project-card-elevated,
+.dashboard-layout.is-dark .projects-list-item,
+.dashboard-layout.is-dark .projects-table-wrap {
+  border-color: rgba(67, 84, 112, 0.72);
+  background:
+    linear-gradient(180deg, rgba(8, 18, 34, 0.94) 0%, rgba(5, 13, 26, 0.97) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 22px 40px rgba(2, 6, 23, 0.24);
+}
+
+.dashboard-layout.is-dark .project-card-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0.06) 0%, rgba(2, 6, 23, 0.62) 100%);
+  pointer-events: none;
+}
+
+.dashboard-layout.is-dark .project-card-hero img,
+.dashboard-layout.is-dark .projects-table-main img,
+.dashboard-layout.is-dark .projects-list-media img {
+  filter: saturate(0.92) brightness(0.86);
+}
+
+.dashboard-layout.is-dark .projects-table-main img,
+.dashboard-layout.is-dark .projects-list-media {
+  border: 1px solid rgba(71, 85, 105, 0.56);
+  box-shadow: 0 12px 24px rgba(2, 6, 23, 0.18);
+}
+
+.dashboard-layout.is-dark .project-pill {
+  border: 1px solid rgba(71, 85, 105, 0.66);
+  background: rgba(8, 18, 34, 0.78);
+  color: #dbeafe;
+  box-shadow: 0 12px 24px rgba(2, 6, 23, 0.22);
+}
+
+.dashboard-layout.is-dark .project-pill--status {
+  color: #9fe8df;
+}
+
+.dashboard-layout.is-dark .project-card-menu-btn,
+.dashboard-layout.is-dark .project-card-menu--inline .project-card-menu-btn {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(8, 18, 34, 0.88);
+  color: #dbeafe;
+  box-shadow: 0 12px 24px rgba(2, 6, 23, 0.22);
+}
+
+.dashboard-layout.is-dark .project-card-menu-dropdown {
+  background: rgba(7, 15, 28, 0.98);
+  border-color: rgba(67, 84, 112, 0.78);
+  box-shadow: 0 22px 38px rgba(2, 6, 23, 0.32);
+}
+
+.dashboard-layout.is-dark .project-card-menu-dropdown button {
+  background: transparent;
+  color: #dbe7f7;
+}
+
+.dashboard-layout.is-dark .project-card-menu-dropdown button:hover {
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.dashboard-layout.is-dark .project-card-menu-dropdown button.danger {
+  color: #fda4af;
+}
+
+.dashboard-layout.is-dark .project-card-title h3,
+.dashboard-layout.is-dark .projects-list-content h4,
+.dashboard-layout.is-dark .projects-table-main strong {
+  color: #eef4ff;
+}
+
+.dashboard-layout.is-dark .project-card-title p,
+.dashboard-layout.is-dark .project-card-meta,
+.dashboard-layout.is-dark .project-card-meta span,
+.dashboard-layout.is-dark .projects-list-content p,
+.dashboard-layout.is-dark .projects-list-meta,
+.dashboard-layout.is-dark .projects-list-meta span,
+.dashboard-layout.is-dark .projects-table-main p,
+.dashboard-layout.is-dark .projects-main-col-category,
+.dashboard-layout.is-dark .projects-main-col-start,
+.dashboard-layout.is-dark .projects-main-col-members,
+.dashboard-layout.is-dark .projects-main-col-status {
+  color: #93a6c5;
+}
+
+.dashboard-layout.is-dark .project-progress-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(30, 41, 59, 0.88);
+  box-shadow: inset 0 1px 2px rgba(2, 6, 23, 0.52);
+}
+
+.dashboard-layout.is-dark .project-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #22c55e 0%, #2dd4bf 100%);
+  box-shadow: 0 0 18px rgba(45, 212, 191, 0.18);
+}
+
+.dashboard-layout.is-dark .project-progress-value,
+.dashboard-layout.is-dark .projects-table-money {
+  color: #eef4ff;
+}
+
+.dashboard-layout.is-dark .project-btn-primary {
+  background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
+  box-shadow: 0 16px 28px rgba(37, 99, 235, 0.26);
+}
+
+.dashboard-layout.is-dark .project-btn-secondary {
+  border-color: rgba(96, 165, 250, 0.3);
+  background: rgba(15, 23, 42, 0.78);
+  color: #dbeafe;
+}
+
+.dashboard-layout.is-dark .project-card-avatars {
+  gap: 0;
+}
+
+.dashboard-layout.is-dark .project-avatar {
+  width: 34px;
+  height: 34px;
+  margin-left: -0.38rem;
+  border-radius: 999px;
+  border: 2px solid rgba(5, 12, 24, 0.96);
+  background: linear-gradient(135deg, #2563eb 0%, #38bdf8 100%);
+  color: #f8fbff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  box-shadow: 0 10px 18px rgba(2, 6, 23, 0.22);
+}
+
+.dashboard-layout.is-dark .project-avatar:first-child {
+  margin-left: 0;
+}
+
+.dashboard-layout.is-dark .project-avatar-more {
+  background: rgba(15, 23, 42, 0.98);
+  color: #cfe0ff;
+  border-color: rgba(71, 85, 105, 0.84);
+}
+
+.dashboard-layout.is-dark .projects-table-view th {
+  background: rgba(9, 19, 35, 0.94);
+  border-bottom-color: rgba(67, 84, 112, 0.7);
+  color: #8fa3c0;
+}
+
+.dashboard-layout.is-dark .projects-table-view td {
+  border-bottom-color: rgba(36, 52, 79, 0.72);
+  color: #dce8f9;
+}
+
+.dashboard-layout.is-dark .projects-table-view tbody tr:hover {
+  background: rgba(12, 23, 40, 0.76);
+}
+
+.dashboard-layout.is-dark .projects-table-status {
+  border-color: rgba(52, 211, 153, 0.28);
+  background: rgba(6, 95, 70, 0.22);
+  color: #a7f3d0;
+}
+
+.dashboard-layout.is-dark .projects-table-status.hidden {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+}
+
+.dashboard-layout.is-dark .projects-list-item:hover {
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+.dashboard-layout.is-dark .project-editor-modal {
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.14), transparent 26%),
+    linear-gradient(180deg, rgba(5, 12, 24, 0.985) 0%, rgba(3, 9, 18, 0.99) 100%);
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-header {
+  background:
+    linear-gradient(180deg, rgba(7, 16, 31, 0.98) 0%, rgba(5, 12, 24, 0.96) 100%);
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-icon {
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  background: rgba(37, 99, 235, 0.18);
+  color: #dbeafe;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.dashboard-layout.is-dark .project-editor-modal-body {
+  background:
+    linear-gradient(180deg, rgba(5, 12, 24, 0.92) 0%, rgba(3, 9, 18, 0.96) 100%);
+}
+
+.dashboard-layout.is-dark .project-editor-step {
+  border-color: rgba(67, 84, 112, 0.74);
+  background:
+    linear-gradient(180deg, rgba(10, 20, 37, 0.94) 0%, rgba(7, 14, 28, 0.96) 100%);
+  color: #d8e4f5;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.dashboard-layout.is-dark .project-editor-step:hover {
+  border-color: rgba(96, 165, 250, 0.4);
+  background:
+    linear-gradient(180deg, rgba(12, 24, 43, 0.96) 0%, rgba(8, 17, 33, 0.98) 100%);
+  color: #eef4ff;
+  transform: translateY(-1px);
+}
+
+.dashboard-layout.is-dark .project-editor-step.active,
+.dashboard-layout.is-dark .project-editor-step.is-active {
+  border-color: rgba(45, 212, 191, 0.34);
+  background:
+    linear-gradient(180deg, rgba(9, 32, 33, 0.94) 0%, rgba(6, 18, 22, 0.98) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 16px 28px rgba(2, 6, 23, 0.24);
+}
+
+.dashboard-layout.is-dark .project-editor-step.is-complete {
+  border-color: rgba(74, 222, 128, 0.24);
+  background:
+    linear-gradient(180deg, rgba(8, 27, 24, 0.9) 0%, rgba(6, 18, 16, 0.96) 100%);
+}
+
+.dashboard-layout.is-dark .project-editor-step-badge {
+  border: 1px solid rgba(71, 85, 105, 0.7);
+  background: rgba(15, 23, 42, 0.76);
+  color: #cbd5e1;
+}
+
+.dashboard-layout.is-dark .project-editor-step.active .project-editor-step-badge,
+.dashboard-layout.is-dark .project-editor-step.is-active .project-editor-step-badge {
+  border-color: rgba(45, 212, 191, 0.24);
+  background: linear-gradient(135deg, #14b8a6 0%, #22c55e 100%);
+  color: #f8fbff;
+}
+
+.dashboard-layout.is-dark .project-editor-step.is-complete .project-editor-step-badge {
+  border-color: rgba(74, 222, 128, 0.18);
+  background: rgba(6, 95, 70, 0.88);
+  color: #bbf7d0;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-feedback--error {
+  border-color: rgba(248, 113, 113, 0.3);
+  background: rgba(127, 29, 29, 0.22);
+  color: #fecaca;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-field {
+  color: #c7d6ea;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-member-add button,
+.dashboard-layout.is-dark .project-editor-modal .data-modal-btn--primary {
+  box-shadow: 0 14px 26px rgba(20, 184, 166, 0.18);
+}
+
+.dashboard-layout.is-dark .project-editor-modal .member-chip {
+  border: 1px solid rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.8);
+  color: #dbe7f7;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .member-chip--empty {
+  background: rgba(8, 18, 34, 0.72);
+  color: #8ea3c1;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .member-chip-remove {
+  color: #a9bdd9;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-upload,
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb--empty,
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb--file,
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb--existing {
+  border-color: rgba(67, 84, 112, 0.72);
+  background:
+    linear-gradient(180deg, rgba(9, 18, 34, 0.92) 0%, rgba(6, 13, 26, 0.96) 100%);
+  color: #c7d6ea;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb-preview {
+  background: rgba(15, 23, 42, 0.78);
+}
+
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb--file strong,
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb--existing strong {
+  color: #eef4ff;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb--file span,
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb--existing span,
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb--file small,
+.dashboard-layout.is-dark .project-editor-modal .data-modal-upload p {
+  color: #92a7c6;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb-remove,
+.dashboard-layout.is-dark .project-editor-modal .data-modal-btn {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.78);
+  color: #dce8f9;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-btn:hover,
+.dashboard-layout.is-dark .project-editor-modal .upload-thumb-remove:hover {
+  border-color: rgba(96, 165, 250, 0.36);
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-upload input[type="file"] {
+  border-color: rgba(71, 85, 105, 0.76);
+  background: rgba(15, 23, 42, 0.92);
+  color: #dce8f9;
+}
+
+/* ===== DARK MODE: PROJECT DETAIL TABS ===== */
+.dashboard-layout.is-dark .project-submodal {
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.12), transparent 24%),
+    linear-gradient(180deg, rgba(5, 12, 24, 0.985) 0%, rgba(3, 9, 18, 0.992) 100%);
+}
+
+.dashboard-layout.is-dark .project-submodal .data-modal-header {
+  background:
+    linear-gradient(180deg, rgba(7, 16, 31, 0.98) 0%, rgba(5, 12, 24, 0.96) 100%);
+}
+
+.dashboard-layout.is-dark .project-submodal .data-modal-icon {
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  background: rgba(37, 99, 235, 0.18);
+  color: #dbeafe;
+}
+
+.dashboard-layout.is-dark .project-submodal .data-modal-btn {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.82);
+  color: #dce8f9;
+}
+
+.dashboard-layout.is-dark .project-submodal .data-modal-btn:hover,
+.dashboard-layout.is-dark .project-submodal .data-modal-inline-btn:hover {
+  border-color: rgba(96, 165, 250, 0.36);
+}
+
+.dashboard-layout.is-dark .project-submodal .data-modal-btn--primary {
+  background: linear-gradient(135deg, #14b8a6 0%, #22c55e 100%);
+  color: #f8fbff;
+  box-shadow: 0 14px 26px rgba(20, 184, 166, 0.18);
+}
+
+.dashboard-layout.is-dark .project-submodal .data-modal-btn--danger {
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+  box-shadow: 0 14px 26px rgba(127, 29, 29, 0.24);
+}
+
+.dashboard-layout.is-dark .project-submodal .data-modal-inline-btn {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.78);
+  color: #dbe7f7;
+}
+
+.dashboard-layout.is-dark .project-submodal .data-modal-field-inline small,
+.dashboard-layout.is-dark .project-submodal .projects-confirm-modal p {
+  color: #92a7c6;
+}
+
+.dashboard-layout.is-dark .project-detail-modal {
+  background:
+    radial-gradient(circle at top left, rgba(45, 212, 191, 0.08), transparent 24%),
+    linear-gradient(180deg, rgba(5, 12, 24, 0.985) 0%, rgba(3, 9, 18, 0.992) 100%);
+}
+
+.dashboard-layout.is-dark .project-detail-body {
+  background:
+    linear-gradient(180deg, rgba(4, 10, 20, 0.94) 0%, rgba(2, 8, 16, 0.98) 100%);
+}
+
+.dashboard-layout.is-dark .project-detail-image,
+.dashboard-layout.is-dark .project-detail-thumbs img {
+  border: 1px solid rgba(67, 84, 112, 0.72);
+  box-shadow: 0 18px 34px rgba(2, 6, 23, 0.24);
+}
+
+.dashboard-layout.is-dark .project-detail-image img,
+.dashboard-layout.is-dark .project-detail-thumbs img {
+  filter: saturate(0.92) brightness(0.88);
+}
+
+.dashboard-layout.is-dark .project-expense-insight-card,
+.dashboard-layout.is-dark .project-overview-kpi-card,
+.dashboard-layout.is-dark .project-overview-panel {
+  border-color: rgba(67, 84, 112, 0.72);
+  background:
+    linear-gradient(180deg, rgba(9, 19, 35, 0.94) 0%, rgba(6, 13, 26, 0.97) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 18px 34px rgba(2, 6, 23, 0.24);
+}
+
+.dashboard-layout.is-dark .project-expense-insight-card--hero {
+  border: 1px solid rgba(45, 212, 191, 0.16);
+  background:
+    radial-gradient(circle at top right, rgba(56, 189, 248, 0.16), transparent 32%),
+    linear-gradient(140deg, rgba(8, 30, 60, 0.98) 0%, rgba(6, 39, 54, 0.98) 52%, rgba(8, 52, 35, 0.98) 100%);
+}
+
+.dashboard-layout.is-dark .project-expense-insight-card--hero::before {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.dashboard-layout.is-dark .project-expense-insight-card--hero::after {
+  background: rgba(45, 212, 191, 0.14);
+  border-color: rgba(45, 212, 191, 0.14);
+}
+
+.dashboard-layout.is-dark .project-expense-insight-card h5,
+.dashboard-layout.is-dark .project-expense-insight-total,
+.dashboard-layout.is-dark .project-expense-legend-row strong,
+.dashboard-layout.is-dark .project-expense-leading-vendor-main strong,
+.dashboard-layout.is-dark .project-expense-amount,
+.dashboard-layout.is-dark .project-overview-head h4,
+.dashboard-layout.is-dark .project-overview-kpi-card strong,
+.dashboard-layout.is-dark .project-overview-panel-head h5,
+.dashboard-layout.is-dark .project-overview-ring-value,
+.dashboard-layout.is-dark .project-overview-stat-item strong,
+.dashboard-layout.is-dark .project-overview-category-head strong,
+.dashboard-layout.is-dark .project-detail-mobile-nav-btn.active {
+  color: #eef4ff;
+}
+
+.dashboard-layout.is-dark .project-expense-donut-hole {
+  background: rgba(5, 12, 24, 0.96);
+  box-shadow:
+    inset 0 0 0 1px rgba(67, 84, 112, 0.72),
+    0 12px 24px rgba(2, 6, 23, 0.24);
+}
+
+.dashboard-layout.is-dark .project-expense-donut-hole span,
+.dashboard-layout.is-dark .project-expense-breakdown-label,
+.dashboard-layout.is-dark .project-expense-leading-vendor-main span,
+.dashboard-layout.is-dark .project-expense-insight-foot,
+.dashboard-layout.is-dark .project-expense-insight-empty,
+.dashboard-layout.is-dark .project-expenses-loading,
+.dashboard-layout.is-dark .project-expenses-selection-note,
+.dashboard-layout.is-dark .project-expense-legend-label,
+.dashboard-layout.is-dark .project-expense-vendor-name,
+.dashboard-layout.is-dark .project-expense-date,
+.dashboard-layout.is-dark .project-group-description,
+.dashboard-layout.is-dark .project-group-estimation,
+.dashboard-layout.is-dark .project-task-person-name,
+.dashboard-layout.is-dark .project-group-select-all,
+.dashboard-layout.is-dark .project-overview-head p,
+.dashboard-layout.is-dark .project-overview-kpi-label,
+.dashboard-layout.is-dark .project-overview-kpi-card small,
+.dashboard-layout.is-dark .project-overview-range-label,
+.dashboard-layout.is-dark .project-overview-panel-head span,
+.dashboard-layout.is-dark .project-overview-trend-value,
+.dashboard-layout.is-dark .project-overview-trend-label,
+.dashboard-layout.is-dark .project-overview-stat-item span,
+.dashboard-layout.is-dark .project-overview-category-head span,
+.dashboard-layout.is-dark .project-detail-progress,
+.dashboard-layout.is-dark .project-detail-mobile-nav-btn {
+  color: #92a7c6;
+}
+
+.dashboard-layout.is-dark .project-expense-leading-vendor {
+  border-color: rgba(67, 84, 112, 0.72);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.dashboard-layout.is-dark .project-expense-leading-vendor-amount {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(30, 64, 175, 0.18);
+  color: #bfdbfe;
+}
+
+.dashboard-layout.is-dark .project-expense-category-pill {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.78);
+  color: #dce8f9;
+}
+
+.dashboard-layout.is-dark .project-expense-category-pill-icon {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(30, 41, 59, 0.84);
+  color: var(--project-expense-accent, #93c5fd);
+}
+
+.dashboard-layout.is-dark .project-group-row-action {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.78);
+  color: #d8e4f5;
+}
+
+.dashboard-layout.is-dark .project-group-row-action:hover,
+.dashboard-layout.is-dark .project-invite-copy:hover,
+.dashboard-layout.is-dark .project-documents-link:hover,
+.dashboard-layout.is-dark .project-expense-receipt-link:hover {
+  border-color: rgba(96, 165, 250, 0.38);
+  background: rgba(30, 64, 175, 0.18);
+  color: #eff6ff;
+}
+
+.dashboard-layout.is-dark .project-task-person-avatar {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(30, 64, 175, 0.18);
+  color: #dbeafe;
+}
+
+.dashboard-layout.is-dark .project-detail-mobile-nav {
+  border-top-color: rgba(67, 84, 112, 0.72);
+  background: rgba(4, 10, 20, 0.98);
+}
+
+.dashboard-layout.is-dark .project-detail-mobile-nav-btn {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.dashboard-layout.is-dark .project-detail-mobile-nav-btn.active {
+  border-color: rgba(45, 212, 191, 0.32);
+  background: rgba(7, 26, 27, 0.82);
+}
+
+.dashboard-layout.is-dark .project-overview-status-badge {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(30, 64, 175, 0.18);
+  color: #bfdbfe;
+}
+
+.dashboard-layout.is-dark .project-overview-status-badge.is-active {
+  border-color: rgba(52, 211, 153, 0.3);
+  background: rgba(6, 95, 70, 0.24);
+  color: #a7f3d0;
+}
+
+.dashboard-layout.is-dark .project-overview-status-badge.is-planning {
+  border-color: rgba(251, 191, 36, 0.32);
+  background: rgba(120, 53, 15, 0.24);
+  color: #fde68a;
+}
+
+.dashboard-layout.is-dark .project-overview-status-badge.is-completed {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(30, 64, 175, 0.18);
+  color: #bfdbfe;
+}
+
+.dashboard-layout.is-dark .project-overview-status-badge.is-hidden,
+.dashboard-layout.is-dark .project-overview-status-badge.is-archived,
+.dashboard-layout.is-dark .project-overview-status-badge.is-paused,
+.dashboard-layout.is-dark .project-overview-status-badge.is-on-hold {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+}
+
+.dashboard-layout.is-dark .project-overview-range-toggle {
+  border-color: rgba(67, 84, 112, 0.72);
+  background:
+    linear-gradient(180deg, rgba(8, 18, 34, 0.94) 0%, rgba(5, 12, 24, 0.96) 100%);
+}
+
+.dashboard-layout.is-dark .project-overview-range-btn {
+  color: #9ab0cd;
+}
+
+.dashboard-layout.is-dark .project-overview-range-btn.active {
+  background: linear-gradient(135deg, #14b8a6 0%, #22c55e 100%);
+  color: #f8fbff;
+  box-shadow: 0 10px 18px rgba(13, 148, 136, 0.24);
+}
+
+.dashboard-layout.is-dark .project-overview-ring-bg {
+  stroke: rgba(71, 85, 105, 0.82);
+}
+
+.dashboard-layout.is-dark .project-overview-trend-track,
+.dashboard-layout.is-dark .project-overview-category-track {
+  border-color: rgba(67, 84, 112, 0.72);
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.dashboard-layout.is-dark .project-overview-trend-bar.is-zero {
+  background: rgba(100, 116, 139, 0.72);
+}
+
+.dashboard-layout.is-dark .project-overview-panel--interactive:hover {
+  border-color: rgba(96, 165, 250, 0.38);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 20px 34px rgba(2, 6, 23, 0.28);
+}
+
+.dashboard-layout.is-dark .project-overview-panel--interactive:focus-visible {
+  outline-color: rgba(45, 212, 191, 0.36);
+}
+
+.dashboard-layout.is-dark .project-overview-panel-link-hint {
+  color: #7dd3fc;
+}
+
+.dashboard-layout.is-dark .project-summary-report-modal {
+  background:
+    radial-gradient(circle at top right, rgba(45, 212, 191, 0.08), transparent 28%),
+    linear-gradient(180deg, rgba(5, 12, 24, 0.985) 0%, rgba(3, 9, 18, 0.992) 100%);
+}
+
+.dashboard-layout.is-dark .project-summary-report-body {
+  background:
+    linear-gradient(180deg, rgba(4, 10, 20, 0.96) 0%, rgba(2, 8, 16, 0.98) 100%);
+}
+
+.dashboard-layout.is-dark .project-summary-report {
+  color: #dbe7f7;
+}
+
+.dashboard-layout.is-dark .project-summary-report-actions,
+.dashboard-layout.is-dark .project-summary-report-hero,
+.dashboard-layout.is-dark .project-summary-report-ring-card,
+.dashboard-layout.is-dark .project-summary-report-card,
+.dashboard-layout.is-dark .project-summary-report-financial-item,
+.dashboard-layout.is-dark .project-summary-report-funding-item,
+.dashboard-layout.is-dark .project-summary-report-delivery-item,
+.dashboard-layout.is-dark .project-summary-report-milestone-row,
+.dashboard-layout.is-dark .project-summary-report-ask,
+.dashboard-layout.is-dark .project-summary-report-vfm-item,
+.dashboard-layout.is-dark .project-summary-report-risk-row,
+.dashboard-layout.is-dark .project-summary-report-me-row,
+.dashboard-layout.is-dark .project-summary-report-sustainability-item,
+.dashboard-layout.is-dark .project-summary-report-expense-row,
+.dashboard-layout.is-dark .project-summary-report-kpi-table {
+  border-color: rgba(67, 84, 112, 0.72);
+  background:
+    linear-gradient(180deg, rgba(9, 19, 35, 0.94) 0%, rgba(6, 13, 26, 0.97) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 18px 34px rgba(2, 6, 23, 0.18);
+}
+
+.dashboard-layout.is-dark .project-summary-report-hero {
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.12), transparent 30%),
+    linear-gradient(145deg, rgba(8, 18, 34, 0.98) 0%, rgba(7, 17, 32, 0.98) 58%, rgba(5, 22, 26, 0.98) 100%);
+}
+
+.dashboard-layout.is-dark .project-summary-report-kicker {
+  color: #7dd3fc;
+}
+
+.dashboard-layout.is-dark .project-summary-report-hero h3,
+.dashboard-layout.is-dark .project-summary-report-ring-card h4,
+.dashboard-layout.is-dark .project-summary-report-card-head h4,
+.dashboard-layout.is-dark .project-summary-report-card-head h5,
+.dashboard-layout.is-dark .project-summary-report-financial-item strong,
+.dashboard-layout.is-dark .project-summary-report-funding-item strong,
+.dashboard-layout.is-dark .project-summary-report-category-meta strong,
+.dashboard-layout.is-dark .project-summary-report-delivery-item strong,
+.dashboard-layout.is-dark .project-summary-report-milestone-main strong,
+.dashboard-layout.is-dark .project-summary-report-ask strong,
+.dashboard-layout.is-dark .project-summary-report-vfm-item strong,
+.dashboard-layout.is-dark .project-summary-report-risk-head strong,
+.dashboard-layout.is-dark .project-summary-report-me-main strong,
+.dashboard-layout.is-dark .project-summary-report-sustainability-item strong,
+.dashboard-layout.is-dark .project-summary-report-kpi-row strong,
+.dashboard-layout.is-dark .project-summary-report-expense-row strong,
+.dashboard-layout.is-dark .project-summary-report-ring strong {
+  color: #eef4ff;
+}
+
+.dashboard-layout.is-dark .project-summary-report-description,
+.dashboard-layout.is-dark .project-summary-report-ring-card p,
+.dashboard-layout.is-dark .project-summary-report-actions-note,
+.dashboard-layout.is-dark .project-summary-report-support-text,
+.dashboard-layout.is-dark .project-summary-report-risk-row p,
+.dashboard-layout.is-dark .project-summary-report-risk-row small,
+.dashboard-layout.is-dark .project-summary-report-me-main span,
+.dashboard-layout.is-dark .project-summary-report-me-row p,
+.dashboard-layout.is-dark .project-summary-report-me-row small,
+.dashboard-layout.is-dark .project-summary-report-sustainability-item span,
+.dashboard-layout.is-dark .project-summary-report-expense-row span,
+.dashboard-layout.is-dark .project-summary-report-empty {
+  color: #92a7c6;
+}
+
+.dashboard-layout.is-dark .project-summary-report-meta span,
+.dashboard-layout.is-dark .project-summary-report-health span,
+.dashboard-layout.is-dark .project-summary-report-health small,
+.dashboard-layout.is-dark .project-summary-report-card-head span,
+.dashboard-layout.is-dark .project-summary-report-financial-item span,
+.dashboard-layout.is-dark .project-summary-report-funding-item span,
+.dashboard-layout.is-dark .project-summary-report-funding-item small,
+.dashboard-layout.is-dark .project-summary-report-category-meta span,
+.dashboard-layout.is-dark .project-summary-report-delivery-item span,
+.dashboard-layout.is-dark .project-summary-report-ask span,
+.dashboard-layout.is-dark .project-summary-report-ask p,
+.dashboard-layout.is-dark .project-summary-report-vfm-item span,
+.dashboard-layout.is-dark .project-summary-report-kpi-row span,
+.dashboard-layout.is-dark .project-summary-report-kpi-row--head span {
+  color: #9ab0cd;
+}
+
+.dashboard-layout.is-dark .project-summary-report-meta span {
+  border-color: rgba(67, 84, 112, 0.72);
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.dashboard-layout.is-dark .project-summary-report-health--good,
+.dashboard-layout.is-dark .project-summary-report-funding-item--good,
+.dashboard-layout.is-dark .project-summary-report-ask--good,
+.dashboard-layout.is-dark .project-summary-report-risk-level.is-low,
+.dashboard-layout.is-dark .project-summary-report-expense-row-right small.is-proof {
+  border-color: rgba(52, 211, 153, 0.32);
+  background: rgba(6, 95, 70, 0.24);
+  color: #a7f3d0;
+}
+
+.dashboard-layout.is-dark .project-summary-report-health--warning,
+.dashboard-layout.is-dark .project-summary-report-funding-item--warning,
+.dashboard-layout.is-dark .project-summary-report-ask--warning,
+.dashboard-layout.is-dark .project-summary-report-risk-level.is-medium {
+  border-color: rgba(251, 191, 36, 0.32);
+  background: rgba(120, 53, 15, 0.24);
+  color: #fde68a;
+}
+
+.dashboard-layout.is-dark .project-summary-report-health--critical,
+.dashboard-layout.is-dark .project-summary-report-funding-item--critical,
+.dashboard-layout.is-dark .project-summary-report-ask--critical,
+.dashboard-layout.is-dark .project-summary-report-risk-level.is-high,
+.dashboard-layout.is-dark .project-summary-report-expense-row-right small.is-missing-proof {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(127, 29, 29, 0.24);
+  color: #fecaca;
+}
+
+.dashboard-layout.is-dark .project-summary-report-health--unknown,
+.dashboard-layout.is-dark .project-summary-report-funding-item--unknown,
+.dashboard-layout.is-dark .project-summary-report-ask--unknown {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+}
+
+.dashboard-layout.is-dark .project-summary-report-ring {
+  background: conic-gradient(var(--report-color) var(--report-value), rgba(71, 85, 105, 0.82) 0);
+}
+
+.dashboard-layout.is-dark .project-summary-report-ring::after {
+  background: rgba(5, 12, 24, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(67, 84, 112, 0.72);
+}
+
+.dashboard-layout.is-dark .project-summary-report-category-track {
+  border-color: rgba(67, 84, 112, 0.72);
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.dashboard-layout.is-dark .project-summary-report-milestone-status {
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(30, 64, 175, 0.18);
+  color: #bfdbfe;
+}
+
+.dashboard-layout.is-dark .project-summary-report-milestone-row.is-done .project-summary-report-milestone-status {
+  border-color: rgba(52, 211, 153, 0.32);
+  background: rgba(6, 95, 70, 0.24);
+  color: #a7f3d0;
+}
+
+.dashboard-layout.is-dark .project-summary-report-milestone-row.is-critical .project-summary-report-milestone-status {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(127, 29, 29, 0.24);
+  color: #fecaca;
+}
+
+.dashboard-layout.is-dark .project-summary-report-support-block {
+  border-top-color: rgba(67, 84, 112, 0.72);
+}
+
+.dashboard-layout.is-dark .project-summary-report-kpi-row {
+  border-bottom-color: rgba(36, 52, 79, 0.72);
+  background: rgba(8, 18, 34, 0.82);
+}
+
+.dashboard-layout.is-dark .project-summary-report-kpi-row--head {
+  background: rgba(9, 19, 35, 0.94);
 }
