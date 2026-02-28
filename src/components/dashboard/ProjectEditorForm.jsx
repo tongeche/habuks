@@ -1,3 +1,6 @@
+import { useEffect, useRef } from "react";
+import { Icon } from "../icons.jsx";
+
 const noop = () => {};
 
 const toArray = (value) => (Array.isArray(value) ? value : []);
@@ -20,6 +23,37 @@ const defaultFileSize = (size) => {
 };
 
 const joinClassNames = (...classes) => classes.filter(Boolean).join(" ");
+
+const PROJECT_EDITOR_STEPS = [
+  {
+    key: "info",
+    label: "Project info",
+    mobileLabel: "Project",
+    note: "Name, category, dates, and status.",
+    icon: "briefcase",
+  },
+  {
+    key: "budget",
+    label: "Budget & finance",
+    mobileLabel: "Budget",
+    note: "Budget, revenue targets, and funding.",
+    icon: "wallet",
+  },
+  {
+    key: "members",
+    label: "Contacts & members",
+    mobileLabel: "Team",
+    note: "Primary contact and project members.",
+    icon: "users",
+  },
+  {
+    key: "media",
+    label: "Media",
+    mobileLabel: "Media",
+    note: "Project images and uploaded files.",
+    icon: "folder",
+  },
+];
 
 const getDefaultForm = () => ({
   name: "",
@@ -57,7 +91,6 @@ function ProjectEditorForm({
   selectedExistingMedia = [],
   onRemoveExistingMedia = noop,
   onMediaFileSelection = noop,
-  mediaFolderPreview = "",
   selectedMediaFiles = [],
   onRemoveMediaFile = noop,
   getFileFingerprint = defaultFingerprint,
@@ -66,6 +99,12 @@ function ProjectEditorForm({
   className = "",
 }) {
   const safeForm = { ...getDefaultForm(), ...(form || {}) };
+  const stepRefs = useRef({});
+  const activeStepIndex = Math.max(
+    0,
+    PROJECT_EDITOR_STEPS.findIndex((step) => step.key === activeTab)
+  );
+  const activeStep = PROJECT_EDITOR_STEPS[activeStepIndex] || PROJECT_EDITOR_STEPS[0];
 
   const handleSubmit = (event) => {
     if (typeof onSubmit === "function") {
@@ -77,49 +116,81 @@ function ProjectEditorForm({
 
   const getFieldClass = (field) => fieldClassNames?.[field] || "";
 
+  useEffect(() => {
+    const activeNode = stepRefs.current?.[activeStep.key];
+    if (!activeNode || typeof activeNode.scrollIntoView !== "function") return;
+    activeNode.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [activeStep.key]);
+
   return (
-    <form className={joinClassNames("data-modal-form", className)} onSubmit={handleSubmit}>
-      <div className="data-modal-tabs" role="tablist">
-        <button
-          type="button"
-          className={joinClassNames("data-modal-tab", activeTab === "info" ? "active" : "", getFieldClass("tab:info"))}
-          onClick={() => onTabChange("info")}
-          role="tab"
-          aria-selected={activeTab === "info"}
-          data-demo-tab="info"
-        >
-          Project info
-        </button>
-        <button
-          type="button"
-          className={joinClassNames("data-modal-tab", activeTab === "budget" ? "active" : "", getFieldClass("tab:budget"))}
-          onClick={() => onTabChange("budget")}
-          role="tab"
-          aria-selected={activeTab === "budget"}
-          data-demo-tab="budget"
-        >
-          Budget & finance
-        </button>
-        <button
-          type="button"
-          className={joinClassNames("data-modal-tab", activeTab === "members" ? "active" : "", getFieldClass("tab:members"))}
-          onClick={() => onTabChange("members")}
-          role="tab"
-          aria-selected={activeTab === "members"}
-          data-demo-tab="members"
-        >
-          Contacts & members
-        </button>
-        <button
-          type="button"
-          className={joinClassNames("data-modal-tab", activeTab === "media" ? "active" : "", getFieldClass("tab:media"))}
-          onClick={() => onTabChange("media")}
-          role="tab"
-          aria-selected={activeTab === "media"}
-          data-demo-tab="media"
-        >
-          Media
-        </button>
+    <form className={joinClassNames("data-modal-form", "project-editor-form", className)} onSubmit={handleSubmit}>
+      <div className="project-editor-step-shell">
+        <div className="project-editor-step-meta">
+          <div>
+            <span className="project-editor-step-kicker">
+              Step {activeStepIndex + 1} of {PROJECT_EDITOR_STEPS.length}
+            </span>
+            <p>{activeStep.note}</p>
+          </div>
+          <span className="project-editor-step-counter" aria-hidden="true">
+            {activeStepIndex + 1}/{PROJECT_EDITOR_STEPS.length}
+          </span>
+        </div>
+
+        <div className="data-modal-tabs project-editor-stepper" role="tablist" aria-label="Project form steps">
+          {PROJECT_EDITOR_STEPS.map((step, index) => {
+            const isActive = activeTab === step.key;
+            const isComplete = activeStepIndex > index;
+
+            return (
+              <button
+                key={step.key}
+                ref={(node) => {
+                  if (node) {
+                    stepRefs.current[step.key] = node;
+                  } else {
+                    delete stepRefs.current[step.key];
+                  }
+                }}
+                type="button"
+                className={joinClassNames(
+                  "data-modal-tab",
+                  "project-editor-step",
+                  isActive ? "active is-active" : "",
+                  isComplete ? "is-complete" : "",
+                  getFieldClass(`tab:${step.key}`)
+                )}
+                onClick={() => onTabChange(step.key)}
+                role="tab"
+                aria-selected={isActive}
+                data-demo-tab={step.key}
+              >
+                <span className="project-editor-step-badge" aria-hidden="true">
+                  {isComplete ? <Icon name="check" size={14} /> : <Icon name={step.icon} size={14} />}
+                </span>
+                <span className="project-editor-step-copy">
+                  <strong>
+                    <span className="project-editor-step-label project-editor-step-label--desktop">
+                      {step.label}
+                    </span>
+                    <span className="project-editor-step-label project-editor-step-label--mobile">
+                      {step.mobileLabel}
+                    </span>
+                  </strong>
+                  <small>{step.note}</small>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="project-editor-step-progress" aria-hidden="true">
+          <span style={{ width: `${((activeStepIndex + 1) / PROJECT_EDITOR_STEPS.length) * 100}%` }} />
+        </div>
       </div>
 
       {createProjectError ? (
@@ -398,8 +469,7 @@ function ProjectEditorForm({
             Upload project images
             <div className="data-modal-upload">
               <input type="file" accept="image/*" multiple onChange={onMediaFileSelection} />
-              <p>Images are stored in the `birds` bucket.</p>
-              <p className="data-modal-upload-path">{mediaFolderPreview}</p>
+              <p>Add one or more images for this project. New images will appear after you save your changes.</p>
             </div>
           </label>
           <div className="data-modal-field data-modal-field--full">

@@ -171,6 +171,9 @@ export default function Dashboard() {
             tenantId={tenantInfo?.id}
             tenantBrand={tenantBrand}
             tenantFeatures={tenantFeatures}
+            access={access}
+            setActivePage={setActivePage}
+            tenantRole={tenantRole}
           />
         );
       case "contributions":
@@ -259,6 +262,7 @@ export default function Dashboard() {
             tenantId={tenantInfo?.id}
             user={user}
             tenantRole={tenantRole}
+            access={access}
             setActivePage={setActivePage}
           />
         );
@@ -283,7 +287,17 @@ export default function Dashboard() {
           />
         );
       default:
-        return <DashboardOverview user={user} tenantId={tenantInfo?.id} tenantBrand={tenantBrand} />;
+        return (
+          <DashboardOverview
+            user={user}
+            tenantId={tenantInfo?.id}
+            tenantBrand={tenantBrand}
+            tenantFeatures={tenantFeatures}
+            access={access}
+            setActivePage={setActivePage}
+            tenantRole={tenantRole}
+          />
+        );
     }
   };
 

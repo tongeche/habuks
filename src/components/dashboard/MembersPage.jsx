@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DataModal from "./DataModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
+import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import { Icon } from "../icons.jsx";
 import {
   createMagicLinkInvite,
@@ -76,7 +77,7 @@ const buildCsvValue = (value) => {
   return `"${text.replace(/"/g, '""')}"`;
 };
 
-export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, setActivePage }) {
+export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, access, setActivePage }) {
   const [members, setMembers] = useState([]);
   const [projects, setProjects] = useState([]);
   const [projectAssignments, setProjectAssignments] = useState([]);
@@ -88,6 +89,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
 
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showResponseModal, setShowResponseModal] = useState(false);
+  const [selectedMemberDetail, setSelectedMemberDetail] = useState(null);
   const [inviteForm, setInviteForm] = useState(() => createInviteForm());
   const [responseData, setResponseData] = useState({
     type: "success",
@@ -245,6 +247,22 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
         })
         .slice(0, 6),
     [inviteRows]
+  );
+
+  const peopleStatCards = useMemo(
+    () => [
+      { key: "total", label: "Total members", value: stats.total, icon: "users", tone: "teal" },
+      { key: "active", label: "Active", value: stats.active, icon: "check-circle", tone: "green" },
+      { key: "without-project", label: "Without project", value: stats.withoutProjects, icon: "folder", tone: "amber" },
+      {
+        key: "pending-invites",
+        label: "Pending invites",
+        value: canInviteMember ? stats.pendingInvites : "-",
+        icon: "mail",
+        tone: "blue",
+      },
+    ],
+    [canInviteMember, stats]
   );
 
   const handleExportCsv = () => {
@@ -410,7 +428,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
   const inviteProjectIds = normalizeInviteProjectIds(inviteForm.project_ids);
 
   return (
-    <div className="members-shell">
+    <div className="members-shell dashboard-mobile-shell">
       <section className="members-shell-card">
         <header className="members-shell-header">
           <div>
@@ -426,6 +444,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
               className="members-shell-btn members-shell-btn--ghost"
               onClick={() => setActivePage?.("settings")}
             >
+              <Icon name="settings" size={15} />
               My settings
             </button>
             <button
@@ -434,15 +453,17 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
               onClick={handleExportCsv}
               disabled={loading || !filteredMembers.length}
             >
+              <Icon name="download" size={15} />
               Export
             </button>
             {canInviteMember ? (
               <button
                 type="button"
-                className="members-shell-btn members-shell-btn--primary"
+                className="members-shell-btn members-shell-btn--primary members-shell-btn--invite"
                 onClick={() => setShowInviteModal(true)}
                 disabled={!effectiveTenantId}
               >
+                <Icon name="mail" size={15} />
                 Invite member
               </button>
             ) : null}
@@ -458,22 +479,17 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
         ) : null}
 
         <div className="members-shell-kpis">
-          <article className="members-shell-kpi">
-            <span>Total members</span>
-            <strong>{stats.total}</strong>
-          </article>
-          <article className="members-shell-kpi">
-            <span>Active</span>
-            <strong>{stats.active}</strong>
-          </article>
-          <article className="members-shell-kpi">
-            <span>Without project</span>
-            <strong>{stats.withoutProjects}</strong>
-          </article>
-          <article className="members-shell-kpi">
-            <span>Pending invites</span>
-            <strong>{canInviteMember ? stats.pendingInvites : "-"}</strong>
-          </article>
+          {peopleStatCards.map((card) => (
+            <article className={`members-shell-kpi tone-${card.tone}`} key={card.key}>
+              <span className="members-shell-kpi-icon" aria-hidden="true">
+                <Icon name={card.icon} size={16} />
+              </span>
+              <div className="members-shell-kpi-copy">
+                <span>{card.label}</span>
+                <strong>{card.value}</strong>
+              </div>
+            </article>
+          ))}
         </div>
 
         <div className="members-shell-grid">
@@ -521,20 +537,48 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
                     .toLowerCase()
                     .replace(/[^a-z0-9_]+/g, "_");
                   return (
-                    <div className="members-shell-row members-shell-row--live" key={`member-${member?.id || member?.email}`}>
+                    <div
+                      className="members-shell-row members-shell-row--live"
+                      key={`member-${member?.id || member?.email}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() =>
+                        setSelectedMemberDetail({
+                          member,
+                          projectCount,
+                          projectNames,
+                          safeStatus,
+                        })
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedMemberDetail({
+                            member,
+                            projectCount,
+                            projectNames,
+                            safeStatus,
+                          });
+                        }
+                      }}
+                    >
                       <div className="members-shell-cell-main">
+                        <span className="members-shell-cell-label">Name</span>
                         <strong>{member?.name || `Member #${member?.id || "-"}`}</strong>
                         <small>Joined {formatDate(member?.join_date)}</small>
                       </div>
-                      <div>
+                      <div className="members-shell-role-cell">
+                        <span className="members-shell-cell-label">Org role</span>
                         <span className="members-shell-pill">{toLabel(member?.role, "Member")}</span>
                       </div>
-                      <div>
+                      <div className="members-shell-status-cell">
+                        <span className="members-shell-cell-label">Status</span>
                         <span className={`members-shell-pill is-status is-${safeStatus}`}>
                           {toLabel(member?.status, "Active")}
                         </span>
                       </div>
                       <div className="members-shell-projects-cell">
+                        <span className="members-shell-cell-label">Projects</span>
                         <strong>{projectCount}</strong>
                         <small>
                           {projectNames.length ? projectNames.slice(0, 2).join(", ") : "No project assignment"}
@@ -542,6 +586,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
                         </small>
                       </div>
                       <div className="members-shell-contact-cell">
+                        <span className="members-shell-cell-label">Contact</span>
                         <strong>{member?.email || "No email"}</strong>
                         <small>{member?.phone_number || "No phone"}</small>
                       </div>
@@ -738,6 +783,69 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
           navigator.clipboard.writeText(responseData.code);
         }}
       />
+
+      <DataModal
+        open={Boolean(selectedMemberDetail)}
+        onClose={() => setSelectedMemberDetail(null)}
+        title={selectedMemberDetail?.member?.name || "Member details"}
+        subtitle="Organization member details and assignment summary."
+        icon="users"
+      >
+        {selectedMemberDetail ? (
+          <div className="members-detail-modal">
+            <div className="members-detail-grid">
+              <div className="members-detail-field">
+                <span>Name</span>
+                <strong>{selectedMemberDetail.member?.name || "-"}</strong>
+              </div>
+              <div className="members-detail-field">
+                <span>Org role</span>
+                <strong>{toLabel(selectedMemberDetail.member?.role, "Member")}</strong>
+              </div>
+              <div className="members-detail-field">
+                <span>Status</span>
+                <strong>{toLabel(selectedMemberDetail.member?.status, "Active")}</strong>
+              </div>
+              <div className="members-detail-field">
+                <span>Joined</span>
+                <strong>{formatDate(selectedMemberDetail.member?.join_date)}</strong>
+              </div>
+              <div className="members-detail-field">
+                <span>Email</span>
+                <strong>{selectedMemberDetail.member?.email || "No email"}</strong>
+              </div>
+              <div className="members-detail-field">
+                <span>Phone</span>
+                <strong>{selectedMemberDetail.member?.phone_number || "No phone"}</strong>
+              </div>
+            </div>
+
+            <div className="members-detail-projects">
+              <span>Projects</span>
+              <strong>{selectedMemberDetail.projectCount}</strong>
+              <p>
+                {selectedMemberDetail.projectNames.length
+                  ? selectedMemberDetail.projectNames.join(", ")
+                  : "No project assignment yet."}
+              </p>
+            </div>
+          </div>
+        ) : null}
+      </DataModal>
+
+      {canInviteMember ? (
+        <button
+          type="button"
+          className="dashboard-page-fab"
+          onClick={() => setShowInviteModal(true)}
+          disabled={!effectiveTenantId}
+          aria-label="Invite member"
+        >
+          <Icon name="plus" size={20} />
+        </button>
+      ) : null}
+
+      <DashboardMobileNav activePage="members" access={access} setActivePage={setActivePage} />
     </div>
   );
 }

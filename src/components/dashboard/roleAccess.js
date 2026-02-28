@@ -101,6 +101,7 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
   if (normalizedRole === "supervisor") {
     const supervisorPages = applyFeatureAccess(
       ensureSet([
+        "overview",
         "reports",
         "expenses",
         "meetings",
@@ -112,7 +113,7 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
     );
     return {
       allowedPages: supervisorPages,
-      defaultPage: resolveDefaultPage("reports", supervisorPages),
+      defaultPage: resolveDefaultPage("overview", supervisorPages),
       allowedProjectModules,
     };
   }
@@ -123,6 +124,7 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
     if (allowedProjectModules.has("jgf")) projectPages.push("projects-jgf");
     const managerPages = applyFeatureAccess(
       ensureSet([
+        "overview",
         "projects",
         "members",
         "settings",
@@ -132,7 +134,7 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
     );
     return {
       allowedPages: managerPages,
-      defaultPage: resolveDefaultPage("projects", managerPages),
+      defaultPage: resolveDefaultPage("overview", managerPages),
       allowedProjectModules,
     };
   }
@@ -143,6 +145,7 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
 
   const memberPages = applyFeatureAccess(
     ensureSet([
+      "overview",
       "welfare",
       "payouts",
       "contributions",
@@ -157,7 +160,7 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
   );
   return {
     allowedPages: memberPages,
-    defaultPage: resolveDefaultPage("welfare", memberPages),
+    defaultPage: resolveDefaultPage("overview", memberPages),
     allowedProjectModules,
   };
 };

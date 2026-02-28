@@ -25,6 +25,7 @@ import {
   setIgaProjectVisibility,
   updateTenant,
 } from "../../lib/dataService.js";
+import { presentAppError } from "../../lib/appErrors.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
 import ChoiceModal from "./ChoiceModal.jsx";
@@ -1123,6 +1124,28 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const documentSearchInputRef = useRef(null);
   const templateSearchInputRef = useRef(null);
   const partnerLogoInputRef = useRef(null);
+
+  const openResponseModal = useCallback((payload) => {
+    setResponseData({
+      type: "info",
+      title: "",
+      message: "",
+      code: null,
+      ...payload,
+    });
+    setShowResponseModal(true);
+  }, []);
+
+  const closeResponseModal = useCallback(() => {
+    setShowResponseModal(false);
+  }, []);
+
+  const showFriendlyOrganizationError = useCallback(
+    (error, options = {}) => {
+      openResponseModal(presentAppError(error, options));
+    },
+    [openResponseModal]
+  );
 
   useEffect(() => {
     if (!tenant) return;
@@ -2626,8 +2649,18 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setEditingMeetingId("");
       setMeetingForm(createActivityForm());
     } catch (error) {
-      console.error("Error saving activity:", error);
-      setMeetingFormError(error?.message || "Failed to save activity.");
+      setMeetingFormError("");
+      showFriendlyOrganizationError(error, {
+        actionLabel: editingMeetingId ? "save this activity" : "create this activity",
+        fallbackTitle: editingMeetingId ? "Couldn't save activity" : "Couldn't create activity",
+        fallbackMessage: "We couldn't save the activity right now. Please try again in a moment.",
+        context: {
+          area: "organization",
+          action: editingMeetingId ? "save_activity" : "create_activity",
+          tenantId,
+          meetingId: editingMeetingId || null,
+        },
+      });
     } finally {
       setSavingMeeting(false);
     }
@@ -2910,8 +2943,18 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         message: "Member avatar uploaded. Save member to persist this change.",
       });
     } catch (error) {
-      console.error("Error uploading member avatar:", error);
-      setMemberFormError(error?.message || "Failed to upload member avatar.");
+      setMemberFormError("");
+      showFriendlyOrganizationError(error, {
+        actionLabel: "upload this member photo",
+        fallbackTitle: "Couldn't upload photo",
+        fallbackMessage: "We couldn't upload the member photo right now. Please try again.",
+        context: {
+          area: "organization",
+          action: "upload_member_avatar",
+          tenantId,
+          memberId: editingMemberId || null,
+        },
+      });
     } finally {
       setUploadingMemberAvatar(false);
     }
@@ -3022,13 +3065,16 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setInviteForm(createInviteForm());
       setShowInviteModal(false);
     } catch (error) {
-      setResponseData({
-        type: "error",
-        title: "Failed to Create Invite",
-        message: error.message || "Something went wrong. Please try again.",
-        code: null,
+      showFriendlyOrganizationError(error, {
+        actionLabel: "create this invite",
+        fallbackTitle: "Couldn't create invite",
+        fallbackMessage: "We couldn't create the invite right now. Please try again in a moment.",
+        context: {
+          area: "organization",
+          action: "create_invite",
+          tenantId,
+        },
       });
-      setShowResponseModal(true);
     } finally {
       setSubmittingInvite(false);
     }
@@ -3037,10 +3083,6 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const closeInviteModal = () => {
     setShowInviteModal(false);
     setInviteForm(createInviteForm());
-  };
-
-  const closeResponseModal = () => {
-    setShowResponseModal(false);
   };
 
   const inviteProjectIds = normalizeInviteProjectIds(inviteForm.project_ids);
@@ -3137,8 +3179,18 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setMemberForm(createMemberForm());
       setMemberFormStep(1);
     } catch (error) {
-      console.error("Error saving member:", error);
-      setMemberFormError(error?.message || "Failed to save member.");
+      setMemberFormError("");
+      showFriendlyOrganizationError(error, {
+        actionLabel: editingMemberId ? "save this member" : "create this member",
+        fallbackTitle: editingMemberId ? "Couldn't save member" : "Couldn't create member",
+        fallbackMessage: "We couldn't save the member details right now. Please try again in a moment.",
+        context: {
+          area: "organization",
+          action: editingMemberId ? "save_member" : "create_member",
+          tenantId,
+          memberId: editingMemberId || null,
+        },
+      });
     } finally {
       setSavingMember(false);
     }
@@ -3274,8 +3326,17 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         message: "Website image uploaded. Save organization to publish it.",
       });
     } catch (error) {
-      console.error("Error uploading organization website media:", error);
-      setWebsiteMediaError(error?.message || "Failed to upload website media.");
+      setWebsiteMediaError("");
+      showFriendlyOrganizationError(error, {
+        actionLabel: "upload this website image",
+        fallbackTitle: "Couldn't upload image",
+        fallbackMessage: "We couldn't upload that website image right now. Please try again.",
+        context: {
+          area: "organization",
+          action: "upload_website_media",
+          tenantId,
+        },
+      });
     } finally {
       setUploadingWebsiteMedia(false);
     }
@@ -3391,8 +3452,17 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setNotice({ type: "success", message: "Organization profile saved." });
       setShowOrgModal(false);
     } catch (error) {
-      console.error("Error saving organization profile:", error);
-      setOrgFormError(error?.message || "Failed to save organization profile.");
+      setOrgFormError("");
+      showFriendlyOrganizationError(error, {
+        actionLabel: "save the organization profile",
+        fallbackTitle: "Couldn't save organization",
+        fallbackMessage: "We couldn't save the organization profile right now. Please try again in a moment.",
+        context: {
+          area: "organization",
+          action: "save_organization_profile",
+          tenantId,
+        },
+      });
     } finally {
       setSavingOrg(false);
     }
@@ -3600,8 +3670,18 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setPartnerLogoUploadName("");
       setSelectedPartnerIds([nextPartner.id]);
     } catch (error) {
-      console.error("Error saving partner:", error);
-      setPartnerFormError(error?.message || "Failed to save partner.");
+      setPartnerFormError("");
+      showFriendlyOrganizationError(error, {
+        actionLabel: editingPartnerId ? "save this partner" : "add this partner",
+        fallbackTitle: editingPartnerId ? "Couldn't save partner" : "Couldn't add partner",
+        fallbackMessage: "We couldn't save the partner details right now. Please try again in a moment.",
+        context: {
+          area: "organization",
+          action: editingPartnerId ? "save_partner" : "create_partner",
+          tenantId,
+          partnerId: editingPartnerId || null,
+        },
+      });
     } finally {
       setSavingPartner(false);
     }
@@ -3625,8 +3705,17 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setSelectedPartnerIds([]);
       setShowDeletePartnerModal(false);
     } catch (error) {
-      console.error("Error deleting partners:", error);
-      setPartnerFormError(error?.message || "Failed to delete selected partners.");
+      setPartnerFormError("");
+      showFriendlyOrganizationError(error, {
+        actionLabel: "remove the selected partners",
+        fallbackTitle: "Couldn't remove partners",
+        fallbackMessage: "We couldn't remove the selected partners right now. Please try again in a moment.",
+        context: {
+          area: "organization",
+          action: "delete_partners",
+          tenantId,
+        },
+      });
     } finally {
       setSavingPartner(false);
     }
@@ -6113,6 +6202,11 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         onCopyCode={() => {
           navigator.clipboard.writeText(responseData.code);
         }}
+        actions={
+          responseData.type === "error"
+            ? [{ label: "Close", variant: "primary", onClick: closeResponseModal }]
+            : []
+        }
       />
 
       <DataModal

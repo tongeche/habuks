@@ -41,10 +41,12 @@ import {
   uploadProjectDocument,
   uploadProjectExpenseReceipt,
 } from "../../lib/dataService.js";
+import { presentAppError } from "../../lib/appErrors.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
 import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import ProjectEditorForm from "./ProjectEditorForm.jsx";
+import ResponseModal from "./ResponseModal.jsx";
 
 const projectPageMap = {
   jpp: "projects-jpp",
@@ -812,6 +814,13 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
   const [editingProjectId, setEditingProjectId] = useState(null);
   const [loadingProjectEditor, setLoadingProjectEditor] = useState(false);
   const [createProjectError, setCreateProjectError] = useState("");
+  const [showResponseModal, setShowResponseModal] = useState(false);
+  const [responseData, setResponseData] = useState({
+    type: "info",
+    title: "",
+    message: "",
+    code: null,
+  });
   const [projectsNotice, setProjectsNotice] = useState(null);
   const [projectView, setProjectView] = useState("grid");
   const [selectedProjectIds, setSelectedProjectIds] = useState([]);
@@ -910,6 +919,28 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
   const canSelfManageMembership = isAdmin;
   const parsedEditingProjectId = Number.parseInt(String(editingProjectId ?? ""), 10);
   const isEditingProject = Number.isInteger(parsedEditingProjectId) && parsedEditingProjectId > 0;
+
+  const openResponseModal = useCallback((payload) => {
+    setResponseData({
+      type: "info",
+      title: "",
+      message: "",
+      code: null,
+      ...payload,
+    });
+    setShowResponseModal(true);
+  }, []);
+
+  const closeResponseModal = useCallback(() => {
+    setShowResponseModal(false);
+  }, []);
+
+  const showFriendlyProjectError = useCallback(
+    (error, options = {}) => {
+      openResponseModal(presentAppError(error, options));
+    },
+    [openResponseModal]
+  );
 
   const expensePartnerByName = useMemo(() => {
     const map = new Map();
@@ -1014,8 +1045,18 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
       const editorData = await getProjectEditorData(project.id, tenantId);
       setCreateProjectForm(mapEditorDataToProjectForm(editorData, user?.id));
     } catch (error) {
-      console.error("Error loading project editor data:", error);
-      setCreateProjectError(error?.message || "Failed to load project details.");
+      setShowCreateModal(false);
+      setEditingProjectId(null);
+      showFriendlyProjectError(error, {
+        actionLabel: "open this project",
+        fallbackTitle: "Couldn't open project",
+        context: {
+          area: "projects",
+          action: "load_project_editor",
+          tenantId,
+          projectId: project.id,
+        },
+      });
     } finally {
       setLoadingProjectEditor(false);
     }
@@ -1177,11 +1218,6 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
   const selectedMediaFiles = useMemo(
     () => (Array.isArray(createProjectForm.mediaFiles) ? createProjectForm.mediaFiles : []),
     [createProjectForm.mediaFiles]
-  );
-
-  const mediaFolderPreview = useMemo(
-    () => `tenants/${tenantId || "global"}/projects/{projectId}/media`,
-    [tenantId]
   );
 
   const handleAddMemberSelection = () => {
@@ -1423,7 +1459,7 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
             noticeParts.push("Budget details failed to update.");
           }
           if (membersSaveFailed) {
-            noticeParts.push("Some member assignments failed to update.");
+            noticeParts.push("Some team assignments could not be updated.");
           }
           if (mediaSaveFailed) {
             noticeParts.push("One or more media changes failed.");
@@ -1526,7 +1562,7 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
           }
           if (membersSaveFailed) {
             noticeParts.push(
-              "Project created, but some member assignments failed due to permission or policy limits."
+              "Project created, but some team assignments could not be saved with the current access settings."
             );
           }
           if (mediaSaveFailed) {
@@ -1546,11 +1582,21 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
         }
       }
     } catch (error) {
-      console.error("Error saving project:", error);
       setActiveTab("info");
-      setCreateProjectError(
-        error?.message || (isEditingProject ? "Failed to update project." : "Failed to create project.")
-      );
+      setCreateProjectError("");
+      showFriendlyProjectError(error, {
+        actionLabel: isEditingProject ? "save this project" : "create this project",
+        fallbackTitle: isEditingProject ? "Couldn't save project" : "Couldn't create project",
+        fallbackMessage: isEditingProject
+          ? "We couldn't save your project changes right now. Please try again in a moment."
+          : "We couldn't create the project right now. Please try again in a moment.",
+        context: {
+          area: "projects",
+          action: isEditingProject ? "save_project" : "create_project",
+          tenantId,
+          projectId: isEditingProject ? parsedEditingProjectId : null,
+        },
+      });
     } finally {
       setCreatingProject(false);
     }
@@ -1565,8 +1611,17 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
       await joinProject(projectId, user.id, tenantId);
       await loadProjects(); // Refresh to show updated status
     } catch (error) {
-      console.error("Error joining project:", error);
-      alert(error.message);
+      showFriendlyProjectError(error, {
+        actionLabel: "update your project membership",
+        fallbackTitle: "Couldn't join project",
+        context: {
+          area: "projects",
+          action: "join_project",
+          tenantId,
+          projectId,
+          userId: user.id,
+        },
+      });
     } finally {
       setJoiningId(null);
     }
@@ -1583,8 +1638,17 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
       await leaveProject(projectId, user.id, tenantId);
       await loadProjects();
     } catch (error) {
-      console.error("Error leaving project:", error);
-      alert(error.message);
+      showFriendlyProjectError(error, {
+        actionLabel: "update your project membership",
+        fallbackTitle: "Couldn't leave project",
+        context: {
+          area: "projects",
+          action: "leave_project",
+          tenantId,
+          projectId,
+          userId: user.id,
+        },
+      });
     } finally {
       setJoiningId(null);
     }
@@ -1644,6 +1708,7 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
       let successCount = 0;
       let failureCount = 0;
       const deletedIds = [];
+      let firstFailure = null;
 
       if (type === "visibility") {
         for (const project of targets) {
@@ -1652,7 +1717,16 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
             successCount += 1;
           } catch (error) {
             failureCount += 1;
-            console.error("Error updating project visibility:", error);
+            if (!firstFailure) firstFailure = error;
+            presentAppError(error, {
+              actionLabel: "update project visibility",
+              context: {
+                area: "projects",
+                action: "update_visibility",
+                tenantId,
+                projectId: project.id,
+              },
+            });
           }
         }
         await loadProjects();
@@ -1673,6 +1747,17 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
             type: "warning",
             message: `Updated ${successCount} project(s). ${failureCount} project(s) failed.`,
           });
+          if (successCount === 0 && firstFailure) {
+            showFriendlyProjectError(firstFailure, {
+              actionLabel: "update those project settings",
+              fallbackTitle: "Couldn't update projects",
+              context: {
+                area: "projects",
+                action: "update_visibility_batch",
+                tenantId,
+              },
+            });
+          }
         }
       }
 
@@ -1684,7 +1769,16 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
             deletedIds.push(Number.parseInt(String(project.id), 10));
           } catch (error) {
             failureCount += 1;
-            console.error("Error deleting project:", error);
+            if (!firstFailure) firstFailure = error;
+            presentAppError(error, {
+              actionLabel: "delete a project",
+              context: {
+                area: "projects",
+                action: "delete_project",
+                tenantId,
+                projectId: project.id,
+              },
+            });
           }
         }
 
@@ -1713,6 +1807,17 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
             type: "warning",
             message: `Deleted ${successCount} project(s). ${failureCount} project(s) failed.`,
           });
+          if (successCount === 0 && firstFailure) {
+            showFriendlyProjectError(firstFailure, {
+              actionLabel: "delete those projects",
+              fallbackTitle: "Couldn't delete projects",
+              context: {
+                area: "projects",
+                action: "delete_project_batch",
+                tenantId,
+              },
+            });
+          }
         }
       }
     } finally {
@@ -6108,7 +6213,6 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
           selectedExistingMedia={selectedExistingMedia}
           onRemoveExistingMedia={handleRemoveExistingMedia}
           onMediaFileSelection={handleMediaFileSelection}
-          mediaFolderPreview={mediaFolderPreview}
           selectedMediaFiles={selectedMediaFiles}
           onRemoveMediaFile={handleRemoveMediaFile}
           getFileFingerprint={getFileFingerprint}
@@ -6116,6 +6220,20 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
         />
         )}
       </DataModal>
+
+      <ResponseModal
+        open={showResponseModal}
+        onClose={closeResponseModal}
+        type={responseData.type}
+        title={responseData.title}
+        message={responseData.message}
+        code={responseData.code}
+        actions={
+          responseData.type === "error"
+            ? [{ label: "Close", variant: "primary", onClick: closeResponseModal }]
+            : []
+        }
+      />
 
       <DataModal
         open={Boolean(projectActionConfirm)}
