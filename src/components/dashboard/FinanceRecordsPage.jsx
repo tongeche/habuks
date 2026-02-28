@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
 import DashboardMobileNav from "./DashboardMobileNav.jsx";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 const recordsSeed = [
   {
@@ -135,14 +136,13 @@ const formatDate = (dateStr) =>
     year: "numeric",
   });
 
-const formatAmount = (value) => `KES ${Math.abs(value).toLocaleString("en-KE")}`;
-
 export default function FinanceRecordsPage({
   initialType = "all",
   activePage = "",
   access,
   setActivePage,
 }) {
+  const { formatCurrency, formatFieldLabel } = useTenantCurrency();
   const [records, setRecords] = useState(recordsSeed);
   const [typeFilter, setTypeFilter] = useState(initialType);
   const [period, setPeriod] = useState("30d");
@@ -150,6 +150,8 @@ export default function FinanceRecordsPage({
   const [projectFilter, setProjectFilter] = useState("all");
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
   const [addRecordForm, setAddRecordForm] = useState(() => createInitialForm(initialType));
+  const formatAmount = (value) =>
+    formatCurrency(Math.abs(Number(value) || 0), { maximumFractionDigits: 0 });
 
   useEffect(() => {
     setTypeFilter(initialType || "all");
@@ -466,7 +468,7 @@ export default function FinanceRecordsPage({
               />
             </label>
             <label className="data-modal-field">
-              Amount (KES)
+              {formatFieldLabel("Amount")}
               <input
                 type="number"
                 inputMode="decimal"

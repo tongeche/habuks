@@ -42,11 +42,14 @@ import {
   uploadProjectExpenseReceipt,
 } from "../../lib/dataService.js";
 import { presentAppError } from "../../lib/appErrors.js";
+import { formatCurrencyAmount } from "../../lib/currency.js";
+import { buildProjectCompletionReportFile } from "../../lib/reporting/projectCompletionReport.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
 import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import ProjectEditorForm from "./ProjectEditorForm.jsx";
 import ResponseModal from "./ResponseModal.jsx";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 const projectPageMap = {
   jpp: "projects-jpp",
@@ -800,7 +803,19 @@ const clampPercent = (value) => {
   return Math.max(0, Math.min(100, parsed));
 };
 
-export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId, onManageProject }) {
+export function ProjectsPage({
+  user,
+  tenantRole,
+  access,
+  setActivePage,
+  tenantId,
+  tenantBrand,
+  onManageProject,
+}) {
+  const {
+    currencyCode,
+    formatFieldLabel,
+  } = useTenantCurrency();
   const projectDocumentInputRef = useRef(null);
   const expenseReceiptInputRef = useRef(null);
   const expenseFormReceiptInputRef = useRef(null);
@@ -1838,11 +1853,10 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
   const formatCurrency = (value) => {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount < 0) return "—";
-    return new Intl.NumberFormat("en-KE", {
-      style: "currency",
-      currency: "KES",
+    return formatCurrencyAmount(amount, {
+      currencyCode,
       maximumFractionDigits: 0,
-    }).format(amount);
+    });
   };
 
   const formatReportMetricValue = (value, unit = "") => {
@@ -3724,7 +3738,7 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
       "Expense Date",
       "Category",
       "Vendor",
-      "Amount (KES)",
+      formatFieldLabel("Amount"),
       "Description",
       "Payment Reference",
       "Receipt",
@@ -4781,13 +4795,23 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
     }
   };
 
-  const buildEmitDocumentFile = (selectedOption) => {
+  const buildEmitDocumentFile = async (selectedOption) => {
     const safeOption = selectedOption || PROJECT_EMIT_DOCUMENT_OPTIONS[0];
     const safeProjectName = String(selectedProject?.name || "Project").trim();
     const dateStamp = new Date().toISOString().slice(0, 10);
     const fileName = `${toFilenameSlug(safeProjectName)}-${safeOption.value}-${dateStamp}.pdf`;
-    const title = `${safeOption.label} - ${safeProjectName}`;
     const context = buildProjectDocumentContext();
+    if (safeOption.value === "project_completion_report") {
+      return buildProjectCompletionReportFile({
+        tenantBrand,
+        user,
+        context,
+        summaryReport: projectSummaryReport,
+        fileName,
+        currencyCode,
+      });
+    }
+    const title = `${safeOption.label} - ${safeProjectName}`;
     const lines = buildEmitDocumentLines(safeOption.value, context);
     const blob = buildSimplePdfBlob(title, lines);
     return new File([blob], fileName, { type: "application/pdf" });
@@ -4816,7 +4840,7 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
     setProjectDocumentsError("");
 
     try {
-      const emittedFile = buildEmitDocumentFile(selectedOption);
+      const emittedFile = await buildEmitDocumentFile(selectedOption);
       await uploadProjectDocument(
         projectId,
         emittedFile,
@@ -4848,6 +4872,18 @@ export function ProjectsPage({ user, tenantRole, access, setActivePage, tenantId
       console.error("Error emitting project document:", error);
       const message = error?.message || `Failed to emit ${selectedOption.label}.`;
       setProjectDocumentsError(message);
+      showFriendlyProjectError(error, {
+        actionLabel: `emit ${selectedOption.label.toLowerCase()}`,
+        fallbackTitle: "Couldn't generate the document",
+        fallbackMessage: `We couldn't generate ${selectedOption.label} right now. Please try again.`,
+        context: {
+          area: "projects",
+          action: "emit_project_document",
+          tenantId,
+          projectId,
+          template: selectedOption.value,
+        },
+      });
       setProjectsNotice({
         type: "error",
         message,

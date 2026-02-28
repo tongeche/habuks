@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { Icon } from "../icons.jsx";
 import { signOut, createMagicLinkInvite, getProjects } from "../../lib/dataService.js";
 import UserDropdown from "./UserDropdown.jsx";
+import NotificationBell from "./NotificationBell.jsx";
 import DataModal from "./DataModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
 const baseMenuItems = [
@@ -96,7 +97,7 @@ const baseMenuItems = [
   },
   {
     key: "news",
-    label: "Audit Log",
+    label: "Updates",
     icon: "check-circle",
     group: "reporting",
     accent: "#14b8a6",
@@ -148,7 +149,22 @@ const isInviteAdminRole = (role) => {
   return normalized === "admin" || normalized === "superadmin";
 };
 
-export function DashboardLayout({
+const DASHBOARD_THEME_STORAGE_KEY = "dashboard-theme-mode";
+
+const getInitialDashboardThemeMode = () => {
+  if (typeof window === "undefined") {
+    return "light";
+  }
+
+  const savedTheme = window.localStorage.getItem(DASHBOARD_THEME_STORAGE_KEY);
+  if (savedTheme === "light" || savedTheme === "dark") {
+    return savedTheme;
+  }
+
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+};
+
+export default function DashboardLayout({
   activePage,
   setActivePage,
   children,
@@ -164,6 +180,7 @@ export function DashboardLayout({
     const saved = localStorage.getItem("dashboard-sidebar-collapsed");
     return saved ? JSON.parse(saved) : false;
   });
+  const [dashboardThemeMode, setDashboardThemeMode] = useState(getInitialDashboardThemeMode);
   const [sidebarHovered, setSidebarHovered] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showResponseModal, setShowResponseModal] = useState(false);
@@ -183,6 +200,11 @@ export function DashboardLayout({
   useEffect(() => {
     localStorage.setItem("dashboard-sidebar-collapsed", JSON.stringify(isCollapsed));
   }, [isCollapsed]);
+
+  useEffect(() => {
+    window.localStorage.setItem(DASHBOARD_THEME_STORAGE_KEY, dashboardThemeMode);
+  }, [dashboardThemeMode]);
+
   const brandName = tenant?.name || "Habuks";
   const brandTagline = tenant?.tagline || "";
   const logoUrl = tenant?.logoUrl || "/assets/logo.png";
@@ -427,10 +449,11 @@ export function DashboardLayout({
   };
 
   const sidebarWidth = isCollapsed ? "96px" : "280px";
+  const isDarkMode = dashboardThemeMode === "dark";
 
   return (
     <div
-      className="dashboard-layout"
+      className={`dashboard-layout${isDarkMode ? " is-dark" : ""}`}
       style={{ ...tenantTheme, "--dashboard-sidebar-width": sidebarWidth }}
     >
       {/* Sidebar */}
@@ -601,6 +624,18 @@ export function DashboardLayout({
           </div>
           <div className="dashboard-header-actions">
             <button
+              className={`dashboard-icon-btn dashboard-theme-toggle${isDarkMode ? " is-dark" : ""}`}
+              type="button"
+              aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+              aria-pressed={isDarkMode}
+              title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+              onClick={() =>
+                setDashboardThemeMode((prev) => (prev === "dark" ? "light" : "dark"))
+              }
+            >
+              <Icon name={isDarkMode ? "sun" : "moon"} size={18} />
+            </button>
+            <button
               className={`dashboard-icon-btn${activePage === "settings" ? " active" : ""}`}
               type="button"
               aria-label="Settings"
@@ -608,9 +643,7 @@ export function DashboardLayout({
             >
               <Icon name="settings" size={18} />
             </button>
-            <button className="dashboard-icon-btn" type="button" aria-label="Notifications">
-              <Icon name="bell" size={18} />
-            </button>
+            <NotificationBell tenantId={activeTenantId} user={user} setActivePage={setActivePage} />
             <UserDropdown
               user={user}
               onOpenInviteModal={() => setShowInviteModal(true)}
@@ -777,5 +810,3 @@ export function DashboardLayout({
     </div>
   );
 }
-
-export default DashboardLayout;

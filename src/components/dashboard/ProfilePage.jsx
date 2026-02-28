@@ -3,6 +3,17 @@ import { updateMemberProfile, signOut } from "../../lib/dataService.js";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "../icons.jsx";
 
+const DEFAULT_NOTIFICATION_SETTINGS = {
+  in_app_notifications: true,
+  email_notifications: true,
+  sms_notifications: true,
+  task_notifications: true,
+  contribution_reminders: true,
+  meeting_reminders: true,
+  payout_alerts: true,
+  news_updates: true,
+};
+
 export default function ProfilePage({ user, onUserUpdate }) {
   const [activeTab, setActiveTab] = useState("account");
   const [formData, setFormData] = useState({
@@ -29,14 +40,7 @@ export default function ProfilePage({ user, onUserUpdate }) {
     show_contributions: true,
     profile_visible: true,
   });
-  const [notificationSettings, setNotificationSettings] = useState({
-    email_notifications: true,
-    sms_notifications: true,
-    contribution_reminders: true,
-    meeting_reminders: true,
-    payout_alerts: true,
-    news_updates: true,
-  });
+  const [notificationSettings, setNotificationSettings] = useState(DEFAULT_NOTIFICATION_SETTINGS);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -66,7 +70,10 @@ export default function ProfilePage({ user, onUserUpdate }) {
         setPrivacySettings(user.privacy_settings);
       }
       if (user.notification_settings) {
-        setNotificationSettings(user.notification_settings);
+        setNotificationSettings({
+          ...DEFAULT_NOTIFICATION_SETTINGS,
+          ...user.notification_settings,
+        });
       }
       setInitialized(true);
     }
@@ -142,7 +149,10 @@ export default function ProfilePage({ user, onUserUpdate }) {
         setPrivacySettings(user.privacy_settings);
       }
       if (user.notification_settings) {
-        setNotificationSettings(user.notification_settings);
+        setNotificationSettings({
+          ...DEFAULT_NOTIFICATION_SETTINGS,
+          ...user.notification_settings,
+        });
       }
     }
     setEditing(false);
@@ -494,6 +504,22 @@ export default function ProfilePage({ user, onUserUpdate }) {
     <div className="settings-list">
       <div className="settings-item">
         <div className="settings-item-info">
+          <h4>In-App Notifications</h4>
+          <p>Show reminders and updates inside the dashboard bell</p>
+        </div>
+        <label className="toggle-switch">
+          <input
+            type="checkbox"
+            checked={notificationSettings.in_app_notifications}
+            onChange={() => handleNotificationChange('in_app_notifications')}
+            disabled={!editing}
+          />
+          <span className="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div className="settings-item">
+        <div className="settings-item-info">
           <h4>Email Notifications</h4>
           <p>Receive notifications via email</p>
         </div>
@@ -518,6 +544,22 @@ export default function ProfilePage({ user, onUserUpdate }) {
             type="checkbox"
             checked={notificationSettings.sms_notifications}
             onChange={() => handleNotificationChange('sms_notifications')}
+            disabled={!editing}
+          />
+          <span className="toggle-slider"></span>
+        </label>
+      </div>
+
+      <div className="settings-item">
+        <div className="settings-item-info">
+          <h4>Task Notifications</h4>
+          <p>Get alerted when work is assigned or updated for you</p>
+        </div>
+        <label className="toggle-switch">
+          <input
+            type="checkbox"
+            checked={notificationSettings.task_notifications}
+            onChange={() => handleNotificationChange('task_notifications')}
             disabled={!editing}
           />
           <span className="toggle-slider"></span>

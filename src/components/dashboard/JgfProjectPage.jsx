@@ -38,6 +38,7 @@ import {
   deleteJgfFarmingLog,
   getProjectsWithMembership,
 } from "../../lib/dataService.js";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 const parseNumberOrZero = (val) => {
   const n = Number(val);
@@ -48,13 +49,6 @@ const parseOptionalInteger = (val) => {
   if (val === "" || val === null || val === undefined) return null;
   const n = parseInt(val, 10);
   return isNaN(n) ? null : n;
-};
-
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-KE', {
-    style: 'currency',
-    currency: 'KES'
-  }).format(amount || 0);
 };
 
 const productTypes = [
@@ -103,10 +97,12 @@ const downloadDocs = [
 ];
 
 function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProjectChange }) {
+  const { formatCurrency, formatFieldLabel } = useTenantCurrency();
   const today = new Date().toISOString().slice(0, 10);
   const effectiveRole = String(tenantRole || user?.role || "member").toLowerCase();
   const canManage = ["admin", "superadmin", "project_manager"].includes(effectiveRole);
   const canViewAllProjects = ["admin", "superadmin"].includes(effectiveRole);
+  const formatMoney = (value) => formatCurrency(Number(value) || 0, { maximumFractionDigits: 0 });
 
   const initialBatchForm = {
     batch_code: "",
@@ -1092,11 +1088,11 @@ function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProject
                     <span>Total Revenue</span>
                     <Icon name="wallet" size={20} className="text-muted" />
                  </div>
-                   <div className="jpp-summary-value">KES {totalRevenue.toLocaleString()}</div>
+                   <div className="jpp-summary-value">{formatMoney(totalRevenue)}</div>
                    <div className="jpp-summary-sub">
                      {sales.length} sale records
                     <span className="kpi-sub">
-                      Last 30d: KES {revenueLast30.toLocaleString()}
+                      Last 30d: {formatMoney(revenueLast30)}
                       {revenueDeltaPct === null ? null : (
                         <span className={`kpi-delta ${revenueDeltaPct >= 0 ? 'positive' : 'negative'}`}>
                           {revenueDeltaPct >= 0 ? '▲' : '▼'} {Math.abs(revenueDeltaPct).toFixed(1)}%
@@ -1118,7 +1114,7 @@ function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProject
                     <span>Expenses</span>
                     <Icon name="receipt" size={20} className="text-muted" />
                  </div>
-                 <div className="jpp-summary-value">KES {totalExpenses.toLocaleString()}</div>
+                 <div className="jpp-summary-value">{formatMoney(totalExpenses)}</div>
                  <div className="jpp-summary-sub">{expenses.length} records</div>
                </div>
                <div className="jpp-summary-card">
@@ -1127,7 +1123,7 @@ function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProject
                     <Icon name="chart" size={20} className="text-muted" />
                  </div>
                  <div className={`jpp-summary-value ${netIncome >= 0 ? 'text-success' : 'text-danger'}`}>
-                   KES {netIncome.toLocaleString()}
+                   {formatMoney(netIncome)}
                  </div>
                  <div className="jpp-summary-sub">
                    Revenue - Expenses
@@ -1402,7 +1398,10 @@ function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProject
                    <div className="admin-form-field">
                      <label>Total Amount</label>
                      <div className="readonly-field">
-                       KES {(parseNumberOrZero(salesForm.quantity_units) * parseNumberOrZero(salesForm.unit_price)).toLocaleString()}
+                       {formatMoney(
+                         parseNumberOrZero(salesForm.quantity_units) *
+                           parseNumberOrZero(salesForm.unit_price)
+                       )}
                      </div>
                    </div>
                    <div className="admin-form-field">
@@ -1478,7 +1477,7 @@ function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProject
                      <th>Product</th>
                      <th>Customer</th>
                      <th>Qty</th>
-                     <th>Total (KES)</th>
+                     <th>{formatFieldLabel("Total")}</th>
                      <th>Status</th>
                      {canManage && <th>Actions</th>}
                    </tr>
@@ -1493,7 +1492,7 @@ function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProject
                          <td>{productTypes.find(t => t.value === sale.product_type)?.label || sale.product_type}</td>
                          <td>{sale.customer_name || "Walk-in"}</td>
                          <td>{sale.quantity_units}</td>
-                         <td>{Number(sale.total_amount).toLocaleString()}</td>
+                         <td>{formatMoney(sale.total_amount)}</td>
                          <td>
                            <span className={`status-badge ${sale.payment_status === 'paid' ? 'success' : 'warning'}`}>
                              {sale.payment_status}
@@ -1759,7 +1758,7 @@ function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProject
                                <span className="status-badge primary">{log.activity_type}</span>
                              </td>
                              <td>{log.description}</td>
-                             <td>{totalCost > 0 ? totalCost.toLocaleString() : "-"}</td>
+                            <td>{totalCost > 0 ? formatMoney(totalCost) : "-"}</td>
                              {canManage && (
                                <td className="actions-cell">
                                  <button className="btn-icon small" onClick={() => handleEditFarmingLog(log)}>
@@ -1823,7 +1822,7 @@ function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProject
                       />
                     </div>
                     <div className="admin-form-field">
-                      <label>Lease Cost (KES)</label>
+                      <label>{formatFieldLabel("Lease Cost")}</label>
                       <input
                         type="number"
                         value={landLeaseForm.lease_cost}
@@ -1938,7 +1937,7 @@ function JgfProjectPage({ user, tenantRole, tenantId, activeProjectId, onProject
                             </td>
                             <td>{lease.location}</td>
                             <td>{lease.size_acres}</td>
-                            <td>{Number(lease.lease_cost).toLocaleString()}</td>
+                            <td>{formatMoney(lease.lease_cost)}</td>
                             <td>
                               <span className="text-muted small">
                                 {lease.start_date}<br/>

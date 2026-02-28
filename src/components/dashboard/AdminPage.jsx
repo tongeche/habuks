@@ -39,6 +39,7 @@ import {
   getTenantTemplateSelectOptions,
   normalizeTenantTemplateKey,
 } from "../../lib/tenantSiteShell.js";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 const initialMemberForm = {
   name: "",
@@ -435,6 +436,7 @@ const adminModules = [
 ];
 
 export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated }) {
+  const { formatCurrency: formatTenantCurrency } = useTenantCurrency();
   const baseSiteData = useMemo(() => {
     if (typeof window !== "undefined" && typeof window.siteData === "function") {
       return window.siteData() || {};
@@ -1773,9 +1775,7 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
     if (!Number.isFinite(numericAmount)) {
       return "-";
     }
-    return numericAmount.toLocaleString("en-KE", {
-      style: "currency",
-      currency: "KES",
+    return formatTenantCurrency(numericAmount, {
       maximumFractionDigits: 0,
     });
   };
@@ -1794,11 +1794,9 @@ export default function AdminPage({ user, tenantId, tenantRole, onTenantUpdated 
   const formatCurrency = (value) => {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) {
-      return "KES 0";
+      return formatTenantCurrency(0, { maximumFractionDigits: 0 });
     }
-    return numeric.toLocaleString("en-KE", {
-      style: "currency",
-      currency: "KES",
+    return formatTenantCurrency(numeric, {
       maximumFractionDigits: 0,
     });
   };

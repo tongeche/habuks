@@ -26,10 +26,21 @@ import {
   updateTenant,
 } from "../../lib/dataService.js";
 import { presentAppError } from "../../lib/appErrors.js";
+import {
+  COMMON_CURRENCY_OPTIONS,
+  formatCurrencyAmount,
+  normalizeCurrencyCode,
+} from "../../lib/currency.js";
+import {
+  ORGANIZATION_LEADERSHIP_ROLES,
+  buildSiteDataWithLeadershipRoles,
+  getOrganizationLeadershipRoles,
+} from "../../lib/meetingMinutes.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
 import ChoiceModal from "./ChoiceModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 const ORG_TABS = [
   { key: "overview", label: "Overview" },
@@ -751,8 +762,10 @@ const createOrganizationForm = (tenantRecord) => {
   const siteData = safeObject(tenantRecord?.site_data);
   const profile = getOrganizationProfile(siteData);
   const programsSection = getProgramsSection(siteData);
+  const leadershipRoles = getOrganizationLeadershipRoles(siteData);
   return {
     name: String(tenantRecord?.name || "").trim(),
+    currency_code: normalizeCurrencyCode(tenantRecord?.currency_code),
     tagline: String(tenantRecord?.tagline || "").trim(),
     contact_email: String(tenantRecord?.contact_email || "").trim(),
     contact_phone: String(tenantRecord?.contact_phone || "").trim(),
@@ -764,6 +777,10 @@ const createOrganizationForm = (tenantRecord) => {
     programs_title: asText(programsSection.title),
     programs_description: asText(programsSection.description),
     is_public: Boolean(tenantRecord?.is_public ?? true),
+    chairperson_member_id: String(leadershipRoles.chairperson_member_id || "").trim(),
+    vice_chairperson_member_id: String(leadershipRoles.vice_chairperson_member_id || "").trim(),
+    secretary_member_id: String(leadershipRoles.secretary_member_id || "").trim(),
+    treasurer_member_id: String(leadershipRoles.treasurer_member_id || "").trim(),
   };
 };
 
@@ -993,16 +1010,6 @@ const formatPercentLabel = (value) => {
   return `${Math.round(clampPercent(parsed))}%`;
 };
 
-const formatCurrency = (value) => {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return "—";
-  return new Intl.NumberFormat("en-KE", {
-    style: "currency",
-    currency: "KES",
-    maximumFractionDigits: 0,
-  }).format(parsed);
-};
-
 const toDisplayLabel = (value, fallback = "Unknown") => {
   const normalized = String(value || "")
     .trim()
@@ -1012,6 +1019,7 @@ const toDisplayLabel = (value, fallback = "Unknown") => {
 };
 
 function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePage }) {
+  const { currencyCode } = useTenantCurrency();
   const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -1117,6 +1125,15 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const [partnerFormError, setPartnerFormError] = useState("");
   const [savingPartner, setSavingPartner] = useState(false);
   const [showDeletePartnerModal, setShowDeletePartnerModal] = useState(false);
+
+  const formatCurrency = (value) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return "—";
+    return formatCurrencyAmount(parsed, {
+      currencyCode,
+      maximumFractionDigits: 0,
+    });
+  };
   const memberAvatarInputRef = useRef(null);
   const memberImportInputRef = useRef(null);
   const organizationDocumentInputRef = useRef(null);
@@ -3354,6 +3371,13 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       return;
     }
 
+    const nextCurrencyInput = String(orgForm.currency_code || "").trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(nextCurrencyInput)) {
+      setOrgFormError("Main currency must be a valid 3-letter code such as KES or USD.");
+      return;
+    }
+    const nextCurrencyCode = normalizeCurrencyCode(nextCurrencyInput);
+
     setSavingOrg(true);
     setOrgFormError("");
 
@@ -3433,15 +3457,22 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         },
         testimonials: [],
       };
+      const nextSiteDataWithLeadership = buildSiteDataWithLeadershipRoles(nextSiteData, {
+        chairperson_member_id: orgForm.chairperson_member_id,
+        vice_chairperson_member_id: orgForm.vice_chairperson_member_id,
+        secretary_member_id: orgForm.secretary_member_id,
+        treasurer_member_id: orgForm.treasurer_member_id,
+      });
 
       const updated = await updateTenant(tenantId, {
         name: orgForm.name,
+        currency_code: nextCurrencyCode,
         tagline: orgForm.tagline,
         contact_email: orgForm.contact_email,
         contact_phone: orgForm.contact_phone,
         location: orgForm.location,
         is_public: Boolean(orgForm.is_public),
-        site_data: nextSiteData,
+        site_data: nextSiteDataWithLeadership,
       });
 
       setTenantRecord(updated);
@@ -5267,6 +5298,23 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
                   disabled={savingOrg}
                 />
               </label>
+              <label className="data-modal-field">
+                Main currency
+                <input
+                  type="text"
+                  value={orgForm.currency_code}
+                  onChange={(event) =>
+                    handleOrgFormChange("currency_code", String(event.target.value || "").toUpperCase())
+                  }
+                  disabled={savingOrg}
+                  list="organization-currency-options"
+                  maxLength={3}
+                  placeholder="KES"
+                />
+                <small className="data-modal-hint">
+                  Members inherit this currency across dashboard finance views and project reports.
+                </small>
+              </label>
               <label className="data-modal-field data-modal-field--full">
                 Tagline
                 <input
@@ -5276,6 +5324,37 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
                   disabled={savingOrg}
                 />
               </label>
+              <div className="data-modal-field data-modal-field--full org-modal-section-intro">
+                <strong>Leadership roles</strong>
+                <small>
+                  These roles are reused by meeting minutes and other governance documents.
+                </small>
+              </div>
+              {ORGANIZATION_LEADERSHIP_ROLES.map((roleOption) => (
+                <label key={`org-leadership-${roleOption.key}`} className="data-modal-field">
+                  {roleOption.label}
+                  <select
+                    value={orgForm[roleOption.key] || ""}
+                    onChange={(event) => handleOrgFormChange(roleOption.key, event.target.value)}
+                    disabled={savingOrg}
+                  >
+                    <option value="">Not assigned</option>
+                    {members
+                      .filter(
+                        (member) =>
+                          String(member?.status || "active").trim().toLowerCase() === "active"
+                      )
+                      .map((member) => (
+                        <option
+                          key={`org-leadership-option-${roleOption.key}-${member.id}`}
+                          value={member.id}
+                        >
+                          {member.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              ))}
               <label className="data-modal-field data-modal-field--full org-modal-toggle-field">
                 <span>Public tenant profile</span>
                 <input
@@ -5287,6 +5366,14 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
               </label>
             </div>
           ) : null}
+
+          <datalist id="organization-currency-options">
+            {COMMON_CURRENCY_OPTIONS.map((option) => (
+              <option key={`organization-currency-option-${option.value}`} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </datalist>
 
           {orgFormStep === "contacts" ? (
             <div className="data-modal-grid">

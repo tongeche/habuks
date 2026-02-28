@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
 import { getMemberContributions } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 export default function ContributionsPage({ user, tenantId }) {
+  const { formatCurrency } = useTenantCurrency();
   const [contributions, setContributions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const formatMoney = (amount) => formatCurrency(Number(amount) || 0, { maximumFractionDigits: 0 });
 
   useEffect(() => {
     async function loadContributions() {
@@ -93,7 +96,7 @@ export default function ContributionsPage({ user, tenantId }) {
           </div>
           <div className="summary-card-content">
             <span className="summary-label">Total Contributed</span>
-            <span className="summary-value">Ksh. {totalContributed.toLocaleString()}</span>
+            <span className="summary-value">{formatMoney(totalContributed)}</span>
             <span className="summary-subtext">{contributionCount} payment{contributionCount !== 1 ? 's' : ''} made</span>
           </div>
         </div>
@@ -104,7 +107,7 @@ export default function ContributionsPage({ user, tenantId }) {
           <div className="summary-card-content">
             <span className="summary-label">Contribution Amount</span>
             <span className="summary-value">
-              {contributionAmount ? `Ksh. ${contributionAmount.toLocaleString("en-KE")}` : "—"}
+              {contributionAmount ? formatMoney(contributionAmount) : "—"}
             </span>
             <span className="summary-subtext">{getCadenceLabel()}</span>
           </div>
@@ -145,7 +148,7 @@ export default function ContributionsPage({ user, tenantId }) {
                     </div>
                   </td>
                   <td>
-                    <span className="amount-badge">Ksh. {c.amount}</span>
+                    <span className="amount-badge">{formatMoney(c.amount)}</span>
                   </td>
                   <td>
                     <span className="cycle-badge">Cycle {c.cycle_number}</span>

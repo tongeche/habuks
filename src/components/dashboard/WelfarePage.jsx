@@ -6,8 +6,10 @@ import {
   getWelfareTransactions,
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 export default function WelfarePage({ user, initialTab = "overview", tenantId }) {
+  const { currencyCode, formatCurrency, formatNumber } = useTenantCurrency();
   const [summary, setSummary] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [payoutSchedule, setPayoutSchedule] = useState([]);
@@ -50,9 +52,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
     });
   };
 
-  const formatCurrency = (amount) => {
-    return `Ksh. ${amount?.toLocaleString() || 0}`;
-  };
+  const formatMoney = (amount) => formatCurrency(Number(amount) || 0, { maximumFractionDigits: 0 });
 
   const getPayoutStatus = (payout) => {
     const today = new Date();
@@ -91,8 +91,8 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
         <div className="welfare-hero-content">
           <span className="hero-balance-label">BALANCE</span>
           <h2 className="hero-balance-amount">
-            {formatCurrency(summary?.currentBalance ?? 0).replace("Ksh. ", "")}
-            <span className="hero-currency">KES</span>
+            {formatNumber(summary?.currentBalance ?? 0)}
+            <span className="hero-currency">{currencyCode}</span>
           </h2>
           <div className="hero-quick-actions">
             <button className="hero-action-btn">
@@ -134,10 +134,10 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
               <Icon name="arrow-right" size={14} />
             </div>
           </div>
-          <div className="welfare-card-value">{formatCurrency(summary?.currentBalance ?? 0)}</div>
+          <div className="welfare-card-value">{formatMoney(summary?.currentBalance ?? 0)}</div>
           <div className="welfare-card-change positive">
             <Icon name="trending-up" size={12} />
-            <span>+{formatCurrency(summary?.contributionPerCycle ?? 0)} per cycle</span>
+            <span>+{formatMoney(summary?.contributionPerCycle ?? 0)} per cycle</span>
           </div>
         </div>
 
@@ -163,7 +163,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
               <Icon name="arrow-right" size={14} />
             </div>
           </div>
-          <div className="welfare-card-value">{formatCurrency(summary?.finalAmount ?? 0)}</div>
+          <div className="welfare-card-value">{formatMoney(summary?.finalAmount ?? 0)}</div>
           <div className="welfare-card-change neutral">
             <span>After all cycles</span>
           </div>
@@ -177,7 +177,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
               <Icon name="arrow-right" size={14} />
             </div>
           </div>
-          <div className="welfare-card-value">{formatCurrency(summary?.contributionPerCycle ?? 0)}</div>
+          <div className="welfare-card-value">{formatMoney(summary?.contributionPerCycle ?? 0)}</div>
           <div className="welfare-card-change neutral">
             <span>From each payout</span>
           </div>
@@ -202,7 +202,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
           </div>
           <div className="mobile-stat-content">
             <span className="mobile-stat-label">Target</span>
-            <span className="mobile-stat-value">{formatCurrency(summary?.finalAmount ?? 0)}</span>
+            <span className="mobile-stat-value">{formatMoney(summary?.finalAmount ?? 0)}</span>
           </div>
           <span className="mobile-stat-sub">After all cycles</span>
         </div>
@@ -212,7 +212,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
           </div>
           <div className="mobile-stat-content">
             <span className="mobile-stat-label">Per Cycle</span>
-            <span className="mobile-stat-value">{formatCurrency(summary?.contributionPerCycle ?? 0)}</span>
+            <span className="mobile-stat-value">{formatMoney(summary?.contributionPerCycle ?? 0)}</span>
           </div>
           <span className="mobile-stat-sub">From each payout</span>
         </div>
@@ -279,7 +279,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
               </div>
               <div className="summary-content">
                 <span className="summary-label">Total Saved</span>
-                <span className="summary-value">{formatCurrency(summary?.currentBalance ?? 0)}</span>
+                <span className="summary-value">{formatMoney(summary?.currentBalance ?? 0)}</span>
               </div>
             </div>
             <div className="summary-item">
@@ -308,7 +308,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
               </div>
               <div className="summary-content">
                 <span className="summary-label">Final Target</span>
-                <span className="summary-value">{formatCurrency(summary?.finalAmount ?? 0)}</span>
+                <span className="summary-value">{formatMoney(summary?.finalAmount ?? 0)}</span>
               </div>
             </div>
           </div>
@@ -327,7 +327,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
             <div className="payout-highlight">
               <span className="payout-highlight-label">Amount</span>
               <span className="payout-highlight-value">
-                {myPayout?.amount ? `Ksh. ${myPayout.amount}` : "—"}
+                {myPayout?.amount ? formatMoney(myPayout.amount) : "—"}
               </span>
             </div>
           </div>
@@ -397,7 +397,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
                       <span className="simple-tx-subtitle">Cycle {t.cycle_id || 1} Contribution</span>
                     </div>
                     <span className={`simple-tx-amount ${isContribution ? 'positive' : 'negative'}`}>
-                      {isContribution ? '+' : '-'}{formatCurrency(Math.abs(t.amount))}
+                      {isContribution ? '+' : '-'}{formatMoney(Math.abs(t.amount))}
                     </span>
                   </div>
                 );
@@ -422,28 +422,28 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
                     <Icon name="trending-up" size={20} />
                   </div>
                   <span className="category-name">Contributions</span>
-                  <span className="category-amount">{formatCurrency(summary?.currentBalance || 2000)}</span>
+                  <span className="category-amount">{formatMoney(summary?.currentBalance || 2000)}</span>
                 </div>
                 <div className="category-card category-card--disbursement">
                   <div className="category-icon">
                     <Icon name="arrow-right" size={20} />
                   </div>
                   <span className="category-name">Disbursements</span>
-                  <span className="category-amount">{formatCurrency(0)}</span>
+                  <span className="category-amount">{formatMoney(0)}</span>
                 </div>
                 <div className="category-card category-card--emergency">
                   <div className="category-icon">
                     <Icon name="newspaper" size={20} />
                   </div>
                   <span className="category-name">Emergency</span>
-                  <span className="category-amount">{formatCurrency(0)}</span>
+                  <span className="category-amount">{formatMoney(0)}</span>
                 </div>
                 <div className="category-card category-card--support">
                   <div className="category-icon">
                     <Icon name="users" size={20} />
                   </div>
                   <span className="category-name">Support</span>
-                  <span className="category-amount">{formatCurrency(0)}</span>
+                  <span className="category-amount">{formatMoney(0)}</span>
                 </div>
               </div>
             </div>
@@ -485,7 +485,7 @@ export default function WelfarePage({ user, initialTab = "overview", tenantId })
                           {formatDate(t.date_of_issue || t.date)}
                         </div>
                         <div className={`table-amount-cell ${isContribution ? 'positive' : 'negative'}`}>
-                          {formatCurrency(Math.abs(t.amount))}
+                          {formatMoney(Math.abs(t.amount))}
                         </div>
                       </div>
                     );

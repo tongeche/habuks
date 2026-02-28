@@ -40,9 +40,11 @@ export const reportAppError = (error, context = {}) => {
     time: new Date().toISOString(),
     context,
     message: getErrorMessage(error),
+    name: error?.name || null,
     code: error?.code || error?.status || error?.statusCode || null,
     details: error?.details || null,
     hint: error?.hint || null,
+    stack: typeof error?.stack === "string" ? error.stack : null,
   };
 
   console.error("[HabuksAppError]", payload, error);

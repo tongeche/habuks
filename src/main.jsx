@@ -22,6 +22,7 @@ import ResourcesListPage from "./components/ResourcesListPage.jsx";
 import ResourcePage from "./components/ResourcePage.jsx";
 import Dashboard from "./components/dashboard/Dashboard.jsx";
 import StepsRenderPage from "./components/StepsRenderPage.jsx";
+import { startErrorReporter } from "./lib/errorReporter.js";
 
 // Import Supabase test functions for console testing
 import { testSupabaseConnection, fetchMembers, fetchPayoutSchedule } from "./lib/supabaseTest.js";
@@ -30,6 +31,8 @@ window.fetchMembers = fetchMembers;
 window.fetchPayoutSchedule = fetchPayoutSchedule;
 
 const rootElement = document.getElementById("root");
+
+startErrorReporter();
 
 if (import.meta.env.DEV && "serviceWorker" in navigator) {
   navigator.serviceWorker.getRegistrations().then((registrations) => {

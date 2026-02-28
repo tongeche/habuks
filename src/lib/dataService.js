@@ -76,6 +76,7 @@ export async function getMembersWithTotalWelfare(tenantId) {
 
   return data || [];
 }
+import { normalizeCurrencyCode } from "./currency.js";
 import { supabase, isSupabaseConfigured } from "./supabase.js";
 
 let supabaseFallbackEnabled = false;
@@ -5443,20 +5444,158 @@ export async function deleteJgfFarmingLog(id, tenantId) {
 export async function getNews(tenantId) {
   if (!isSupabaseConfigured || !supabase) return [];
 
-  let query = supabase
-    .from("blogs")
-    .select("*")
-    .eq("published", true)
-    .order("date", { ascending: false });
-  query = applyTenantFilter(query, tenantId);
-  const { data, error } = await query;
+  const queryVariants = [
+    { select: "*", filters: [{ field: "published", value: true }], orderBy: "date" },
+    { select: "*", filters: [{ field: "published", value: true }], orderBy: "date_posted" },
+    { select: "*", filters: [], orderBy: "date_posted" },
+    { select: "*", filters: [], orderBy: "id" },
+  ];
 
-  if (error) {
-    console.error("Error fetching news:", error);
+  let data = [];
+  let lastError = null;
+  for (const variant of queryVariants) {
+    let query = supabase.from("blogs").select(variant.select);
+    query = applyTenantFilter(query, tenantId);
+    variant.filters.forEach((filter) => {
+      query = query.eq(filter.field, filter.value);
+    });
+    query = query.order(variant.orderBy, { ascending: false });
+
+    const result = await query;
+    if (!result.error) {
+      data = Array.isArray(result.data) ? result.data : [];
+      lastError = null;
+      break;
+    }
+
+    lastError = result.error;
+    const recoverable =
+      isMissingColumnError(result.error, "published") ||
+      isMissingColumnError(result.error, "date") ||
+      isMissingColumnError(result.error, "date_posted");
+    if (!recoverable) {
+      break;
+    }
+  }
+
+  if (lastError) {
+    console.error("Error fetching news:", lastError);
     return [];
   }
 
   return data || [];
+}
+
+export async function getMemberNotifications(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  const limit = Number.parseInt(String(options?.limit || ""), 10);
+  let query = supabase
+    .from("member_notifications")
+    .select(
+      "id, tenant_id, member_id, kind, category, type, title, body, action_page, action_label, entity_type, entity_id, priority, status, read_at, remind_at, metadata, created_at, updated_at"
+    )
+    .order("created_at", { ascending: false });
+  query = applyTenantFilter(query, tenantId);
+  if (Number.isInteger(limit) && limit > 0) {
+    query = query.limit(limit);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingRelationError(error, "member_notifications")) {
+      return [];
+    }
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function markMemberNotificationRead(notificationId, read = true) {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  const safeNotificationId = String(notificationId || "").trim();
+  if (!safeNotificationId) {
+    throw new Error("Notification id is required.");
+  }
+
+  const payload = read
+    ? { status: "read", read_at: new Date().toISOString() }
+    : { status: "unread", read_at: null };
+
+  const { data, error } = await supabase
+    .from("member_notifications")
+    .update(payload)
+    .eq("id", safeNotificationId)
+    .select(
+      "id, tenant_id, member_id, kind, category, type, title, body, action_page, action_label, entity_type, entity_id, priority, status, read_at, remind_at, metadata, created_at, updated_at"
+    )
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRelationError(error, "member_notifications")) {
+      return null;
+    }
+    throw error;
+  }
+
+  return data || null;
+}
+
+export async function markAllMemberNotificationsRead(tenantId) {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  let query = supabase
+    .from("member_notifications")
+    .update({
+      status: "read",
+      read_at: new Date().toISOString(),
+    })
+    .eq("status", "unread");
+
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
+
+  if (error) {
+    if (isMissingRelationError(error, "member_notifications")) {
+      return false;
+    }
+    throw error;
+  }
+
+  return true;
+}
+
+export async function refreshMemberNotificationReminders(tenantId = null) {
+  if (!shouldUseSupabase()) {
+    return null;
+  }
+
+  const { data, error } = await supabase.rpc("refresh_member_notification_reminders", {
+    p_tenant_id: tenantId || null,
+  });
+
+  if (error) {
+    if (isMissingRelationError(error, "member_notifications")) {
+      return null;
+    }
+    if (String(error?.code || "") === "42883" || String(error?.message || "").includes("refresh_member_notification_reminders")) {
+      return null;
+    }
+    throw error;
+  }
+
+  if (Array.isArray(data)) {
+    return data[0] || null;
+  }
+  return data || null;
 }
 
 export async function getOrganizationTemplates(tenantId) {
@@ -6064,7 +6203,7 @@ export async function getOrganizationActivityOptionValues(tenantId) {
 }
 
 const MEETING_SELECT_VARIANTS = [
-  "id, tenant_id, date, type, agenda, minutes, assignees, attendees_data, title, description, notes, location, status, project_id, owner_member_id, start_at, end_at, value_type, budget_line, source_partner_id, source_partner_name, poster_url, poster_path, created_at, updated_at",
+  "id, tenant_id, date, type, agenda, minutes, assignees, attendees_data, title, description, notes, location, status, project_id, owner_member_id, start_at, end_at, value_type, budget_line, source_partner_id, source_partner_name, poster_url, poster_path, audience_scope, agenda_items, minutes_data, chairperson_member_id, secretary_member_id, minutes_status, minutes_generated_at, created_at, updated_at",
   "id, tenant_id, date, type, agenda, minutes, attendees, title, description, notes, location, status, project_id, owner_member_id, start_at, end_at, value_type, budget_line, source_partner_id, source_partner_name, poster_url, poster_path, created_at, updated_at",
   "id, tenant_id, date, type, agenda, minutes, attendees, title, description, location, status, project_id, owner_member_id, created_at",
   "id, tenant_id, date, type, agenda, minutes, attendees",
@@ -6087,10 +6226,30 @@ const normalizeMeetingStatus = (value) => {
   return normalized;
 };
 
+const normalizeMeetingAudienceScope = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  return normalized === "all_members" ? "all_members" : "selected_members";
+};
+
+const normalizeMeetingMinutesStatus = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalized === "finalized" ? "finalized" : "draft";
+};
+
 const parseOptionalInteger = (value) => {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number.parseInt(String(value), 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const parseOptionalSubscriberId = (value) => {
+  const normalized = String(value || "").trim();
+  return normalized || null;
 };
 
 const normalizeMeetingMemberIds = (value) => {
@@ -6158,22 +6317,28 @@ const normalizeMeetingAttendeesData = (value) => {
       attendeeType = String(item.type || item.attendee_type || "member")
         .trim()
         .toLowerCase();
-      attendeeId = Number.parseInt(String(item.id || item.member_id || item.subscriber_id || ""), 10);
+      attendeeId =
+        attendeeType === "subscriber"
+          ? parseOptionalSubscriberId(item.id || item.subscriber_id)
+          : parseOptionalInteger(item.id || item.member_id);
     } else if (typeof item === "string") {
       if (item.includes(":")) {
         const [rawType, rawId] = item.split(":");
         attendeeType = String(rawType || "member")
           .trim()
           .toLowerCase();
-        attendeeId = Number.parseInt(String(rawId || ""), 10);
+        attendeeId =
+          attendeeType === "subscriber"
+            ? parseOptionalSubscriberId(rawId)
+            : parseOptionalInteger(rawId);
       } else {
-        attendeeId = Number.parseInt(item, 10);
+        attendeeId = parseOptionalInteger(item);
       }
     } else {
-      attendeeId = Number.parseInt(String(item), 10);
+      attendeeId = parseOptionalInteger(item);
     }
 
-    if (!Number.isInteger(attendeeId) || attendeeId <= 0) return;
+    if (!attendeeId) return;
     if (attendeeType !== "member" && attendeeType !== "subscriber") return;
 
     const dedupeKey = `${attendeeType}:${attendeeId}`;
@@ -6183,6 +6348,107 @@ const normalizeMeetingAttendeesData = (value) => {
   });
 
   return normalized;
+};
+
+const normalizeMeetingAgendaItems = (value) => {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value
+          .split(/\n+/)
+          .map((line) => ({ title: line }))
+      : [];
+
+  return items
+    .map((item) => {
+      if (typeof item === "string") {
+        const title = String(item || "").trim();
+        return title ? { title, details: "", resolutions: [] } : null;
+      }
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return null;
+      }
+      const title = String(item.title || item.label || item.name || "").trim();
+      const details = String(item.details || item.discussion || item.notes || "").trim();
+      const resolutions = Array.isArray(item.resolutions)
+        ? item.resolutions.map((entry) => String(entry || "").trim()).filter(Boolean)
+        : typeof item.resolution === "string" && item.resolution.trim()
+          ? [item.resolution.trim()]
+          : [];
+      if (!title && !details && !resolutions.length) {
+        return null;
+      }
+      return {
+        title: title || "Agenda item",
+        details,
+        resolutions,
+      };
+    })
+    .filter(Boolean);
+};
+
+const normalizeMeetingMinutesData = (value) => {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const previousMinutes = source.previous_minutes;
+  const financialMatters = source.financial_matters;
+  const nextMeeting = source.next_meeting;
+  const adjournment = source.adjournment;
+
+  return {
+    preliminaries: String(source.preliminaries || "").trim(),
+    previous_minutes:
+      previousMinutes && typeof previousMinutes === "object" && !Array.isArray(previousMinutes)
+        ? {
+            status: String(previousMinutes.status || "").trim(),
+            notes: String(previousMinutes.notes || "").trim(),
+          }
+        : {
+            status: "",
+            notes: "",
+          },
+    financial_matters:
+      financialMatters && typeof financialMatters === "object" && !Array.isArray(financialMatters)
+        ? {
+            discussion: String(financialMatters.discussion || "").trim(),
+            resolution: String(financialMatters.resolution || "").trim(),
+          }
+        : {
+            discussion: "",
+            resolution: "",
+          },
+    next_meeting:
+      nextMeeting && typeof nextMeeting === "object" && !Array.isArray(nextMeeting)
+        ? {
+            date: normalizeMeetingDate(nextMeeting.date),
+            note: String(nextMeeting.note || "").trim(),
+          }
+        : {
+            date: null,
+            note: "",
+          },
+    adjournment:
+      adjournment && typeof adjournment === "object" && !Array.isArray(adjournment)
+        ? {
+            time: String(adjournment.time || "").trim(),
+            note: String(adjournment.note || "").trim(),
+          }
+        : {
+            time: "",
+            note: "",
+          },
+  };
+};
+
+const getMeetingParticipantToken = (value) => {
+  if (!value || typeof value !== "object") return "";
+  const type = String(value.participant_type || value.type || "").trim().toLowerCase();
+  const id =
+    type === "subscriber"
+      ? parseOptionalSubscriberId(value.subscriber_id || value.id)
+      : parseOptionalInteger(value.member_id || value.id);
+  if (!id) return "";
+  if (type !== "member" && type !== "subscriber") return "";
+  return `${type}:${id}`;
 };
 
 const toLegacyMeetingAttendees = (assignees = [], attendeesData = []) => {
@@ -6233,6 +6499,12 @@ const buildOrganizationActivityPayload = (payload = {}, tenantId) => {
     source_partner_name: normalizeOptional(payload?.source_partner_name),
     poster_url: normalizeOptional(payload?.poster_url),
     poster_path: normalizeOptional(payload?.poster_path),
+    audience_scope: normalizeMeetingAudienceScope(payload?.audience_scope),
+    agenda_items: normalizeMeetingAgendaItems(payload?.agenda_items),
+    minutes_data: normalizeMeetingMinutesData(payload?.minutes_data),
+    chairperson_member_id: parseOptionalInteger(payload?.chairperson_member_id),
+    secretary_member_id: parseOptionalInteger(payload?.secretary_member_id),
+    minutes_status: normalizeMeetingMinutesStatus(payload?.minutes_status),
     assignees,
     attendees_data: attendeesData,
   };
@@ -6289,6 +6561,13 @@ const ORGANIZATION_ACTIVITY_EXTENDED_COLUMNS = [
   "source_partner_name",
   "poster_url",
   "poster_path",
+  "audience_scope",
+  "agenda_items",
+  "minutes_data",
+  "chairperson_member_id",
+  "secretary_member_id",
+  "minutes_status",
+  "minutes_generated_at",
 ];
 
 const ORGANIZATION_ACTIVITY_METADATA_COLUMNS = [
@@ -6301,7 +6580,7 @@ const ORGANIZATION_ACTIVITY_METADATA_COLUMNS = [
 ];
 
 const ORGANIZATION_ACTIVITY_SCHEMA_ERROR =
-  "Activity save failed because your database schema is outdated. Run migrations `migration_052_meetings_assignees_attendees.sql` and `migration_054_activity_option_values.sql`, then retry.";
+  "Activity save failed because your database schema is outdated. Run migrations `migration_052_meetings_assignees_attendees.sql`, `migration_054_activity_option_values.sql`, and `migration_071_meeting_minutes_participants.sql`, then retry.";
 
 const hasOrganizationActivityExtendedFields = (payload = {}) => {
   const assignees = normalizeMeetingMemberIds(payload?.assignees);
@@ -6315,12 +6594,165 @@ const hasOrganizationActivityExtendedFields = (payload = {}) => {
     Boolean(normalizeText(payload?.source_partner_id)) ||
     Boolean(normalizeText(payload?.source_partner_name)) ||
     Boolean(normalizeText(payload?.poster_url)) ||
-    Boolean(normalizeText(payload?.poster_path))
+    Boolean(normalizeText(payload?.poster_path)) ||
+    normalizeMeetingAudienceScope(payload?.audience_scope) === "all_members" ||
+    normalizeMeetingAgendaItems(payload?.agenda_items).length > 0 ||
+    Object.values(normalizeMeetingMinutesData(payload?.minutes_data)).some((value) =>
+      typeof value === "string"
+        ? Boolean(value)
+        : value && typeof value === "object"
+          ? Object.values(value).some(Boolean)
+          : false
+    ) ||
+    Boolean(parseOptionalInteger(payload?.chairperson_member_id)) ||
+    Boolean(parseOptionalInteger(payload?.secretary_member_id)) ||
+    normalizeMeetingMinutesStatus(payload?.minutes_status) === "finalized"
   );
 };
 
 const isMissingAnyColumnError = (error, columns = []) =>
   columns.some((columnName) => isMissingColumnError(error, columnName));
+
+const buildDesiredMeetingParticipants = async (payload = {}, tenantId) => {
+  const audienceScope = normalizeMeetingAudienceScope(payload?.audience_scope);
+  const explicitAttendees = normalizeMeetingAttendeesData(payload?.attendees);
+  const participantMap = new Map();
+
+  explicitAttendees.forEach((entry) => {
+    const token = `${entry.type}:${entry.id}`;
+    participantMap.set(token, {
+      participant_type: entry.type,
+      member_id: entry.type === "member" ? entry.id : null,
+      subscriber_id: entry.type === "subscriber" ? entry.id : null,
+    });
+  });
+
+  if (audienceScope === "all_members") {
+    if (!tenantId) {
+      throw new Error("Tenant is required to invite all members to a meeting.");
+    }
+    const { data, error } = await supabase
+      .from("tenant_members")
+      .select("member_id")
+      .eq("tenant_id", tenantId)
+      .eq("status", "active");
+
+    if (error) {
+      throw error;
+    }
+
+    (data || []).forEach((row) => {
+      const memberId = Number.parseInt(String(row?.member_id || ""), 10);
+      if (!Number.isInteger(memberId) || memberId <= 0) return;
+      participantMap.set(`member:${memberId}`, {
+        participant_type: "member",
+        member_id: memberId,
+        subscriber_id: null,
+      });
+    });
+  }
+
+  return Array.from(participantMap.values());
+};
+
+const syncMeetingParticipantsInternal = async (meetingRecord, payload = {}, tenantId) => {
+  const parsedMeetingId = Number.parseInt(String(meetingRecord?.id || ""), 10);
+  const effectiveTenantId = normalizeOptional(tenantId ?? meetingRecord?.tenant_id);
+  if (!Number.isInteger(parsedMeetingId) || parsedMeetingId <= 0 || !effectiveTenantId) {
+    return [];
+  }
+
+  const desiredParticipants = await buildDesiredMeetingParticipants(payload, effectiveTenantId);
+  let currentQuery = supabase
+    .from("meeting_participants")
+    .select("id, meeting_id, tenant_id, participant_type, member_id, subscriber_id, rsvp_status, attendance_status, notes")
+    .eq("meeting_id", parsedMeetingId);
+  currentQuery = applyTenantFilter(currentQuery, effectiveTenantId);
+  const currentResult = await currentQuery;
+
+  if (currentResult.error) {
+    if (isMissingRelationError(currentResult.error, "meeting_participants")) {
+      throw new Error(ORGANIZATION_ACTIVITY_SCHEMA_ERROR);
+    }
+    throw currentResult.error;
+  }
+
+  const currentRows = currentResult.data || [];
+  const currentByToken = new Map(
+    currentRows
+      .map((row) => [getMeetingParticipantToken(row), row])
+      .filter(([token]) => Boolean(token))
+  );
+  const desiredByToken = new Map(
+    desiredParticipants
+      .map((row) => [getMeetingParticipantToken(row), row])
+      .filter(([token]) => Boolean(token))
+  );
+
+  const removeIds = currentRows
+    .filter((row) => !desiredByToken.has(getMeetingParticipantToken(row)))
+    .map((row) => row.id)
+    .filter(Boolean);
+
+  if (removeIds.length) {
+    let deleteQuery = supabase.from("meeting_participants").delete().in("id", removeIds);
+    deleteQuery = applyTenantFilter(deleteQuery, effectiveTenantId);
+    const { error } = await deleteQuery;
+    if (error) {
+      throw error;
+    }
+  }
+
+  const inserts = desiredParticipants
+    .filter((row) => !currentByToken.has(getMeetingParticipantToken(row)))
+    .map((row) => ({
+      meeting_id: parsedMeetingId,
+      tenant_id: effectiveTenantId,
+      participant_type: row.participant_type,
+      member_id: row.member_id,
+      subscriber_id: row.subscriber_id,
+      invited_at: new Date().toISOString(),
+    }));
+
+  if (inserts.length) {
+    let insertQuery = supabase.from("meeting_participants").insert(inserts);
+    const insertResult = await insertQuery.select("id, meeting_id, tenant_id, participant_type, member_id, subscriber_id, rsvp_status, attendance_status, notes");
+    if (insertResult.error) {
+      throw insertResult.error;
+    }
+  }
+
+  const rosterSnapshot = desiredParticipants.map((row) => ({
+    type: row.participant_type,
+    id: row.participant_type === "subscriber" ? row.subscriber_id : row.member_id,
+  }));
+
+  const updateResult = await supabase
+    .from("meetings")
+    .update({
+      attendees_data: rosterSnapshot,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", parsedMeetingId)
+    .eq("tenant_id", effectiveTenantId)
+    .select("id")
+    .maybeSingle();
+
+  if (updateResult.error && !isMissingColumnError(updateResult.error, "attendees_data")) {
+    throw updateResult.error;
+  }
+
+  let finalQuery = supabase
+    .from("meeting_participants")
+    .select("id, meeting_id, tenant_id, participant_type, member_id, subscriber_id, rsvp_status, attendance_status, notes, invited_at, responded_at, attendance_marked_at, attendance_marked_by, created_at, updated_at")
+    .eq("meeting_id", parsedMeetingId);
+  finalQuery = applyTenantFilter(finalQuery, effectiveTenantId);
+  const finalResult = await finalQuery;
+  if (finalResult.error) {
+    throw finalResult.error;
+  }
+  return finalResult.data || [];
+};
 
 /**
  * Create organization activity
@@ -6362,6 +6794,7 @@ export async function createOrganizationActivity(payload = {}, tenantId) {
     }
     throw new Error(result.error?.message || "Failed to create organization activity.");
   }
+  await syncMeetingParticipantsInternal(result.data, payload, tenantId);
   return result.data;
 }
 
@@ -6432,6 +6865,7 @@ export async function updateOrganizationActivity(activityId, payload = {}, tenan
     throw new Error(result.error?.message || "Failed to update organization activity.");
   }
 
+  await syncMeetingParticipantsInternal(result.data, payload, tenantId);
   return result.data;
 }
 
@@ -6503,6 +6937,13 @@ export async function getMeetings(tenantId) {
           "source_partner_name",
           "poster_url",
           "poster_path",
+          "audience_scope",
+          "agenda_items",
+          "minutes_data",
+          "chairperson_member_id",
+          "secretary_member_id",
+          "minutes_status",
+          "minutes_generated_at",
         ])
       ) {
         continue;
@@ -6532,6 +6973,210 @@ export async function getMeetings(tenantId) {
   }
 
   return [];
+}
+
+export async function getMeetingParticipants(tenantId, meetingIds = []) {
+  if (!isSupabaseConfigured || !supabase) return [];
+
+  let query = supabase
+    .from("meeting_participants")
+    .select(
+      `
+      id,
+      meeting_id,
+      tenant_id,
+      participant_type,
+      member_id,
+      subscriber_id,
+      rsvp_status,
+      attendance_status,
+      invited_at,
+      responded_at,
+      attendance_marked_at,
+      attendance_marked_by,
+      notes,
+      created_at,
+      updated_at,
+      member:members!meeting_participants_member_id_fkey (id, name, email, phone_number, role),
+      subscriber:newsletter_subscribers (id, name, email, contact)
+    `
+    )
+    .order("created_at", { ascending: true });
+  query = applyTenantFilter(query, tenantId);
+
+  const normalizedMeetingIds = Array.from(
+    new Set(
+      (Array.isArray(meetingIds) ? meetingIds : [meetingIds])
+        .map((value) => Number.parseInt(String(value || ""), 10))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    )
+  );
+  if (normalizedMeetingIds.length) {
+    query = query.in("meeting_id", normalizedMeetingIds);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingRelationError(error, "meeting_participants")) {
+      return [];
+    }
+    console.error("Error fetching meeting participants:", error);
+    throw error;
+  }
+
+  return (data || []).map((row) => ({
+    ...row,
+    token: getMeetingParticipantToken(row),
+  }));
+}
+
+export async function respondMeetingInvitation(meetingId, rsvpStatus) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedMeetingId = Number.parseInt(String(meetingId || ""), 10);
+  if (!Number.isInteger(parsedMeetingId) || parsedMeetingId <= 0) {
+    throw new Error("Valid meeting id is required.");
+  }
+
+  const normalizedStatus = String(rsvpStatus || "")
+    .trim()
+    .toLowerCase();
+  if (!["confirmed", "declined", "apology"].includes(normalizedStatus)) {
+    throw new Error("Invalid RSVP status.");
+  }
+
+  const { data, error } = await supabase.rpc("respond_meeting_invitation", {
+    p_meeting_id: parsedMeetingId,
+    p_rsvp_status: normalizedStatus,
+  });
+
+  if (error) {
+    console.error("Error responding to meeting invitation:", error);
+    throw error;
+  }
+
+  return data || null;
+}
+
+export async function updateMeetingParticipants(participantUpdates = [], tenantId, actorMemberId = null) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const updates = Array.isArray(participantUpdates) ? participantUpdates : [participantUpdates];
+  const results = [];
+
+  for (const entry of updates) {
+    const participantId = Number.parseInt(String(entry?.id || ""), 10);
+    if (!Number.isInteger(participantId) || participantId <= 0) {
+      continue;
+    }
+
+    const nextPayload = {};
+    if (Object.prototype.hasOwnProperty.call(entry || {}, "rsvp_status")) {
+      const rsvpStatus = String(entry?.rsvp_status || "")
+        .trim()
+        .toLowerCase();
+      if (["pending", "confirmed", "declined", "apology"].includes(rsvpStatus)) {
+        nextPayload.rsvp_status = rsvpStatus;
+        nextPayload.responded_at = rsvpStatus === "pending" ? null : new Date().toISOString();
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(entry || {}, "attendance_status")) {
+      const attendanceStatus = String(entry?.attendance_status || "")
+        .trim()
+        .toLowerCase();
+      if (["unknown", "attended", "absent"].includes(attendanceStatus)) {
+        nextPayload.attendance_status = attendanceStatus;
+        nextPayload.attendance_marked_at =
+          attendanceStatus === "unknown" ? null : new Date().toISOString();
+        nextPayload.attendance_marked_by =
+          attendanceStatus === "unknown" ? null : parseOptionalInteger(actorMemberId);
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(entry || {}, "notes")) {
+      nextPayload.notes = normalizeOptional(entry?.notes);
+    }
+
+    if (!Object.keys(nextPayload).length) {
+      continue;
+    }
+
+    let query = supabase
+      .from("meeting_participants")
+      .update(nextPayload)
+      .eq("id", participantId);
+    query = applyTenantFilter(query, tenantId);
+    const { data, error } = await query.select("*").single();
+
+    if (error) {
+      console.error("Error updating meeting participant:", error);
+      throw error;
+    }
+    results.push(data);
+  }
+
+  return results;
+}
+
+export async function finalizeMeetingAttendance(meetingId, tenantId, actorMemberId = null) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Database not configured");
+  }
+
+  const parsedMeetingId = Number.parseInt(String(meetingId || ""), 10);
+  if (!Number.isInteger(parsedMeetingId) || parsedMeetingId <= 0) {
+    throw new Error("Valid meeting id is required.");
+  }
+
+  let query = supabase
+    .from("meeting_participants")
+    .update({
+      attendance_status: "absent",
+      attendance_marked_at: new Date().toISOString(),
+      attendance_marked_by: parseOptionalInteger(actorMemberId),
+    })
+    .eq("meeting_id", parsedMeetingId)
+    .eq("attendance_status", "unknown");
+  query = applyTenantFilter(query, tenantId);
+  const { error } = await query;
+  if (error) {
+    console.error("Error finalizing meeting attendance:", error);
+    throw error;
+  }
+
+  const meetingPayload = {
+    minutes_status: "finalized",
+    minutes_generated_at: new Date().toISOString(),
+  };
+  let meetingQuery = supabase
+    .from("meetings")
+    .update(meetingPayload)
+    .eq("id", parsedMeetingId);
+  meetingQuery = applyTenantFilter(meetingQuery, tenantId);
+  const meetingResult = await meetingQuery.select("*").single();
+
+  if (meetingResult.error && isMissingColumnError(meetingResult.error, "minutes_generated_at")) {
+    let fallbackQuery = supabase
+      .from("meetings")
+      .update({ minutes_status: "finalized" })
+      .eq("id", parsedMeetingId);
+    fallbackQuery = applyTenantFilter(fallbackQuery, tenantId);
+    const fallbackResult = await fallbackQuery.select("*").single();
+    if (fallbackResult.error) {
+      throw fallbackResult.error;
+    }
+    return fallbackResult.data;
+  }
+
+  if (meetingResult.error) {
+    console.error("Error updating meeting finalize state:", meetingResult.error);
+    throw meetingResult.error;
+  }
+
+  return meetingResult.data;
 }
 
 /**
@@ -6754,10 +7399,11 @@ export async function getMembersAdmin(tenantId) {
   const selectWithAvatarAndBio = `${selectWithAvatar}, bio`;
   const selectWithBio = `${selectCore}, bio`;
   let memberIds = null;
+  let membershipMap = null;
   if (tenantId) {
     const { data: membershipRows, error: membershipError } = await supabase
       .from("tenant_members")
-      .select("member_id")
+      .select("id, member_id, role, status, created_at, updated_at")
       .eq("tenant_id", tenantId);
     if (membershipError) {
       throw membershipError;
@@ -6766,6 +7412,20 @@ export async function getMembersAdmin(tenantId) {
     if (!memberIds.length) {
       return [];
     }
+    membershipMap = new Map(
+      (membershipRows || [])
+        .filter((row) => row?.member_id)
+        .map((row) => [
+          row.member_id,
+          {
+            tenant_membership_id: row.id || null,
+            tenant_role: normalizeOptional(row.role) || "member",
+            tenant_status: normalizeOptional(row.status) || "active",
+            tenant_joined_at: normalizeOptional(row.created_at),
+            tenant_membership_updated_at: normalizeOptional(row.updated_at),
+          },
+        ])
+    );
   }
 
   const runMemberQuery = (selectColumns) => {
@@ -6797,7 +7457,16 @@ export async function getMembersAdmin(tenantId) {
     throw error;
   }
 
-  return data || [];
+  if (!tenantId || !membershipMap) {
+    return data || [];
+  }
+
+  return (data || [])
+    .map((member) => ({
+      ...member,
+      ...(membershipMap.get(member?.id) || {}),
+    }))
+    .sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || "")));
 }
 
 export async function getProjectAssignableMembers(currentMemberId, tenantId) {
@@ -7083,6 +7752,67 @@ export async function updateMemberAdmin(memberId, payload) {
   }
 
   return data;
+}
+
+export async function updateTenantMembershipAdmin(membershipId, payload = {}) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  if (!membershipId) {
+    throw new Error("Tenant membership is required.");
+  }
+
+  const updatePayload = {};
+  if (Object.prototype.hasOwnProperty.call(payload, "role")) {
+    const normalizedRole = normalizeOptional(payload?.role);
+    if (!normalizedRole) {
+      throw new Error("Membership role is required.");
+    }
+    updatePayload.role = normalizedRole;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "status")) {
+    const normalizedStatus = normalizeOptional(payload?.status);
+    if (!normalizedStatus) {
+      throw new Error("Membership status is required.");
+    }
+    updatePayload.status = normalizedStatus;
+  }
+  if (!Object.keys(updatePayload).length) {
+    throw new Error("No membership changes were provided.");
+  }
+  updatePayload.updated_at = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from("tenant_members")
+    .update(updatePayload)
+    .eq("id", membershipId)
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+export async function deleteTenantMembershipAdmin(membershipId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  if (!membershipId) {
+    throw new Error("Tenant membership is required.");
+  }
+
+  const { error } = await supabase.from("tenant_members").delete().eq("id", membershipId);
+
+  if (error) {
+    throw error;
+  }
+
+  return true;
 }
 
 export async function getProjectMembersAdmin(projectId, tenantId) {
@@ -7517,7 +8247,7 @@ export async function getTenantMagicLinkInvites(tenantId, options = {}) {
   let query = supabase
     .from("magic_link_invites")
     .select(
-      "id, tenant_id, email, phone_number, role, status, invite_number, created_at, expires_at, used_at, used_by, project_access_scope, project_ids"
+      "id, tenant_id, email, phone_number, role, status, invite_number, created_at, sent_at, expires_at, used_at, used_by, project_access_scope, project_ids, notes"
     )
     .order("created_at", { ascending: false });
   query = applyTenantFilter(query, tenantId);
@@ -7531,6 +8261,128 @@ export async function getTenantMagicLinkInvites(tenantId, options = {}) {
   }
 
   return Array.isArray(data) ? data : [];
+}
+
+export async function resendMagicLinkInvite(inviteId, options = {}) {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  const safeInviteId = String(inviteId || "").trim();
+  if (!safeInviteId) {
+    throw new Error("Invite id is required.");
+  }
+
+  const expiresInDays = Number.parseInt(String(options?.expiresInDays || ""), 10);
+  const validDays = Number.isInteger(expiresInDays) && expiresInDays > 0 ? expiresInDays : 7;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + validDays * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await supabase
+    .from("magic_link_invites")
+    .update({
+      status: "pending",
+      sent_at: now.toISOString(),
+      expires_at: expiresAt,
+    })
+    .eq("id", safeInviteId)
+    .neq("status", "used")
+    .select(
+      "id, tenant_id, email, phone_number, role, status, invite_number, created_at, sent_at, expires_at, used_at, used_by, project_access_scope, project_ids, notes"
+    )
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error("Invite could not be reissued.");
+  }
+
+  return data;
+}
+
+export async function cancelMagicLinkInvite(inviteId) {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  const safeInviteId = String(inviteId || "").trim();
+  if (!safeInviteId) {
+    throw new Error("Invite id is required.");
+  }
+
+  const { data, error } = await supabase
+    .from("magic_link_invites")
+    .update({
+      status: "revoked",
+    })
+    .eq("id", safeInviteId)
+    .neq("status", "used")
+    .select(
+      "id, tenant_id, email, phone_number, role, status, invite_number, created_at, sent_at, expires_at, used_at, used_by, project_access_scope, project_ids, notes"
+    )
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data) {
+    throw new Error("Invite could not be canceled.");
+  }
+
+  return data;
+}
+
+export async function getTenantMemberAuditLog(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  if (!tenantId) {
+    return [];
+  }
+
+  const limit = Number.parseInt(String(options?.limit || ""), 10);
+  let query = supabase
+    .from("tenant_member_audit_log")
+    .select(
+      "id, tenant_id, tenant_membership_id, member_id, member_name, actor_member_id, actor_name, action, previous_role, next_role, previous_status, next_status, note, metadata, occurred_at, member:members!tenant_member_audit_log_member_id_fkey(id, name, email), actor:members!tenant_member_audit_log_actor_member_id_fkey(id, name, email)"
+    )
+    .order("occurred_at", { ascending: false });
+
+  query = applyTenantFilter(query, tenantId);
+  if (Number.isInteger(limit) && limit > 0) {
+    query = query.limit(limit);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingRelationError(error, "tenant_member_audit_log")) {
+      return [];
+    }
+    throw error;
+  }
+
+  return (Array.isArray(data) ? data : []).map((row) => ({
+    id: row?.id || null,
+    tenant_id: row?.tenant_id || null,
+    tenant_membership_id: row?.tenant_membership_id || null,
+    member_id: row?.member_id || row?.member?.id || null,
+    member_name: normalizeOptional(row?.member_name) || normalizeOptional(row?.member?.name) || "Member",
+    actor_member_id: row?.actor_member_id || row?.actor?.id || null,
+    actor_name: normalizeOptional(row?.actor_name) || normalizeOptional(row?.actor?.name) || "System",
+    action: normalizeOptional(row?.action) || "updated",
+    previous_role: normalizeOptional(row?.previous_role),
+    next_role: normalizeOptional(row?.next_role),
+    previous_status: normalizeOptional(row?.previous_status),
+    next_status: normalizeOptional(row?.next_status),
+    note: normalizeOptional(row?.note) || "Membership updated.",
+    metadata: row?.metadata || {},
+    occurred_at: row?.occurred_at || null,
+  }));
 }
 
 export async function getProjectMemberAssignmentsSummary(tenantId, memberId = null) {
@@ -8124,6 +8976,7 @@ export async function createTenant(payload) {
   const insertPayload = {
     name: normalizeTenantWorkspaceName(name),
     slug: String(slug).toLowerCase(),
+    currency_code: normalizeCurrencyCode(payload?.currency_code),
     tagline: normalizeOptional(payload?.tagline),
     contact_email: normalizeOptional(payload?.contact_email),
     contact_phone: normalizeOptional(payload?.contact_phone),
@@ -8383,6 +9236,9 @@ export async function updateTenant(tenantId, payload) {
   if (Object.prototype.hasOwnProperty.call(payload || {}, "tagline")) {
     updatePayload.tagline = normalizeOptional(payload?.tagline);
   }
+  if (Object.prototype.hasOwnProperty.call(payload || {}, "currency_code")) {
+    updatePayload.currency_code = normalizeCurrencyCode(payload?.currency_code);
+  }
   if (Object.prototype.hasOwnProperty.call(payload || {}, "contact_email")) {
     updatePayload.contact_email = normalizeOptional(payload?.contact_email);
   }
@@ -8497,7 +9353,8 @@ export async function getTenantMemberships(memberId) {
         name,
         slug,
         tagline,
-        logo_url
+        logo_url,
+        currency_code
       )
     `
     )
@@ -8558,6 +9415,7 @@ export async function getTenantMembershipForSlug(memberId, slug) {
         slug,
         tagline,
         logo_url,
+        currency_code,
         site_data,
         contact_email,
         contact_phone,

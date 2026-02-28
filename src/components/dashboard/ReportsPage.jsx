@@ -6,6 +6,7 @@ import {
   getProjectSalesForProjects,
   getProjectsWithMembership,
 } from "../../lib/dataService.js";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 const RANGE_OPTIONS = [
   { label: "Today", days: 1 },
@@ -39,6 +40,7 @@ const resolveModuleKey = (project) => {
 };
 
 export default function ReportsPage({ user, access, setActivePage, tenantId }) {
+  const { formatCurrency } = useTenantCurrency();
   const [projects, setProjects] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [sales, setSales] = useState([]);
@@ -118,7 +120,7 @@ export default function ReportsPage({ user, access, setActivePage, tenantId }) {
     return Number.isFinite(parsed) ? parsed : 0;
   };
 
-  const formatCurrency = (value) => `KES ${toNumber(value).toLocaleString("en-KE")}`;
+  const formatMoney = (value) => formatCurrency(toNumber(value), { maximumFractionDigits: 0 });
 
   const getSalesTotal = (sale) => {
     if (!sale) return 0;
@@ -401,7 +403,7 @@ export default function ReportsPage({ user, access, setActivePage, tenantId }) {
               </div>
               <div>
                 <span>Total Income</span>
-                <strong>{formatCurrency(incomeTotal)}</strong>
+                <strong>{formatMoney(incomeTotal)}</strong>
                 <em className={incomeDelta >= 0 ? "is-positive" : "is-negative"}>
                   {incomeDelta >= 0 ? "+" : "-"} {Math.abs(incomeDelta).toFixed(0)}%
                 </em>
@@ -413,7 +415,7 @@ export default function ReportsPage({ user, access, setActivePage, tenantId }) {
               </div>
               <div>
                 <span>Total Costs</span>
-                <strong>{formatCurrency(costTotal)}</strong>
+                <strong>{formatMoney(costTotal)}</strong>
                 <em className={costDelta >= 0 ? "is-negative" : "is-positive"}>
                   {costDelta >= 0 ? "+" : "-"} {Math.abs(costDelta).toFixed(0)}%
                 </em>
@@ -425,7 +427,7 @@ export default function ReportsPage({ user, access, setActivePage, tenantId }) {
               </div>
               <div>
                 <span>Net Profit</span>
-                <strong>{formatCurrency(profitTotal)}</strong>
+                <strong>{formatMoney(profitTotal)}</strong>
                 <em className={profitDelta >= 0 ? "is-positive" : "is-negative"}>
                   {profitDelta >= 0 ? "+" : "-"} {Math.abs(profitDelta).toFixed(0)}%
                 </em>
@@ -531,7 +533,7 @@ export default function ReportsPage({ user, access, setActivePage, tenantId }) {
                   </div>
                   <span className="report-activity-title">{item.label}</span>
                   <span className={`report-activity-amount ${item.type}`}>
-                    {item.type === "income" ? "+" : "-"} {formatCurrency(item.amount)}
+                    {item.type === "income" ? "+" : "-"} {formatMoney(item.amount)}
                   </span>
                 </div>
               ))
@@ -551,7 +553,7 @@ export default function ReportsPage({ user, access, setActivePage, tenantId }) {
                   <div className="report-split-item" key={item.id}>
                     <span className="report-split-dot" style={{ background: item.color }}></span>
                     <span>
-                      {item.label} {formatCurrency(item.value)} / {item.percent.toFixed(0)}%
+                      {item.label} {formatMoney(item.value)} / {item.percent.toFixed(0)}%
                     </span>
                   </div>
                 ))

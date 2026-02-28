@@ -11,6 +11,7 @@ import {
   getTenantById,
   getTenantMagicLinkInvites,
 } from "../../lib/dataService.js";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 import { isAdminRole } from "./roleAccess.js";
 
 const PROJECT_STATUS_PRIORITY = {
@@ -99,25 +100,6 @@ const formatTimeLabel = (value) => {
     hour: "numeric",
     minute: "2-digit",
   });
-};
-
-const formatCurrency = (value, compact = false) => {
-  const numeric = toNumber(value);
-  if (!compact) {
-    return `KES ${numeric.toLocaleString("en-KE")}`;
-  }
-  const absolute = Math.abs(numeric);
-  if (absolute >= 1000000) {
-    const millions = absolute / 1000000;
-    const label = `${millions >= 10 ? Math.round(millions) : millions.toFixed(1)}`.replace(/\.0$/, "");
-    return `KES ${numeric < 0 ? "-" : ""}${label}M`;
-  }
-  if (absolute >= 1000) {
-    const thousands = absolute / 1000;
-    const label = `${thousands >= 10 ? Math.round(thousands) : thousands.toFixed(1)}`.replace(/\.0$/, "");
-    return `KES ${numeric < 0 ? "-" : ""}${label}K`;
-  }
-  return `KES ${numeric.toLocaleString("en-KE")}`;
 };
 
 const formatPercent = (value) => `${Math.round(toNumber(value))}%`;
@@ -439,6 +421,7 @@ const buildRecentTimeline = ({
   projectNameById,
   canSeeInvites,
   memberNameById,
+  formatCurrency,
 }) => {
   const activityItems = (meetings || []).slice(0, 6).map((meeting) => {
     const actor =
@@ -529,6 +512,7 @@ const buildSignals = ({
   topRevenueProject,
   canSeeInvites,
   canViewAllProjects,
+  formatCurrency,
 }) => {
   const signals = [];
 
@@ -637,6 +621,7 @@ export default function DashboardOverview({
   setActivePage,
   tenantRole,
 }) {
+  const { formatCurrency, formatCompactCurrency } = useTenantCurrency();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [tenantRecord, setTenantRecord] = useState(null);
@@ -654,6 +639,10 @@ export default function DashboardOverview({
   const canLoadProjects = tenantFeatures?.projects !== false;
   const canLoadActivities = tenantFeatures?.meetings !== false;
   const canLoadFinance = tenantFeatures?.expenses !== false || tenantFeatures?.reports !== false;
+  const formatMoney = (value, compact = false) =>
+    compact
+      ? formatCompactCurrency(value, { maximumFractionDigits: 1 })
+      : formatCurrency(value, { maximumFractionDigits: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -1144,7 +1133,7 @@ export default function DashboardOverview({
     return [
       {
         label: "Inflow",
-        value: formatCurrency(financeStats.income, true),
+        value: formatMoney(financeStats.income, true),
         meta: formatDeltaLabel(currentAnalyticsMonth?.income, previousAnalyticsMonth?.income),
         tone: "green",
         icon: "trending-up",
@@ -1153,7 +1142,7 @@ export default function DashboardOverview({
       },
       {
         label: "Outflow",
-        value: formatCurrency(financeStats.expenses, true),
+        value: formatMoney(financeStats.expenses, true),
         meta: formatDeltaLabel(currentAnalyticsMonth?.expense, previousAnalyticsMonth?.expense),
         tone: "rose",
         icon: "receipt",
@@ -1162,7 +1151,7 @@ export default function DashboardOverview({
       },
       {
         label: "Budget pool",
-        value: projectStats.budgetTotal > 0 ? formatCurrency(projectStats.budgetTotal, true) : "No plan",
+        value: projectStats.budgetTotal > 0 ? formatMoney(projectStats.budgetTotal, true) : "No plan",
         meta:
           projectStats.budgetTotal > 0
             ? `${formatPercent(financeStats.budgetUsePercent)} utilised`
@@ -1175,7 +1164,7 @@ export default function DashboardOverview({
       },
       {
         label: "Top category",
-        value: topCategory ? formatCurrency(topCategory.value, true) : "No spend",
+        value: topCategory ? formatMoney(topCategory.value, true) : "No spend",
         meta: topCategory ? topCategory.label : "Awaiting expense data",
         tone: "amber",
         icon: "tag",
@@ -1211,8 +1200,9 @@ export default function DashboardOverview({
         projectNameById,
         canSeeInvites,
         memberNameById,
+        formatCurrency: formatMoney,
       }),
-    [meetings, expenses, sales, invites, projectNameById, canSeeInvites, memberNameById]
+    [meetings, expenses, sales, invites, projectNameById, canSeeInvites, memberNameById, formatMoney]
   );
 
   const pendingInvites = useMemo(
@@ -1260,6 +1250,7 @@ export default function DashboardOverview({
         topRevenueProject,
         canSeeInvites,
         canViewAllProjects,
+        formatCurrency: formatMoney,
       }),
     [
       assignedMemberIds.size,
@@ -1274,6 +1265,7 @@ export default function DashboardOverview({
       projectStats.total,
       projectStats.visible,
       topRevenueProject,
+      formatMoney,
     ]
   );
 
@@ -1296,10 +1288,10 @@ export default function DashboardOverview({
       {
         label: canLoadFinance ? "Net position" : "Visible projects",
         value: canLoadFinance
-          ? formatCurrency(financeStats.net, true)
+          ? formatMoney(financeStats.net, true)
           : projectStats.visible.toLocaleString("en-KE"),
         meta: canLoadFinance
-          ? `${formatCurrency(financeStats.income, true)} in • ${formatCurrency(financeStats.expenses, true)} out`
+          ? `${formatMoney(financeStats.income, true)} in • ${formatMoney(financeStats.expenses, true)} out`
           : `${projectStats.visible.toLocaleString("en-KE")} public`,
         icon: canLoadFinance ? "wallet" : "globe",
         tone: getCurrencyDirectionTone(financeStats.net),
@@ -1430,10 +1422,10 @@ export default function DashboardOverview({
                 <div className="overview-home-analytics-wide">
                   <div className="overview-home-lead-panel">
                     <span className="overview-home-lead-label">Net position</span>
-                    <strong>{formatCurrency(financeStats.net)}</strong>
+                    <strong>{formatMoney(financeStats.net)}</strong>
                     <p>
-                      {formatCurrency(financeStats.income)} collected against{" "}
-                      {formatCurrency(financeStats.expenses)} spent across the visible projects.
+                      {formatMoney(financeStats.income)} collected against{" "}
+                      {formatMoney(financeStats.expenses)} spent across the visible projects.
                     </p>
 
                     <div className="overview-home-figure-grid">
@@ -1640,7 +1632,7 @@ export default function DashboardOverview({
                 </div>
                 <div className="overview-home-card-chip tone-blue">
                   {hasExpenseDistribution
-                    ? formatCurrency(financeStats.expenses, true)
+                    ? formatMoney(financeStats.expenses, true)
                     : `${projectStats.total} projects`}
                 </div>
               </div>
@@ -1653,7 +1645,7 @@ export default function DashboardOverview({
                         <span>{row.label}</span>
                         <strong>
                           {hasExpenseDistribution
-                            ? formatCurrency(row.value, true)
+                            ? formatMoney(row.value, true)
                             : `${row.value} ${row.value === 1 ? "project" : "projects"}`}
                         </strong>
                       </div>
@@ -1763,7 +1755,7 @@ export default function DashboardOverview({
                           </span>
                           <span className={`tone-${getCurrencyDirectionTone(project.net)}`}>
                             <Icon name="wallet" size={14} />
-                            {formatCurrency(project.net, true)}
+                            {formatMoney(project.net, true)}
                           </span>
                         </div>
 
@@ -1775,10 +1767,10 @@ export default function DashboardOverview({
                             />
                             <div className="overview-home-project-visual-copy">
                               <span>Budget used</span>
-                              <strong>{formatCurrency(project.spent)}</strong>
+                              <strong>{formatMoney(project.spent)}</strong>
                               <small>
                                 {project.budget > 0
-                                  ? `${project.budgetUsePercent}% of ${formatCurrency(project.budget)} budget`
+                                  ? `${project.budgetUsePercent}% of ${formatMoney(project.budget)} budget`
                                   : "No budget target set"}
                               </small>
                             </div>
@@ -1788,10 +1780,10 @@ export default function DashboardOverview({
                             <MiniDonut value={project.revenuePercent} tone="green" />
                             <div className="overview-home-project-visual-copy">
                               <span>Income progress</span>
-                              <strong>{formatCurrency(project.revenue)}</strong>
+                              <strong>{formatMoney(project.revenue)}</strong>
                               <small>
                                 {project.expectedRevenue > 0
-                                  ? `${project.revenuePercent}% of ${formatCurrency(project.expectedRevenue)} target`
+                                  ? `${project.revenuePercent}% of ${formatMoney(project.expectedRevenue)} target`
                                   : "No income target set"}
                               </small>
                             </div>

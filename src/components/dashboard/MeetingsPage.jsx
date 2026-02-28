@@ -3,6 +3,10 @@ import {
   getMeetings,
   createOrganizationActivity,
   updateOrganizationActivity,
+  getMeetingParticipants,
+  updateMeetingParticipants,
+  respondMeetingInvitation,
+  finalizeMeetingAttendance,
   getMembersAdmin,
   getWelfareSummary,
   getEventSubscribers,
@@ -11,10 +15,26 @@ import {
   getTenantById,
   updateTenant,
   uploadOrganizationActivityPoster,
+  uploadOrganizationDocument,
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
 import DashboardMobileNav from "./DashboardMobileNav.jsx";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
+import { buildMeetingMinutesReportFile } from "../../lib/reporting/meetingMinutesReport.js";
+import { buildTenantBrand } from "../../lib/tenantBranding.js";
+import {
+  MEETING_AGENDA_PRESET_OPTIONS,
+  buildAgendaItemFromPreset,
+  buildMinutesDraftFromAgenda,
+  createMinutesData,
+  getOrganizationLeadershipRoles,
+  mergeMinutesDraft,
+} from "../../lib/meetingMinutes.js";
+import {
+  enhanceMeetingMinutesDraftWithAi,
+  isMeetingMinutesAiConfigured,
+} from "../../lib/meetingMinutesAi.js";
 
 const ACTIVITY_STATUS_META = {
   today: { label: "Today", tone: "today" },
@@ -38,6 +58,7 @@ const CALENDAR_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const FALLBACK_ACTIVITY_OPTION_VALUES = {
   categories: [
     { value: "General", label: "General" },
+    { value: "Meeting", label: "Meeting" },
     { value: "Sales", label: "Sales" },
     { value: "Expenses", label: "Expenses" },
     { value: "Welfare", label: "Welfare" },
@@ -66,6 +87,109 @@ const ACTIVITY_VISUALS = [
   { match: /(sales|income|revenue)/i, icon: "wallet", tone: "sales" },
   { match: /(team|meeting|member|sync)/i, icon: "users", tone: "team" },
 ];
+
+const MEETING_TYPE_VALUE = "Meeting";
+
+const isMeetingType = (value) => String(value || "").trim().toLowerCase() === "meeting";
+
+const toText = (value) => String(value || "").trim();
+
+const createAgendaItem = (item = {}) => ({
+  title: toText(item?.title),
+  details: toText(item?.details || item?.discussion),
+  resolutions: Array.isArray(item?.resolutions)
+    ? item.resolutions.map((entry) => toText(entry))
+    : [toText(item?.resolution)].filter(Boolean),
+});
+
+const hasAgendaItemContent = (item) =>
+  Boolean(
+    toText(item?.title) ||
+      toText(item?.details) ||
+      (Array.isArray(item?.resolutions) && item.resolutions.some((entry) => toText(entry)))
+  );
+
+const mergeAgendaItemDrafts = (currentItems = [], draftItems = [], { overwrite = false } = {}) => {
+  const normalizedCurrent = Array.isArray(currentItems)
+    ? currentItems.map((item) => createAgendaItem(item))
+    : [];
+  const normalizedDraft = Array.isArray(draftItems)
+    ? draftItems.map((item) => createAgendaItem(item)).filter(hasAgendaItemContent)
+    : [];
+
+  if (!normalizedDraft.length) {
+    return normalizedCurrent.length ? normalizedCurrent : [createAgendaItem()];
+  }
+
+  const normalizedCurrentWithoutPlaceholder = normalizedCurrent.filter(hasAgendaItemContent);
+  const sourceCurrent = normalizedCurrentWithoutPlaceholder.length ? normalizedCurrentWithoutPlaceholder : [];
+  const merged = Array.from({ length: Math.max(sourceCurrent.length, normalizedDraft.length) }, (_, index) => {
+    const currentItem = sourceCurrent[index] || createAgendaItem();
+    const draftItem = normalizedDraft[index] || createAgendaItem();
+    const currentResolutions = Array.isArray(currentItem.resolutions)
+      ? currentItem.resolutions.map((entry) => toText(entry)).filter(Boolean)
+      : [];
+    const draftResolutions = Array.isArray(draftItem.resolutions)
+      ? draftItem.resolutions.map((entry) => toText(entry)).filter(Boolean)
+      : [];
+
+    return {
+      title: overwrite
+        ? toText(draftItem.title) || toText(currentItem.title)
+        : toText(currentItem.title) || toText(draftItem.title),
+      details: overwrite
+        ? toText(draftItem.details) || toText(currentItem.details)
+        : toText(currentItem.details) || toText(draftItem.details),
+      resolutions: overwrite
+        ? draftResolutions.length
+          ? draftResolutions
+          : currentResolutions
+        : currentResolutions.length
+          ? currentResolutions
+          : draftResolutions,
+    };
+  }).filter(hasAgendaItemContent);
+
+  return merged.length ? merged : [createAgendaItem()];
+};
+
+const mergeMeetingDraftIntoForm = (currentValue = {}, draftValue = {}, { overwrite = false } = {}) => ({
+  ...currentValue,
+  agenda_items: mergeAgendaItemDrafts(currentValue.agenda_items, draftValue?.agenda_items, {
+    overwrite,
+  }),
+  minutes_data: mergeMinutesDraft(
+    currentValue.minutes_data,
+    draftValue?.minutes_data || draftValue?.minutesData || draftValue,
+    { overwrite }
+  ),
+});
+
+const createParticipantDraft = (row = {}) => ({
+  id: row?.id || null,
+  token: row?.token || "",
+  participant_type: String(row?.participant_type || "member").trim().toLowerCase(),
+  member_id: row?.member_id ?? null,
+  subscriber_id: row?.subscriber_id ?? null,
+  name:
+    String(row?.member?.name || row?.subscriber?.name || row?.name || "").trim() || "Participant",
+  role: String(row?.member?.role || "").trim(),
+  email: String(row?.member?.email || row?.subscriber?.email || "").trim(),
+  rsvp_status: String(row?.rsvp_status || "pending").trim().toLowerCase(),
+  attendance_status: String(row?.attendance_status || "unknown").trim().toLowerCase(),
+  notes: String(row?.notes || "").trim(),
+});
+
+const summarizeMeetingParticipants = (rows = []) => {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  return {
+    invited: safeRows.length,
+    confirmed: safeRows.filter((row) => row?.rsvp_status === "confirmed").length,
+    apology: safeRows.filter((row) => row?.rsvp_status === "apology").length,
+    attended: safeRows.filter((row) => row?.attendance_status === "attended").length,
+    absent: safeRows.filter((row) => row?.attendance_status === "absent").length,
+  };
+};
 
 const normalizeArrayField = (value) => {
   if (Array.isArray(value)) {
@@ -152,6 +276,11 @@ const parsePositiveInt = (value) => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
+const parseSubscriberId = (value) => {
+  const normalized = String(value || "").trim();
+  return normalized || null;
+};
+
 const normalizeMemberIdArray = (value) => {
   return Array.from(
     new Set(
@@ -173,7 +302,10 @@ const normalizeAttendeeTokens = (value) => {
       type = String(item.type || item.attendee_type || "member")
         .trim()
         .toLowerCase();
-      id = parsePositiveInt(item.id || item.member_id || item.subscriber_id);
+      id =
+        type === "subscriber"
+          ? parseSubscriberId(item.id || item.subscriber_id)
+          : parsePositiveInt(item.id || item.member_id);
     } else {
       const text = String(item || "");
       if (text.includes(":")) {
@@ -181,7 +313,7 @@ const normalizeAttendeeTokens = (value) => {
         type = String(rawType || "member")
           .trim()
           .toLowerCase();
-        id = parsePositiveInt(rawId);
+        id = type === "subscriber" ? parseSubscriberId(rawId) : parsePositiveInt(rawId);
       } else {
         id = parsePositiveInt(text);
       }
@@ -240,6 +372,13 @@ const normalizeOptionalText = (value) => {
   return text || null;
 };
 
+const toFilenameSlug = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "meeting";
+
 const asPlainObject = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value;
@@ -294,6 +433,76 @@ const buildSiteDataWithPartners = (siteData, partners) => {
   };
 };
 
+const buildActivityItemFromMeeting = (meeting = {}, participantRows = []) => {
+  const dateValue = meeting?.date || meeting?.meeting_date || meeting?.created_at || "";
+  const statusKey = normalizeActivityStatus(meeting?.status, dateValue);
+  const normalizedAttendees = normalizeAttendeeTokens(meeting?.attendees_data ?? meeting?.attendees);
+  const rawAssignees = normalizeMemberIdArray(
+    normalizeArrayField(meeting?.assignees).length ? meeting?.assignees : meeting?.attendees
+  );
+  const ownerMemberId = parsePositiveInt(meeting?.owner_member_id);
+  const normalizedAssignees =
+    ownerMemberId && !rawAssignees.includes(ownerMemberId)
+      ? [ownerMemberId, ...rawAssignees]
+      : rawAssignees;
+  const normalizedParticipants = (Array.isArray(participantRows) ? participantRows : []).map((row) =>
+    createParticipantDraft(row)
+  );
+  const summary = summarizeMeetingParticipants(normalizedParticipants);
+
+  return {
+    id: meeting?.id,
+    title: meeting?.title || meeting?.agenda || meeting?.type || "Untitled activity",
+    category: meeting?.type || meeting?.category || "General",
+    date: dateValue,
+    description: meeting?.description || "",
+    location: meeting?.location || "",
+    status: meeting?.status || statusKey,
+    valueType: meeting?.value_type || meeting?.valueType || "",
+    value_type: meeting?.value_type || meeting?.valueType || "",
+    budgetLine: meeting?.budget_line || meeting?.budgetLine || "",
+    budget_line: meeting?.budget_line || meeting?.budgetLine || "",
+    sourcePartnerId: String(meeting?.source_partner_id || meeting?.sourcePartnerId || "").trim(),
+    source_partner_id: String(meeting?.source_partner_id || meeting?.sourcePartnerId || "").trim(),
+    sourcePartnerName: String(meeting?.source_partner_name || meeting?.sourcePartnerName || "").trim(),
+    source_partner_name: String(meeting?.source_partner_name || meeting?.sourcePartnerName || "").trim(),
+    posterUrl: String(meeting?.poster_url || meeting?.posterUrl || "").trim(),
+    poster_url: String(meeting?.poster_url || meeting?.posterUrl || "").trim(),
+    posterPath: String(meeting?.poster_path || meeting?.posterPath || "").trim(),
+    poster_path: String(meeting?.poster_path || meeting?.posterPath || "").trim(),
+    statusKey,
+    statusLabel: formatStatusLabel(statusKey),
+    statusTone: ACTIVITY_STATUS_META[statusKey]?.tone || "upcoming",
+    assignees: normalizedAssignees,
+    attendees: normalizedAttendees,
+    agenda: String(meeting?.agenda || meeting?.title || "").trim(),
+    audienceScope: String(meeting?.audience_scope || meeting?.audienceScope || "selected_members").trim(),
+    audience_scope: String(meeting?.audience_scope || meeting?.audienceScope || "selected_members").trim(),
+    agenda_items: Array.isArray(meeting?.agenda_items || meeting?.agendaItems)
+      ? (meeting?.agenda_items || meeting?.agendaItems).map((item) => createAgendaItem(item))
+      : [],
+    chairperson_member_id: String(
+      meeting?.chairperson_member_id || meeting?.chairpersonMemberId || ""
+    ).trim(),
+    secretary_member_id: String(
+      meeting?.secretary_member_id || meeting?.secretaryMemberId || ""
+    ).trim(),
+    minutes_status: String(meeting?.minutes_status || meeting?.minutesStatus || "draft").trim(),
+    minutes_generated_at: String(
+      meeting?.minutes_generated_at || meeting?.minutesGeneratedAt || ""
+    ).trim(),
+    minutes_data: createMinutesData(meeting?.minutes_data || meeting?.minutesData),
+    startAt: String(meeting?.start_at || meeting?.startAt || "").trim(),
+    start_at: String(meeting?.start_at || meeting?.startAt || "").trim(),
+    meetingParticipants: normalizedParticipants,
+    invitedCount: summary.invited || normalizedAttendees.length,
+    confirmedCount: summary.confirmed,
+    apologyCount: summary.apology,
+    attendedCount: summary.attended,
+    absentCount: summary.absent,
+  };
+};
+
 const createSourcePartnerForm = () => ({
   name: "",
   contact_person: "",
@@ -304,8 +513,42 @@ const createSourcePartnerForm = () => ({
   status: "Active",
 });
 
+const createActivityForm = (defaults = {}) => ({
+  title: String(defaults?.title || "").trim(),
+  type: String(defaults?.type || defaults?.category || "General").trim() || "General",
+  date:
+    String(defaults?.date || "").trim() || new Date().toISOString().split("T")[0],
+  description: String(defaults?.description || "").trim(),
+  status: String(defaults?.status || "scheduled").trim() || "scheduled",
+  value_type: String(defaults?.value_type || "Income").trim() || "Income",
+  budget_line: String(defaults?.budget_line || "Operations").trim() || "Operations",
+  source_partner_id: String(defaults?.source_partner_id || "").trim(),
+  source_partner_name: String(defaults?.source_partner_name || "").trim(),
+  poster_url: String(defaults?.poster_url || "").trim(),
+  poster_path: String(defaults?.poster_path || "").trim(),
+  location: String(defaults?.location || "").trim(),
+  agenda: String(defaults?.agenda || defaults?.title || "").trim(),
+  assignees: Array.isArray(defaults?.assignees) ? defaults.assignees : [],
+  attendees: Array.isArray(defaults?.attendees) ? defaults.attendees : [],
+  audience_scope: String(defaults?.audience_scope || "selected_members").trim() || "selected_members",
+  agenda_items:
+    Array.isArray(defaults?.agenda_items) && defaults.agenda_items.length
+      ? defaults.agenda_items.map((item) => createAgendaItem(item))
+      : [createAgendaItem()],
+  chairperson_member_id: String(defaults?.chairperson_member_id || "").trim(),
+  secretary_member_id: String(defaults?.secretary_member_id || "").trim(),
+  minutes_status: String(defaults?.minutes_status || "draft").trim() || "draft",
+  minutes_data: createMinutesData(defaults?.minutes_data),
+  meeting_participants:
+    Array.isArray(defaults?.meeting_participants)
+      ? defaults.meeting_participants.map((row) => createParticipantDraft(row))
+      : [],
+});
+
 export default function MeetingsPage({ user, tenantId, access, setActivePage }) {
+  const { formatCurrency, formatFieldLabel } = useTenantCurrency();
   const [meetings, setMeetings] = useState([]);
+  const [meetingParticipants, setMeetingParticipants] = useState([]);
   const [members, setMembers] = useState([]);
   const [welfareSummary, setWelfareSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -313,26 +556,11 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [activityTab, setActivityTab] = useState("details");
   const [submitting, setSubmitting] = useState(false);
-  const [formData, setFormData] = useState({
-    title: "",
-    type: "General",
-    date: new Date().toISOString().split("T")[0],
-    description: "",
-    status: "scheduled",
-    value_type: "Income",
-    budget_line: "Operations",
-    source_partner_id: "",
-    source_partner_name: "",
-    poster_url: "",
-    poster_path: "",
-    location: "",
-    agenda: "",
-    assignees: [],
-    attendees: [],
-  });
+  const [formData, setFormData] = useState(() => createActivityForm());
   const [activityOptionValues, setActivityOptionValues] = useState(FALLBACK_ACTIVITY_OPTION_VALUES);
   const [organizationPartners, setOrganizationPartners] = useState([]);
   const [tenantSiteData, setTenantSiteData] = useState({});
+  const [tenantRecord, setTenantRecord] = useState(null);
   const [showSourcePartnerModal, setShowSourcePartnerModal] = useState(false);
   const [sourcePartnerForm, setSourcePartnerForm] = useState(() => createSourcePartnerForm());
   const [sourcePartnerError, setSourcePartnerError] = useState("");
@@ -344,10 +572,15 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
   const [eventSubscribers, setEventSubscribers] = useState([]);
   const [showNewSubscriberForm, setShowNewSubscriberForm] = useState(false);
   const [newSubscriber, setNewSubscriber] = useState({ name: "", email: "", contact: "" });
+  const [selectedAgendaPresetKey, setSelectedAgendaPresetKey] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [selectedActivityIds, setSelectedActivityIds] = useState([]);
+  const [updatingParticipants, setUpdatingParticipants] = useState(false);
+  const [emittingMinutes, setEmittingMinutes] = useState(false);
+  const [useAiMinutesBackup, setUseAiMinutesBackup] = useState(false);
+  const [draftingWithAi, setDraftingWithAi] = useState(false);
   const [calendarCursor, setCalendarCursor] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -360,12 +593,40 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     () => `habuks.activities.meetings.${tenantId || "global"}`,
     [tenantId]
   );
+  const formatMoney = (value) => formatCurrency(Number(value) || 0, { maximumFractionDigits: 0 });
+  const categoryOptions = useMemo(() => {
+    const source = Array.isArray(activityOptionValues.categories)
+      ? activityOptionValues.categories
+      : FALLBACK_ACTIVITY_OPTION_VALUES.categories;
+    const map = new Map();
+    source.forEach((option) => {
+      const value = String(option?.value || "").trim();
+      if (!value) return;
+      map.set(value.toLowerCase(), {
+        value,
+        label: String(option?.label || value).trim() || value,
+      });
+    });
+    if (!map.has(MEETING_TYPE_VALUE.toLowerCase())) {
+      map.set(MEETING_TYPE_VALUE.toLowerCase(), {
+        value: MEETING_TYPE_VALUE,
+        label: MEETING_TYPE_VALUE,
+      });
+    }
+    return Array.from(map.values());
+  }, [activityOptionValues.categories]);
   const defaultCategoryValue =
-    activityOptionValues.categories?.[0]?.value || FALLBACK_ACTIVITY_OPTION_VALUES.categories[0].value;
+    categoryOptions[0]?.value || FALLBACK_ACTIVITY_OPTION_VALUES.categories[0].value;
   const defaultValueType =
     activityOptionValues.valueTypes?.[0]?.value || FALLBACK_ACTIVITY_OPTION_VALUES.valueTypes[0].value;
   const defaultBudgetLine =
     activityOptionValues.budgetLines?.[0]?.value || FALLBACK_ACTIVITY_OPTION_VALUES.budgetLines[0].value;
+  const currentMemberId = parsePositiveInt(user?.id);
+  const currentUserRole = String(user?.role || "").trim().toLowerCase();
+  const canManageMeetings =
+    currentUserRole === "admin" ||
+    currentUserRole === "superadmin" ||
+    currentUserRole === "project_manager";
   const sourcePartnerById = useMemo(() => {
     const map = new Map();
     (organizationPartners || []).forEach((partner) => {
@@ -388,6 +649,70 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     () => [...(organizationPartners || [])].sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || ""))),
     [organizationPartners]
   );
+  const memberById = useMemo(() => {
+    const map = new Map();
+    (members || []).forEach((member) => {
+      const memberId = parsePositiveInt(member?.id);
+      if (!memberId) return;
+      map.set(String(memberId), member);
+    });
+    return map;
+  }, [members]);
+  const subscriberById = useMemo(() => {
+    const map = new Map();
+    (eventSubscribers || []).forEach((subscriber) => {
+      const subscriberId = parseSubscriberId(subscriber?.id);
+      if (!subscriberId) return;
+      map.set(String(subscriberId), subscriber);
+    });
+    return map;
+  }, [eventSubscribers]);
+  const participantRowsByMeetingId = useMemo(() => {
+    const map = new Map();
+    (meetingParticipants || []).forEach((row) => {
+      const meetingId = parsePositiveInt(row?.meeting_id);
+      if (!meetingId) return;
+      const key = String(meetingId);
+      const existing = map.get(key) || [];
+      existing.push(createParticipantDraft(row));
+      map.set(key, existing);
+    });
+    return map;
+  }, [meetingParticipants]);
+  const organizationLeadership = useMemo(
+    () => getOrganizationLeadershipRoles(asPlainObject(tenantSiteData)),
+    [tenantSiteData]
+  );
+  const organizationLeadershipIds = useMemo(
+    () => ({
+      chairperson_member_id: String(organizationLeadership.chairperson_member_id || "").trim(),
+      vice_chairperson_member_id: String(
+        organizationLeadership.vice_chairperson_member_id || ""
+      ).trim(),
+      secretary_member_id: String(organizationLeadership.secretary_member_id || "").trim(),
+      treasurer_member_id: String(organizationLeadership.treasurer_member_id || "").trim(),
+    }),
+    [organizationLeadership]
+  );
+  const organizationLeadershipNames = useMemo(
+    () => ({
+      chairperson:
+        memberById.get(String(organizationLeadershipIds.chairperson_member_id || ""))?.name || "",
+      viceChairperson:
+        memberById.get(String(organizationLeadershipIds.vice_chairperson_member_id || ""))?.name ||
+        "",
+      secretary:
+        memberById.get(String(organizationLeadershipIds.secretary_member_id || ""))?.name || "",
+      treasurer:
+        memberById.get(String(organizationLeadershipIds.treasurer_member_id || ""))?.name || "",
+    }),
+    [memberById, organizationLeadershipIds]
+  );
+  const tenantBrand = useMemo(
+    () => buildTenantBrand(tenantRecord || {}, asPlainObject(tenantSiteData)),
+    [tenantRecord, tenantSiteData]
+  );
+  const aiMinutesBackupConfigured = isMeetingMinutesAiConfigured();
   const posterFileLabel = useMemo(() => {
     if (activityPosterFile?.name) {
       return activityPosterFile.name;
@@ -448,7 +773,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
 
   useEffect(() => {
     setFormData((prev) => {
-      const categoryValues = (activityOptionValues.categories || []).map((item) => item.value);
+      const categoryValues = categoryOptions.map((item) => item.value);
       const valueTypeValues = (activityOptionValues.valueTypes || []).map((item) => item.value);
       const budgetLineValues = (activityOptionValues.budgetLines || []).map((item) => item.value);
       const partnerIds = new Set((organizationPartners || []).map((partner) => String(partner?.id || "").trim()).filter(Boolean));
@@ -484,6 +809,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
       };
     });
   }, [
+    categoryOptions,
     activityOptionValues,
     defaultCategoryValue,
     defaultValueType,
@@ -498,6 +824,15 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (isMeetingType(formData.type)) {
+      return;
+    }
+    if (activityTab === "minutes" || activityTab === "roster") {
+      setActivityTab("attendees");
+    }
+  }, [activityTab, formData.type]);
 
   const readCachedMeetings = () => {
     if (typeof window === "undefined") return [];
@@ -523,6 +858,34 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     }
   };
 
+  const reloadMeetingsAndParticipants = async (openMeetingId = null) => {
+    const [meetingData, participantData] = await Promise.all([
+      getMeetings(tenantId),
+      tenantId ? getMeetingParticipants(tenantId) : Promise.resolve([]),
+    ]);
+    persistMeetings(meetingData || []);
+    setMeetingParticipants(participantData || []);
+
+    if (openMeetingId) {
+      const matchingMeeting = (meetingData || []).find(
+        (meeting) => String(meeting?.id || "") === String(openMeetingId)
+      );
+      if (matchingMeeting) {
+        const matchingParticipants = (participantData || []).filter(
+          (participant) => String(participant?.meeting_id || "") === String(openMeetingId)
+        );
+        const nextActivity = buildActivityItemFromMeeting(matchingMeeting, matchingParticipants);
+        setSelectedActivity(nextActivity);
+        setFormData(createActivityForm(nextActivity));
+      }
+    }
+
+    return {
+      meetingData: meetingData || [],
+      participantData: participantData || [],
+    };
+  };
+
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
@@ -530,6 +893,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
         const cachedMeetings = readCachedMeetings();
         const [
           meetingsResult,
+          participantsResult,
           membersResult,
           welfareResult,
           subscribersResult,
@@ -537,6 +901,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
           tenantResult,
         ] = await Promise.allSettled([
           getMeetings(tenantId),
+          tenantId ? getMeetingParticipants(tenantId) : Promise.resolve([]),
           tenantId ? getMembersAdmin(tenantId) : Promise.resolve([]),
           tenantId ? getWelfareSummary(tenantId) : Promise.resolve(null),
           tenantId ? getEventSubscribers(tenantId) : Promise.resolve([]),
@@ -556,6 +921,13 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
         } else {
           console.error("Error loading members:", membersResult.reason);
           setMembers([]);
+        }
+
+        if (participantsResult.status === "fulfilled") {
+          setMeetingParticipants(participantsResult.value || []);
+        } else {
+          console.error("Error loading meeting participants:", participantsResult.reason);
+          setMeetingParticipants([]);
         }
 
         if (welfareResult.status === "fulfilled") {
@@ -581,20 +953,24 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
 
         if (tenantResult.status === "fulfilled") {
           const siteData = asPlainObject(tenantResult.value?.site_data);
+          setTenantRecord(tenantResult.value || null);
           setTenantSiteData(siteData);
           setOrganizationPartners(getOrganizationPartners(siteData));
         } else {
           console.error("Error loading tenant partner options:", tenantResult.reason);
+          setTenantRecord(null);
           setTenantSiteData({});
           setOrganizationPartners([]);
         }
       } catch (error) {
         console.error("Error loading data:", error);
         persistMeetings(readCachedMeetings());
+        setMeetingParticipants([]);
         setMembers([]);
         setWelfareSummary(null);
         setEventSubscribers([]);
         setActivityOptionValues(FALLBACK_ACTIVITY_OPTION_VALUES);
+        setTenantRecord(null);
         setTenantSiteData({});
         setOrganizationPartners([]);
       } finally {
@@ -618,8 +994,209 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
-      [name]: value,
+      [name]:
+        name === "type"
+          ? value
+          : name === "audience_scope"
+            ? value
+            : value,
+      ...(name === "type" && isMeetingType(value) && !prev.agenda_items.some((item) => item.title.trim())
+        ? { agenda_items: [createAgendaItem()] }
+        : {}),
     }));
+  };
+
+  const handleAgendaItemChange = (index, field, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      agenda_items: (prev.agenda_items || []).map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+        if (field === "resolutions") {
+          return {
+            ...item,
+            resolutions: value,
+          };
+        }
+        return {
+          ...item,
+          [field]: value,
+        };
+      }),
+    }));
+  };
+
+  const addAgendaItem = () => {
+    setFormData((prev) => ({
+      ...prev,
+      agenda_items: [...(prev.agenda_items || []), createAgendaItem()],
+    }));
+  };
+
+  const removeAgendaItem = (index) => {
+    setFormData((prev) => {
+      const remaining = (prev.agenda_items || []).filter((_, itemIndex) => itemIndex !== index);
+      return {
+        ...prev,
+        agenda_items: remaining.length ? remaining : [createAgendaItem()],
+      };
+    });
+  };
+
+  const handleAgendaResolutionChange = (agendaIndex, resolutionIndex, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      agenda_items: (prev.agenda_items || []).map((item, itemIndex) => {
+        if (itemIndex !== agendaIndex) return item;
+        const nextResolutions = Array.isArray(item.resolutions) ? [...item.resolutions] : [""];
+        nextResolutions[resolutionIndex] = value;
+        return {
+          ...item,
+          resolutions: nextResolutions,
+        };
+      }),
+    }));
+  };
+
+  const addAgendaResolution = (agendaIndex) => {
+    setFormData((prev) => ({
+      ...prev,
+      agenda_items: (prev.agenda_items || []).map((item, itemIndex) =>
+        itemIndex === agendaIndex
+          ? {
+              ...item,
+              resolutions: [...(Array.isArray(item.resolutions) ? item.resolutions : []), ""],
+            }
+          : item
+      ),
+    }));
+  };
+
+  const removeAgendaResolution = (agendaIndex, resolutionIndex) => {
+    setFormData((prev) => ({
+      ...prev,
+      agenda_items: (prev.agenda_items || []).map((item, itemIndex) => {
+        if (itemIndex !== agendaIndex) return item;
+        const nextResolutions = (Array.isArray(item.resolutions) ? item.resolutions : []).filter(
+          (_, itemResolutionIndex) => itemResolutionIndex !== resolutionIndex
+        );
+        return {
+          ...item,
+          resolutions: nextResolutions.length ? nextResolutions : [""],
+        };
+      }),
+    }));
+  };
+
+  const handleMinutesFieldChange = (section, field, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      minutes_data: {
+        ...prev.minutes_data,
+        [section]:
+          field === null
+            ? value
+            : {
+                ...(prev.minutes_data?.[section] || {}),
+                [field]: value,
+              },
+      },
+    }));
+  };
+
+  const buildAgendaBasedDraft = (value = {}) => ({
+    agenda_items: Array.isArray(value?.agenda_items)
+      ? value.agenda_items.map((item) => createAgendaItem(item))
+      : [],
+    minutes_data: buildMinutesDraftFromAgenda({
+      meetingTitle: value?.title,
+      meetingDate: value?.date,
+      agendaItems: value?.agenda_items || [],
+      leadershipNames: organizationLeadershipNames,
+    }),
+  });
+
+  const applyDraftMinutesFromAgenda = ({ overwrite = false } = {}) => {
+    setFormData((prev) => mergeMeetingDraftIntoForm(prev, buildAgendaBasedDraft(prev), { overwrite }));
+  };
+
+  const handleBuildMinutesDraft = async ({ overwrite = false } = {}) => {
+    if (!useAiMinutesBackup || !aiMinutesBackupConfigured) {
+      applyDraftMinutesFromAgenda({ overwrite });
+      return;
+    }
+
+    const currentDraftState = {
+      id: selectedActivity?.id || null,
+      title: formData.title,
+      date: formData.date,
+      description: formData.description,
+      location: formData.location,
+      agenda: formData.agenda,
+      audience_scope: formData.audience_scope,
+      start_at: formData.start_at || formData.startAt,
+      agenda_items: formData.agenda_items || [],
+      meeting_participants: formData.meeting_participants || [],
+      minutes_data: formData.minutes_data || createMinutesData(),
+    };
+    const fallbackDraft = buildAgendaBasedDraft(currentDraftState);
+    const draftParticipants = (Array.isArray(currentDraftState.meeting_participants)
+      ? currentDraftState.meeting_participants
+      : []
+    ).map((row) => createParticipantDraft(row));
+    const presentRows = draftParticipants.filter((participant) => participant.attendance_status === "attended");
+    const apologyRows = draftParticipants.filter((participant) => participant.rsvp_status === "apology");
+    const absentRows = draftParticipants.filter(
+      (participant) =>
+        participant.attendance_status === "absent" && participant.rsvp_status !== "apology"
+    );
+
+    setDraftingWithAi(true);
+    try {
+      const aiDraft = await enhanceMeetingMinutesDraftWithAi({
+        meeting: currentDraftState,
+        leadershipNames: organizationLeadershipNames,
+        agendaItems: currentDraftState.agenda_items,
+        presentRows,
+        apologyRows,
+        absentRows,
+        currentMinutesData: currentDraftState.minutes_data,
+        fallbackMinutesData: fallbackDraft.minutes_data,
+      });
+      setFormData((prev) => mergeMeetingDraftIntoForm(prev, aiDraft, { overwrite }));
+    } catch (error) {
+      console.error("Error generating AI meeting minutes draft:", error);
+      setFormData((prev) => mergeMeetingDraftIntoForm(prev, fallbackDraft, { overwrite }));
+      alert(`${error?.message || "OpenAI backup is unavailable right now."} Standard draft applied instead.`);
+    } finally {
+      setDraftingWithAi(false);
+    }
+  };
+
+  const handleAddAgendaPreset = () => {
+    const presetItem = buildAgendaItemFromPreset(selectedAgendaPresetKey);
+    if (!presetItem) return;
+
+    setFormData((prev) => {
+      const currentAgendaItems = Array.isArray(prev.agenda_items) ? prev.agenda_items : [];
+      const hasOnlyPlaceholder =
+        currentAgendaItems.length === 1 && !hasAgendaItemContent(currentAgendaItems[0]);
+      const nextAgendaItems = hasOnlyPlaceholder
+        ? [createAgendaItem(presetItem)]
+        : [...currentAgendaItems, createAgendaItem(presetItem)];
+      return {
+        ...prev,
+        agenda_items: nextAgendaItems,
+        minutes_data: mergeMinutesDraft(
+          prev.minutes_data,
+          buildAgendaBasedDraft({
+            ...prev,
+            agenda_items: nextAgendaItems,
+          }).minutes_data,
+          { overwrite: false }
+        ),
+      };
+    });
+    setSelectedAgendaPresetKey("");
   };
 
   const handleSourcePartnerSelect = (event) => {
@@ -781,6 +1358,11 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
       alert("Activity title is required");
       return;
     }
+    if (isMeetingType(formData.type) && !formData.agenda_items.some((item) => item.title.trim())) {
+      alert("Meetings require at least one agenda item.");
+      setActivityTab("details");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -827,43 +1409,47 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
         poster_path: posterMeta.poster_path || null,
         assignees: formData.assignees || [],
         attendees: formData.attendees || [],
+        audience_scope: formData.audience_scope || "selected_members",
+        agenda_items: formData.agenda_items || [],
+        chairperson_member_id:
+          formData.chairperson_member_id || organizationLeadershipIds.chairperson_member_id || null,
+        secretary_member_id:
+          formData.secretary_member_id || organizationLeadershipIds.secretary_member_id || null,
+        minutes_status: formData.minutes_status || "draft",
+        minutes_data: formData.minutes_data || createMinutesData(),
       };
 
+      let savedActivity = null;
       if (selectedActivity) {
         // Update existing activity
-        await updateOrganizationActivity(selectedActivity.id, activityPayload, tenantId);
+        savedActivity = await updateOrganizationActivity(selectedActivity.id, activityPayload, tenantId);
       } else {
         // Create new activity
-        await createOrganizationActivity(activityPayload, tenantId);
+        savedActivity = await createOrganizationActivity(activityPayload, tenantId);
       }
 
       // Reset form and reload meetings
-      setFormData({
-        title: "",
-        type: defaultCategoryValue,
-        date: new Date().toISOString().split("T")[0],
-        description: "",
-        status: "scheduled",
-        value_type: defaultValueType,
-        budget_line: defaultBudgetLine,
-        source_partner_id: "",
-        source_partner_name: "",
-        poster_url: "",
-        poster_path: "",
-        location: "",
-        agenda: "",
-        assignees: [],
-        attendees: [],
-      });
+      setFormData(
+        createActivityForm({
+          type: defaultCategoryValue,
+          value_type: defaultValueType,
+          budget_line: defaultBudgetLine,
+        })
+      );
       resetPosterUploadState("");
       resetSourcePartnerModal();
       setSelectedActivity(null);
       setActivityTab("details");
       setShowAddActivityModal(false);
+      setShowNewSubscriberForm(false);
+      setNewSubscriber({ name: "", email: "", contact: "" });
+      setSelectedAgendaPresetKey("");
 
-      // Reload meetings
-      const data = await getMeetings(tenantId);
-      persistMeetings(data || []);
+      await reloadMeetingsAndParticipants();
+
+      if (savedActivity?.id) {
+        setCalendarPreviewActivityId(String(savedActivity.id));
+      }
     } catch (error) {
       console.error("Error saving activity:", error);
       alert(`Error saving activity: ${error.message}`);
@@ -874,41 +1460,12 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
 
   const activityItems = useMemo(() => {
     return (meetings || [])
-      .map((meeting) => {
-        const dateValue = meeting?.date || meeting?.meeting_date || meeting?.created_at || "";
-        const statusKey = normalizeActivityStatus(meeting?.status, dateValue);
-        const normalizedAttendees = normalizeAttendeeTokens(
-          meeting?.attendees_data ?? meeting?.attendees
-        );
-        const rawAssignees = normalizeMemberIdArray(
-          normalizeArrayField(meeting?.assignees).length ? meeting?.assignees : meeting?.attendees
-        );
-        const ownerMemberId = parsePositiveInt(meeting?.owner_member_id);
-        const normalizedAssignees =
-          ownerMemberId && !rawAssignees.includes(ownerMemberId)
-            ? [ownerMemberId, ...rawAssignees]
-            : rawAssignees;
-        return {
-          id: meeting?.id,
-          title: meeting?.title || meeting?.agenda || meeting?.type || "Untitled activity",
-          category: meeting?.type || "General",
-          date: dateValue,
-          description: meeting?.description || "",
-          location: meeting?.location || "",
-          status: meeting?.status || statusKey,
-          valueType: meeting?.value_type || "",
-          budgetLine: meeting?.budget_line || "",
-          sourcePartnerId: String(meeting?.source_partner_id || "").trim(),
-          sourcePartnerName: String(meeting?.source_partner_name || "").trim(),
-          posterUrl: String(meeting?.poster_url || "").trim(),
-          posterPath: String(meeting?.poster_path || "").trim(),
-          statusKey,
-          statusLabel: formatStatusLabel(statusKey),
-          statusTone: ACTIVITY_STATUS_META[statusKey]?.tone || "upcoming",
-          assignees: normalizedAssignees,
-          attendees: normalizedAttendees,
-        };
-      })
+      .map((meeting) =>
+        buildActivityItemFromMeeting(
+          meeting,
+          participantRowsByMeetingId.get(String(meeting?.id || "")) || []
+        )
+      )
       .sort((left, right) => {
         const leftTime = Date.parse(String(left?.date || ""));
         const rightTime = Date.parse(String(right?.date || ""));
@@ -916,7 +1473,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
         const safeRight = Number.isFinite(rightTime) ? rightTime : Number.MAX_SAFE_INTEGER;
         return safeLeft - safeRight;
       });
-  }, [meetings]);
+  }, [meetings, participantRowsByMeetingId]);
 
   const typeOptions = useMemo(() => {
     const unique = new Set(["all"]);
@@ -1085,19 +1642,22 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     return activityByIdentity.get(calendarPreviewActivityId) || null;
   }, [calendarPreviewActivityId, activityByIdentity]);
 
-  const calendarPreviewTeamNames = useMemo(() => {
-    if (!calendarPreviewActivity) return [];
-    return getActivityMemberIds(calendarPreviewActivity)
-      .map((memberId) => memberNameById.get(String(memberId)))
-      .filter(Boolean);
-  }, [calendarPreviewActivity, memberNameById]);
-
   const calendarPreviewAttendeeCount = useMemo(() => {
     if (!calendarPreviewActivity) return 0;
-    const attendeeTokens = normalizeAttendeeTokens(calendarPreviewActivity.attendees);
-    const assigneeTokens = normalizeMemberIdArray(calendarPreviewActivity.assignees).map((memberId) => `member:${memberId}`);
-    return new Set([...attendeeTokens, ...assigneeTokens]).size;
+    return Number(calendarPreviewActivity.invitedCount || 0);
   }, [calendarPreviewActivity]);
+  const calendarPreviewParticipantSummary = useMemo(
+    () => summarizeMeetingParticipants(calendarPreviewActivity?.meetingParticipants),
+    [calendarPreviewActivity]
+  );
+  const calendarPreviewCurrentParticipant = useMemo(() => {
+    if (!calendarPreviewActivity || !currentMemberId) return null;
+    return (calendarPreviewActivity.meetingParticipants || []).find(
+      (participant) =>
+        participant.participant_type === "member" &&
+        Number(participant.member_id) === currentMemberId
+    );
+  }, [calendarPreviewActivity, currentMemberId]);
 
   const calendarPreviewDateMeta = useMemo(() => {
     if (!calendarPreviewActivity?.date) {
@@ -1118,6 +1678,74 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     () => (calendarPreviewActivity ? getActivityVisual(calendarPreviewActivity.category) : { icon: "calendar", tone: "general" }),
     [calendarPreviewActivity]
   );
+  const draftMeetingParticipants = useMemo(() => {
+    if (!isMeetingType(formData.type)) {
+      return [];
+    }
+    const existingByToken = new Map(
+      (Array.isArray(formData.meeting_participants) ? formData.meeting_participants : [])
+        .map((row) => {
+          const draft = createParticipantDraft(row);
+          const token =
+            draft.token ||
+            `${draft.participant_type}:${
+              draft.participant_type === "subscriber" ? draft.subscriber_id : draft.member_id
+            }`;
+          return [token, draft];
+        })
+        .filter(([token]) => Boolean(token))
+    );
+    const tokens = new Set(normalizeAttendeeTokens(formData.attendees));
+    if (formData.audience_scope === "all_members") {
+      (members || []).forEach((member) => {
+        const memberId = parsePositiveInt(member?.id);
+        if (memberId) {
+          tokens.add(`member:${memberId}`);
+        }
+      });
+    }
+
+    return Array.from(tokens).map((token) => {
+      const existingDraft = existingByToken.get(token);
+      if (existingDraft) {
+        return existingDraft;
+      }
+      const [participantType, rawId] = token.split(":");
+      const participantId =
+        participantType === "subscriber" ? parseSubscriberId(rawId) : parsePositiveInt(rawId);
+      const member = participantType === "member" ? memberById.get(String(participantId)) : null;
+      const subscriber =
+        participantType === "subscriber" ? subscriberById.get(String(participantId)) : null;
+      return createParticipantDraft({
+        token,
+        participant_type: participantType,
+        member_id: participantType === "member" ? participantId : null,
+        subscriber_id: participantType === "subscriber" ? participantId : null,
+        member,
+        subscriber,
+      });
+    });
+  }, [
+    formData.type,
+    formData.meeting_participants,
+    formData.attendees,
+    formData.audience_scope,
+    members,
+    memberById,
+    subscriberById,
+  ]);
+  const draftMeetingParticipantSummary = useMemo(
+    () => summarizeMeetingParticipants(draftMeetingParticipants),
+    [draftMeetingParticipants]
+  );
+  const currentMeetingParticipant = useMemo(() => {
+    if (!currentMemberId) return null;
+    return draftMeetingParticipants.find(
+      (participant) =>
+        participant.participant_type === "member" &&
+        Number(participant.member_id) === currentMemberId
+    );
+  }, [draftMeetingParticipants, currentMemberId]);
 
   const toggleCalendarPreviewActivity = (item) => {
     const identity = getActivityIdentity(item);
@@ -1161,28 +1789,193 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     });
   };
 
+  const updateParticipantDraft = (participantId, field, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      meeting_participants: (prev.meeting_participants || []).map((participant) =>
+        participant.id === participantId
+          ? {
+              ...participant,
+              [field]: value,
+            }
+          : participant
+      ),
+    }));
+  };
+
+  const handleParticipantStatusChange = async (participant, field, value) => {
+    if (!participant || !participant.id || !selectedActivity?.id || !tenantId || !canManageMeetings) {
+      return;
+    }
+    updateParticipantDraft(participant.id, field, value);
+    setUpdatingParticipants(true);
+    try {
+      await updateMeetingParticipants(
+        [
+          {
+            id: participant.id,
+            [field]: value,
+          },
+        ],
+        tenantId,
+        currentMemberId
+      );
+      await reloadMeetingsAndParticipants(selectedActivity.id);
+    } catch (error) {
+      console.error("Error updating meeting participant:", error);
+      alert(error?.message || "Failed to update participant status.");
+    } finally {
+      setUpdatingParticipants(false);
+    }
+  };
+
+  const handleMeetingRsvp = async (meetingId, rsvpStatus) => {
+    if (!meetingId) return;
+    setUpdatingParticipants(true);
+    try {
+      await respondMeetingInvitation(meetingId, rsvpStatus);
+      await reloadMeetingsAndParticipants(meetingId);
+    } catch (error) {
+      console.error("Error responding to meeting invitation:", error);
+      alert(error?.message || "Could not update your RSVP.");
+    } finally {
+      setUpdatingParticipants(false);
+    }
+  };
+
+  const handleGenerateMinutes = async () => {
+    if (!selectedActivity?.id || !tenantId || !isMeetingType(selectedActivity.category) || !canManageMeetings) {
+      return;
+    }
+
+    setEmittingMinutes(true);
+    try {
+      await updateOrganizationActivity(
+        selectedActivity.id,
+        {
+          title: formData.title,
+          agenda: formData.agenda || formData.title,
+          type: formData.type,
+          date: formData.date,
+          description: formData.description,
+          location: formData.location,
+          status: formData.status,
+          value_type: formData.value_type,
+          budget_line: formData.budget_line,
+          source_partner_id: formData.source_partner_id || null,
+          source_partner_name:
+            sourcePartnerById.get(String(formData.source_partner_id || ""))?.name ||
+            formData.source_partner_name ||
+            null,
+          poster_url: normalizeOptionalText(formData.poster_url),
+          poster_path: normalizeOptionalText(formData.poster_path),
+          assignees: formData.assignees || [],
+          attendees: formData.attendees || [],
+          audience_scope: formData.audience_scope || "selected_members",
+          agenda_items: formData.agenda_items || [],
+          chairperson_member_id:
+            formData.chairperson_member_id || organizationLeadershipIds.chairperson_member_id || null,
+          secretary_member_id:
+            formData.secretary_member_id || organizationLeadershipIds.secretary_member_id || null,
+          minutes_status: formData.minutes_status || "draft",
+          minutes_data: formData.minutes_data || createMinutesData(),
+        },
+        tenantId
+      );
+      const finalizedMeeting = await finalizeMeetingAttendance(selectedActivity.id, tenantId, currentMemberId);
+      const { meetingData, participantData } = await reloadMeetingsAndParticipants(selectedActivity.id);
+      const activeMeeting =
+        (meetingData || []).find((meeting) => String(meeting?.id || "") === String(selectedActivity.id)) ||
+        finalizedMeeting;
+      const activeParticipants = (participantData || []).filter(
+        (participant) => String(participant?.meeting_id || "") === String(selectedActivity.id)
+      );
+      const draftedParticipants = activeParticipants.map((participant) => createParticipantDraft(participant));
+      const presentRows = draftedParticipants.filter(
+        (participant) => participant.attendance_status === "attended"
+      );
+      const apologyRows = draftedParticipants.filter(
+        (participant) => participant.rsvp_status === "apology"
+      );
+      const absentRows = draftedParticipants.filter(
+        (participant) =>
+          participant.attendance_status === "absent" && participant.rsvp_status !== "apology"
+      );
+      const meetingItem = buildActivityItemFromMeeting(activeMeeting, activeParticipants);
+      const resolvedChairpersonId =
+        String(meetingItem.chairperson_member_id || organizationLeadershipIds.chairperson_member_id || "").trim();
+      const resolvedSecretaryId =
+        String(meetingItem.secretary_member_id || organizationLeadershipIds.secretary_member_id || "").trim();
+      const generatedAt = new Date().toISOString();
+      const titleLabel = String(meetingItem.title || "Meeting").trim();
+      const fileName = `${toFilenameSlug(titleLabel)}-minutes-${generatedAt.slice(0, 10)}.pdf`;
+      const file = await buildMeetingMinutesReportFile({
+        tenantBrand,
+        fileName,
+        context: {
+          meeting: {
+            title: meetingItem.title,
+            date: meetingItem.date,
+            location: meetingItem.location,
+            agenda: meetingItem.agenda,
+            startAtLabel: meetingItem.startAt,
+          },
+          meetingTitle: meetingItem.title,
+          meetingDate: meetingItem.date,
+          agendaItems: meetingItem.agenda_items,
+          minutesData: meetingItem.minutes_data,
+          presentRows,
+          apologyRows,
+          absentRows,
+          chairpersonName: memberNameById.get(resolvedChairpersonId) || organizationLeadershipNames.chairperson || "",
+          secretaryName: memberNameById.get(resolvedSecretaryId) || organizationLeadershipNames.secretary || "",
+          generatedAt,
+          generatedBy: String(user?.name || user?.email || "Habuks").trim(),
+        },
+      });
+
+      await uploadOrganizationDocument(
+        file,
+        {
+          name: `Meeting Minutes - ${titleLabel}.pdf`,
+          type: "Meeting Minutes",
+          description: `Generated minutes for ${titleLabel}`,
+          uploadedByMemberId: currentMemberId,
+        },
+        tenantId
+      );
+      alert("Meeting minutes generated and saved to organization documents.");
+    } catch (error) {
+      console.error("Error generating meeting minutes:", error);
+      alert(error?.message || "Failed to generate meeting minutes.");
+    } finally {
+      setEmittingMinutes(false);
+    }
+  };
+
   const openCreateActivityModal = (template = null) => {
     setSelectedActivity(null);
     setActivityTab("details");
     resetSourcePartnerModal();
     resetPosterUploadState("");
-    setFormData({
-      title: template?.title || "",
-      type: template?.type || defaultCategoryValue,
-      date: new Date().toISOString().split("T")[0],
-      description: template?.description || "",
-      status: "scheduled",
-      value_type: defaultValueType,
-      budget_line: defaultBudgetLine,
-      source_partner_id: "",
-      source_partner_name: "",
-      poster_url: "",
-      poster_path: "",
-      location: "",
-      agenda: template?.title || "",
-      assignees: [],
-      attendees: [],
-    });
+    setShowNewSubscriberForm(false);
+    setNewSubscriber({ name: "", email: "", contact: "" });
+    setSelectedAgendaPresetKey("");
+    setFormData(
+      createActivityForm({
+        title: template?.title || "",
+        type: template?.type || defaultCategoryValue,
+        date: new Date().toISOString().split("T")[0],
+        description: template?.description || "",
+        status: "scheduled",
+        value_type: defaultValueType,
+        budget_line: defaultBudgetLine,
+        agenda: template?.title || "",
+        attendees: [],
+        chairperson_member_id: organizationLeadershipIds.chairperson_member_id || "",
+        secretary_member_id: organizationLeadershipIds.secretary_member_id || "",
+      })
+    );
     setShowAddActivityModal(true);
   };
 
@@ -1192,23 +1985,37 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
     setActivityTab(tab);
     resetSourcePartnerModal();
     resetPosterUploadState(item.posterUrl || "");
-    setFormData({
-      title: item.title || "",
-      type: item.category || defaultCategoryValue,
-      date: item.date ? String(item.date).split("T")[0] : new Date().toISOString().split("T")[0],
-      description: item.description || "",
-      status: toFormStatusValue(item.status, item.statusKey),
-      value_type: item.valueType || defaultValueType,
-      budget_line: item.budgetLine || defaultBudgetLine,
-      source_partner_id: item.sourcePartnerId || "",
-      source_partner_name: item.sourcePartnerName || "",
-      poster_url: item.posterUrl || "",
-      poster_path: item.posterPath || "",
-      location: item.location || "",
-      agenda: item.title || "",
-      assignees: normalizeMemberIdArray(item.assignees),
-      attendees: normalizeAttendeeTokens(item.attendees),
-    });
+    setShowNewSubscriberForm(false);
+    setNewSubscriber({ name: "", email: "", contact: "" });
+    setSelectedAgendaPresetKey("");
+    setFormData(
+      createActivityForm({
+        title: item.title || "",
+        type: item.category || defaultCategoryValue,
+        date: item.date ? String(item.date).split("T")[0] : new Date().toISOString().split("T")[0],
+        description: item.description || "",
+        status: toFormStatusValue(item.status, item.statusKey),
+        value_type: item.valueType || defaultValueType,
+        budget_line: item.budgetLine || defaultBudgetLine,
+        source_partner_id: item.sourcePartnerId || "",
+        source_partner_name: item.sourcePartnerName || "",
+        poster_url: item.posterUrl || "",
+        poster_path: item.posterPath || "",
+        location: item.location || "",
+        agenda: item.agenda || item.title || "",
+        assignees: normalizeMemberIdArray(item.assignees),
+        attendees: normalizeAttendeeTokens(item.attendees),
+        audience_scope: item.audience_scope || item.audienceScope || "selected_members",
+        agenda_items: item.agenda_items || [],
+        chairperson_member_id:
+          item.chairperson_member_id || organizationLeadershipIds.chairperson_member_id || "",
+        secretary_member_id:
+          item.secretary_member_id || organizationLeadershipIds.secretary_member_id || "",
+        minutes_status: item.minutes_status || "draft",
+        minutes_data: item.minutes_data || createMinutesData(),
+        meeting_participants: item.meetingParticipants || [],
+      })
+    );
     setShowAddActivityModal(true);
   };
 
@@ -1249,7 +2056,9 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
         </article>
         <article className="activities-hub-kpi">
           <span className="activities-hub-kpi-label">Welfare Balance</span>
-          <strong className="activities-hub-kpi-value">KES {(welfareSummary?.currentBalance || 0).toLocaleString("en-KE")}</strong>
+          <strong className="activities-hub-kpi-value">
+            {formatMoney(welfareSummary?.currentBalance || 0)}
+          </strong>
           <small className="activities-hub-kpi-meta">{members.length} members connected</small>
         </article>
       </section>
@@ -1516,17 +2325,48 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                   <div className="activities-event-footer-meta">
                     <span>
                       <Icon name="users" size={13} />
-                      {calendarPreviewAttendeeCount || 0} attendee{calendarPreviewAttendeeCount === 1 ? "" : "s"}
+                      {calendarPreviewAttendeeCount || 0} invitee{calendarPreviewAttendeeCount === 1 ? "" : "s"}
                     </span>
-                    <small>{calendarPreviewActivity.location || "Location not set"}</small>
+                    <small>
+                      {isMeetingType(calendarPreviewActivity.category)
+                        ? `${calendarPreviewParticipantSummary.confirmed} confirmed • ${calendarPreviewParticipantSummary.attended} present`
+                        : calendarPreviewActivity.location || "Location not set"}
+                    </small>
                   </div>
-                  <button
-                    type="button"
-                    className="activities-event-attendees-btn"
-                    onClick={() => openEditActivityModal(calendarPreviewActivity, "attendees")}
-                  >
-                    View attendees
-                  </button>
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    {isMeetingType(calendarPreviewActivity.category) && calendarPreviewCurrentParticipant ? (
+                      <>
+                        <button
+                          type="button"
+                          className="activities-event-attendees-btn"
+                          onClick={() => handleMeetingRsvp(calendarPreviewActivity.id, "confirmed")}
+                          disabled={updatingParticipants}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          className="activities-event-attendees-btn"
+                          onClick={() => handleMeetingRsvp(calendarPreviewActivity.id, "apology")}
+                          disabled={updatingParticipants}
+                        >
+                          Apology
+                        </button>
+                      </>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="activities-event-attendees-btn"
+                      onClick={() =>
+                        openEditActivityModal(
+                          calendarPreviewActivity,
+                          isMeetingType(calendarPreviewActivity.category) ? "roster" : "attendees"
+                        )
+                      }
+                    >
+                      {isMeetingType(calendarPreviewActivity.category) ? "View roster" : "View attendees"}
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -1682,6 +2522,9 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
           setSelectedActivity(null);
           resetSourcePartnerModal();
           resetPosterUploadState("");
+          setShowNewSubscriberForm(false);
+          setNewSubscriber({ name: "", email: "", contact: "" });
+          setSelectedAgendaPresetKey("");
         }}
         title={selectedActivity ? "Edit activity" : "Add activity"}
         subtitle={selectedActivity ? "Update activity details and members." : "Capture activity details, value impact, and ownership."}
@@ -1720,11 +2563,22 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
             </button>
             <button
               type="button"
-              className={`data-modal-tab ${activityTab === "attendees" ? "active" : ""}`}
-              onClick={() => setActivityTab("attendees")}
+              className={`data-modal-tab ${
+                activityTab === "attendees" || activityTab === "roster" ? "active" : ""
+              }`}
+              onClick={() => setActivityTab(isMeetingType(formData.type) ? "roster" : "attendees")}
             >
-              Attendees
+              {isMeetingType(formData.type) ? "Roster" : "Attendees"}
             </button>
+            {isMeetingType(formData.type) ? (
+              <button
+                type="button"
+                className={`data-modal-tab ${activityTab === "minutes" ? "active" : ""}`}
+                onClick={() => setActivityTab("minutes")}
+              >
+                Minutes
+              </button>
+            ) : null}
           </div>
 
           {activityTab === "details" ? (
@@ -1746,7 +2600,7 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                   value={formData.type}
                   onChange={handleFormChange}
                 >
-                  {(activityOptionValues.categories || FALLBACK_ACTIVITY_OPTION_VALUES.categories).map((option) => (
+                  {categoryOptions.map((option) => (
                     <option key={`activity-category-${option.value}`} value={option.value}>
                       {option.label}
                     </option>
@@ -1834,13 +2688,239 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                   placeholder="Add a short description for this activity."
                 />
               </label>
+              {isMeetingType(formData.type) ? (
+                <>
+                  <label className="data-modal-field data-modal-field--full">
+                    Agenda summary
+                    <textarea
+                      rows="3"
+                      name="agenda"
+                      value={formData.agenda}
+                      onChange={handleFormChange}
+                      placeholder="Short summary of the meeting purpose and overall agenda."
+                    />
+                  </label>
+                  <label className="data-modal-field">
+                    Invite scope
+                    <select
+                      name="audience_scope"
+                      value={formData.audience_scope}
+                      onChange={handleFormChange}
+                    >
+                      <option value="selected_members">Selected members only</option>
+                      <option value="all_members">All tenant members</option>
+                    </select>
+                  </label>
+                  <div className="data-modal-field data-modal-field--full">
+                    <div
+                      style={{
+                        border: "1px solid #dbe3ee",
+                        borderRadius: "12px",
+                        padding: "1rem",
+                        background: "#f8fbff",
+                        display: "grid",
+                        gap: "0.5rem",
+                      }}
+                    >
+                      <strong>Meeting leadership</strong>
+                      <small style={{ color: "#64748b" }}>
+                        Leadership is pulled automatically from organization settings.
+                      </small>
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                          gap: "0.75rem",
+                          marginTop: "0.35rem",
+                        }}
+                      >
+                        <div>
+                          <span style={{ display: "block", color: "#64748b", fontSize: "0.82rem" }}>
+                            Chairperson
+                          </span>
+                          <strong>{organizationLeadershipNames.chairperson || "Not assigned"}</strong>
+                        </div>
+                        <div>
+                          <span style={{ display: "block", color: "#64748b", fontSize: "0.82rem" }}>
+                            Secretary
+                          </span>
+                          <strong>{organizationLeadershipNames.secretary || "Not assigned"}</strong>
+                        </div>
+                        <div>
+                          <span style={{ display: "block", color: "#64748b", fontSize: "0.82rem" }}>
+                            Treasurer
+                          </span>
+                          <strong>{organizationLeadershipNames.treasurer || "Not assigned"}</strong>
+                        </div>
+                      </div>
+                      {!organizationLeadershipIds.chairperson_member_id ||
+                      !organizationLeadershipIds.secretary_member_id ? (
+                        <small style={{ color: "#b45309" }}>
+                          Set chairperson and secretary in organization settings to auto-fill
+                          governance documents.
+                        </small>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="data-modal-field data-modal-field--full">
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0, 1fr) auto",
+                        gap: "0.75rem",
+                        alignItems: "end",
+                      }}
+                    >
+                      <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                        Quick agenda preset
+                        <select
+                          value={selectedAgendaPresetKey}
+                          onChange={(event) => setSelectedAgendaPresetKey(event.target.value)}
+                        >
+                          <option value="">Choose a common agenda...</option>
+                          {Array.from(
+                            MEETING_AGENDA_PRESET_OPTIONS.reduce((groups, option) => {
+                              const existing = groups.get(option.group) || [];
+                              existing.push(option);
+                              groups.set(option.group, existing);
+                              return groups;
+                            }, new Map())
+                          ).map(([groupLabel, options]) => (
+                            <optgroup key={`agenda-group-${groupLabel}`} label={groupLabel}>
+                              {options.map((option) => (
+                                <option key={`agenda-preset-${option.key}`} value={option.key}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="data-modal-inline-btn"
+                        onClick={handleAddAgendaPreset}
+                        disabled={!selectedAgendaPresetKey}
+                      >
+                        <Icon name="plus" size={14} />
+                        Add preset
+                      </button>
+                    </div>
+                    <small style={{ color: "#64748b", display: "block", marginTop: "0.45rem" }}>
+                      Presets add agenda items with ready-made discussion and resolution drafts so the
+                      minutes wizard starts nearly complete.
+                    </small>
+                  </div>
+                  <div className="data-modal-field data-modal-field--full">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
+                      <label style={{ margin: 0 }}>Agenda items</label>
+                      <button type="button" className="data-modal-inline-btn" onClick={addAgendaItem}>
+                        <Icon name="plus" size={14} />
+                        Add agenda item
+                      </button>
+                    </div>
+                    <small style={{ color: "#64748b", display: "block", marginTop: "0.35rem" }}>
+                      Each item becomes a numbered section in the generated minutes.
+                    </small>
+                    <div style={{ display: "grid", gap: "0.85rem", marginTop: "0.9rem" }}>
+                      {(formData.agenda_items || []).map((item, index) => (
+                        <div
+                          key={`meeting-agenda-item-${index}`}
+                          style={{
+                            border: "1px solid #dbe3ee",
+                            borderRadius: "12px",
+                            padding: "1rem",
+                            background: "#f8fbff",
+                            display: "grid",
+                            gap: "0.75rem",
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "center" }}>
+                            <strong>Item {index + 1}</strong>
+                            <button
+                              type="button"
+                              className="data-modal-inline-btn"
+                              onClick={() => removeAgendaItem(index)}
+                              disabled={(formData.agenda_items || []).length <= 1}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                            Title
+                            <input
+                              type="text"
+                              value={item.title}
+                              onChange={(event) =>
+                                handleAgendaItemChange(index, "title", event.target.value)
+                              }
+                              placeholder="e.g. Review of previous action items"
+                            />
+                          </label>
+                          <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                            Discussion notes
+                            <textarea
+                              rows="3"
+                              value={item.details}
+                              onChange={(event) =>
+                                handleAgendaItemChange(index, "details", event.target.value)
+                              }
+                              placeholder="Capture the discussion points for this agenda item."
+                            />
+                          </label>
+                          <div style={{ display: "grid", gap: "0.5rem" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "center" }}>
+                              <span style={{ fontSize: "0.92rem", fontWeight: 600 }}>Resolutions</span>
+                              <button
+                                type="button"
+                                className="data-modal-inline-btn"
+                                onClick={() => addAgendaResolution(index)}
+                              >
+                                <Icon name="plus" size={14} />
+                                Add resolution
+                              </button>
+                            </div>
+                            {(item.resolutions || [""]).map((resolution, resolutionIndex) => (
+                              <div
+                                key={`meeting-agenda-resolution-${index}-${resolutionIndex}`}
+                                style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
+                              >
+                                <input
+                                  type="text"
+                                  value={resolution}
+                                  onChange={(event) =>
+                                    handleAgendaResolutionChange(
+                                      index,
+                                      resolutionIndex,
+                                      event.target.value
+                                    )
+                                  }
+                                  placeholder="Add a resolution or action taken."
+                                />
+                                <button
+                                  type="button"
+                                  className="data-modal-inline-btn"
+                                  onClick={() => removeAgendaResolution(index, resolutionIndex)}
+                                  disabled={(item.resolutions || []).length <= 1}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : null}
             </div>
           ) : null}
 
           {activityTab === "finance" ? (
             <div className="data-modal-grid">
               <label className="data-modal-field">
-                Amount (KES)
+                {formatFieldLabel("Amount")}
                 <input type="number" placeholder="5000" />
               </label>
               <label className="data-modal-field">
@@ -1963,67 +3043,375 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
             </div>
           ) : null}
 
-          {activityTab === "attendees" ? (
+          {activityTab === "attendees" || activityTab === "roster" ? (
             <div className="data-modal-grid">
-              {/* Members as Attendees */}
-              <div className="data-modal-field data-modal-field--full">
-                <label>Members Attending</label>
-                <div className="member-selection-grid">
-                  {members && members.length > 0 ? (
-                    members.map((member) => (
-                      <label key={`member-${member.id}`} className="member-checkbox">
-                        <input
-                          type="checkbox"
-                          checked={(formData.attendees || []).includes(`member:${member.id}`)}
-                          onChange={() => handleToggleAttendee(member.id, "member")}
-                        />
-                        <span className="member-checkbox-label">
-                          <span className="member-avatar-small">
-                            {member.name?.charAt(0).toUpperCase() || "?"}
-                          </span>
-                          <span className="member-info">
-                            <span className="member-name">{member.name}</span>
-                            <span className="member-role">{member.role}</span>
-                          </span>
-                        </span>
-                      </label>
-                    ))
-                  ) : (
-                    <p style={{ color: "#999", padding: "1rem" }}>No members available</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Event Subscribers */}
-              {eventSubscribers && eventSubscribers.length > 0 && (
-                <div className="data-modal-field data-modal-field--full">
-                  <label>Event Subscribers</label>
-                  <div className="member-selection-grid">
-                    {eventSubscribers.map((subscriber) => (
-                      <label key={`subscriber-${subscriber.id}`} className="member-checkbox">
-                        <input
-                          type="checkbox"
-                          checked={(formData.attendees || []).includes(`subscriber:${subscriber.id}`)}
-                          onChange={() => handleToggleAttendee(subscriber.id, "subscriber")}
-                        />
-                        <span className="member-checkbox-label">
-                          <span className="member-avatar-small">
-                            {subscriber.name?.charAt(0).toUpperCase() || "?"}
-                          </span>
-                          <span className="member-info">
-                            <span className="member-name">{subscriber.name}</span>
-                            <span className="member-role">{subscriber.email}</span>
-                          </span>
-                        </span>
-                      </label>
-                    ))}
+              {isMeetingType(formData.type) ? (
+                <>
+                  <div className="data-modal-field data-modal-field--full">
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                        gap: "0.75rem",
+                      }}
+                    >
+                      <div style={{ border: "1px solid #dbe3ee", borderRadius: "12px", padding: "0.9rem", background: "#f8fbff" }}>
+                        <small style={{ color: "#64748b", display: "block" }}>Invited</small>
+                        <strong>{draftMeetingParticipantSummary.invited}</strong>
+                      </div>
+                      <div style={{ border: "1px solid #dbe3ee", borderRadius: "12px", padding: "0.9rem", background: "#f8fbff" }}>
+                        <small style={{ color: "#64748b", display: "block" }}>Confirmed</small>
+                        <strong>{draftMeetingParticipantSummary.confirmed}</strong>
+                      </div>
+                      <div style={{ border: "1px solid #dbe3ee", borderRadius: "12px", padding: "0.9rem", background: "#f8fbff" }}>
+                        <small style={{ color: "#64748b", display: "block" }}>Apologies</small>
+                        <strong>{draftMeetingParticipantSummary.apology}</strong>
+                      </div>
+                      <div style={{ border: "1px solid #dbe3ee", borderRadius: "12px", padding: "0.9rem", background: "#f8fbff" }}>
+                        <small style={{ color: "#64748b", display: "block" }}>Marked present</small>
+                        <strong>{draftMeetingParticipantSummary.attended}</strong>
+                      </div>
+                    </div>
+                    <small style={{ color: "#64748b", display: "block", marginTop: "0.75rem" }}>
+                      Members can confirm or send apologies. When minutes are generated, any invitee
+                      still not marked present is finalized as absent.
+                    </small>
                   </div>
-                </div>
+
+                  {currentMeetingParticipant && selectedActivity?.id ? (
+                    <div className="data-modal-field data-modal-field--full">
+                      <label>Your RSVP</label>
+                      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          className="data-modal-btn data-modal-btn--primary"
+                          onClick={() => handleMeetingRsvp(selectedActivity.id, "confirmed")}
+                          disabled={updatingParticipants}
+                        >
+                          Confirm attendance
+                        </button>
+                        <button
+                          type="button"
+                          className="data-modal-btn"
+                          onClick={() => handleMeetingRsvp(selectedActivity.id, "apology")}
+                          disabled={updatingParticipants}
+                        >
+                          Send apology
+                        </button>
+                        <button
+                          type="button"
+                          className="data-modal-btn"
+                          onClick={() => handleMeetingRsvp(selectedActivity.id, "declined")}
+                          disabled={updatingParticipants}
+                        >
+                          Decline
+                        </button>
+                      </div>
+                      <small style={{ color: "#64748b", display: "block", marginTop: "0.5rem" }}>
+                        Current status:{" "}
+                        <strong>
+                          {String(currentMeetingParticipant.rsvp_status || "pending")
+                            .replace(/_/g, " ")
+                            .replace(/\b\w/g, (char) => char.toUpperCase())}
+                        </strong>
+                      </small>
+                    </div>
+                  ) : null}
+
+                  <div className="data-modal-field data-modal-field--full">
+                    <label>Invited members</label>
+                    {formData.audience_scope === "all_members" ? (
+                      <div
+                        style={{
+                          border: "1px dashed #cbd5e1",
+                          borderRadius: "12px",
+                          padding: "1rem",
+                          background: "#f8fafc",
+                          color: "#475569",
+                        }}
+                      >
+                        All active tenant members will be invited automatically. You can still add
+                        guest attendees below.
+                      </div>
+                    ) : (
+                      <div className="member-selection-grid">
+                        {members && members.length > 0 ? (
+                          members.map((member) => (
+                            <label key={`member-${member.id}`} className="member-checkbox">
+                              <input
+                                type="checkbox"
+                                checked={(formData.attendees || []).includes(`member:${member.id}`)}
+                                onChange={() => handleToggleAttendee(member.id, "member")}
+                              />
+                              <span className="member-checkbox-label">
+                                <span className="member-avatar-small">
+                                  {member.name?.charAt(0).toUpperCase() || "?"}
+                                </span>
+                                <span className="member-info">
+                                  <span className="member-name">{member.name}</span>
+                                  <span className="member-role">{member.role}</span>
+                                </span>
+                              </span>
+                            </label>
+                          ))
+                        ) : (
+                          <p style={{ color: "#999", padding: "1rem" }}>No members available</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {eventSubscribers && eventSubscribers.length > 0 ? (
+                    <div className="data-modal-field data-modal-field--full">
+                      <label>Guest attendees</label>
+                      <div className="member-selection-grid">
+                        {eventSubscribers.map((subscriber) => (
+                          <label key={`subscriber-${subscriber.id}`} className="member-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={(formData.attendees || []).includes(`subscriber:${subscriber.id}`)}
+                              onChange={() => handleToggleAttendee(subscriber.id, "subscriber")}
+                            />
+                            <span className="member-checkbox-label">
+                              <span className="member-avatar-small">
+                                {subscriber.name?.charAt(0).toUpperCase() || "?"}
+                              </span>
+                              <span className="member-info">
+                                <span className="member-name">{subscriber.name}</span>
+                                <span className="member-role">{subscriber.email}</span>
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="data-modal-field data-modal-field--full">
+                    {!showNewSubscriberForm ? (
+                      <button
+                        type="button"
+                        className="data-modal-btn"
+                        onClick={() => setShowNewSubscriberForm(true)}
+                        style={{ width: "100%" }}
+                      >
+                        + Add Guest Attendee
+                      </button>
+                    ) : (
+                      <div style={{ border: "1px solid #e0e0e0", borderRadius: "8px", padding: "1rem" }}>
+                        <h4 style={{ marginBottom: "1rem" }}>Add Guest Attendee</h4>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                          <input
+                            type="text"
+                            value={newSubscriber.name}
+                            onChange={(e) => setNewSubscriber({ ...newSubscriber, name: e.target.value })}
+                            placeholder="Full name"
+                            style={{
+                              padding: "0.75rem",
+                              border: "1px solid #ddd",
+                              borderRadius: "4px",
+                              fontSize: "0.875rem",
+                            }}
+                          />
+                          <input
+                            type="email"
+                            value={newSubscriber.email}
+                            onChange={(e) => setNewSubscriber({ ...newSubscriber, email: e.target.value })}
+                            placeholder="Email address"
+                            style={{
+                              padding: "0.75rem",
+                              border: "1px solid #ddd",
+                              borderRadius: "4px",
+                              fontSize: "0.875rem",
+                            }}
+                          />
+                          <input
+                            type="text"
+                            value={newSubscriber.contact}
+                            onChange={(e) => setNewSubscriber({ ...newSubscriber, contact: e.target.value })}
+                            placeholder="Phone number (optional)"
+                            style={{
+                              padding: "0.75rem",
+                              border: "1px solid #ddd",
+                              borderRadius: "4px",
+                              fontSize: "0.875rem",
+                            }}
+                          />
+                        </div>
+                        <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
+                          <button
+                            type="button"
+                            className="data-modal-btn"
+                            onClick={() => {
+                              setShowNewSubscriberForm(false);
+                              setNewSubscriber({ name: "", email: "", contact: "" });
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="data-modal-btn data-modal-btn--primary"
+                            onClick={handleAddNewSubscriber}
+                          >
+                            Add attendee
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="data-modal-field data-modal-field--full">
+                    <label>Roster status</label>
+                    {!draftMeetingParticipants.length ? (
+                      <p style={{ color: "#64748b" }}>Save the meeting after choosing invitees to manage RSVPs and attendance.</p>
+                    ) : (
+                      <div style={{ display: "grid", gap: "0.75rem" }}>
+                        {draftMeetingParticipants.map((participant) => (
+                          <div
+                            key={`meeting-participant-${participant.id || participant.token}`}
+                            style={{
+                              border: "1px solid #dbe3ee",
+                              borderRadius: "12px",
+                              padding: "0.9rem",
+                              display: "grid",
+                              gap: "0.75rem",
+                              background: "#ffffff",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "flex-start" }}>
+                              <div>
+                                <strong>{participant.name}</strong>
+                                <div style={{ color: "#64748b", fontSize: "0.875rem" }}>
+                                  {participant.participant_type === "subscriber"
+                                    ? participant.email || "Guest attendee"
+                                    : participant.role || participant.email || "Member"}
+                                </div>
+                              </div>
+                              <span
+                                style={{
+                                  padding: "0.2rem 0.55rem",
+                                  borderRadius: "999px",
+                                  background: participant.participant_type === "subscriber" ? "#eef2ff" : "#ecfeff",
+                                  color: "#0f172a",
+                                  fontSize: "0.75rem",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {participant.participant_type === "subscriber" ? "Guest" : "Member"}
+                              </span>
+                            </div>
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                                gap: "0.75rem",
+                              }}
+                            >
+                              <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                                RSVP
+                                <select
+                                  value={participant.rsvp_status}
+                                  onChange={(event) =>
+                                    handleParticipantStatusChange(
+                                      participant,
+                                      "rsvp_status",
+                                      event.target.value
+                                    )
+                                  }
+                                  disabled={!canManageMeetings || !selectedActivity?.id || !participant.id || updatingParticipants}
+                                >
+                                  <option value="pending">Pending</option>
+                                  <option value="confirmed">Confirmed</option>
+                                  <option value="declined">Declined</option>
+                                  <option value="apology">Apology</option>
+                                </select>
+                              </label>
+                              <label className="data-modal-field" style={{ marginBottom: 0 }}>
+                                Attendance
+                                <select
+                                  value={participant.attendance_status}
+                                  onChange={(event) =>
+                                    handleParticipantStatusChange(
+                                      participant,
+                                      "attendance_status",
+                                      event.target.value
+                                    )
+                                  }
+                                  disabled={!canManageMeetings || !selectedActivity?.id || !participant.id || updatingParticipants}
+                                >
+                                  <option value="unknown">Not marked</option>
+                                  <option value="attended">Present</option>
+                                  <option value="absent">Absent</option>
+                                </select>
+                              </label>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="data-modal-field data-modal-field--full">
+                    <label>Members Attending</label>
+                    <div className="member-selection-grid">
+                      {members && members.length > 0 ? (
+                        members.map((member) => (
+                          <label key={`member-${member.id}`} className="member-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={(formData.attendees || []).includes(`member:${member.id}`)}
+                              onChange={() => handleToggleAttendee(member.id, "member")}
+                            />
+                            <span className="member-checkbox-label">
+                              <span className="member-avatar-small">
+                                {member.name?.charAt(0).toUpperCase() || "?"}
+                              </span>
+                              <span className="member-info">
+                                <span className="member-name">{member.name}</span>
+                                <span className="member-role">{member.role}</span>
+                              </span>
+                            </span>
+                          </label>
+                        ))
+                      ) : (
+                        <p style={{ color: "#999", padding: "1rem" }}>No members available</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {eventSubscribers && eventSubscribers.length > 0 ? (
+                    <div className="data-modal-field data-modal-field--full">
+                      <label>Event Subscribers</label>
+                      <div className="member-selection-grid">
+                        {eventSubscribers.map((subscriber) => (
+                          <label key={`subscriber-${subscriber.id}`} className="member-checkbox">
+                            <input
+                              type="checkbox"
+                              checked={(formData.attendees || []).includes(`subscriber:${subscriber.id}`)}
+                              onChange={() => handleToggleAttendee(subscriber.id, "subscriber")}
+                            />
+                            <span className="member-checkbox-label">
+                              <span className="member-avatar-small">
+                                {subscriber.name?.charAt(0).toUpperCase() || "?"}
+                              </span>
+                              <span className="member-info">
+                                <span className="member-name">{subscriber.name}</span>
+                                <span className="member-role">{subscriber.email}</span>
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </>
               )}
 
-              {/* Add New Attendee Button */}
-              <div className="data-modal-field data-modal-field--full">
-                {!showNewSubscriberForm ? (
+              {!isMeetingType(formData.type) && !showNewSubscriberForm ? (
+                <div className="data-modal-field data-modal-field--full">
                   <button
                     type="button"
                     className="data-modal-btn"
@@ -2032,7 +3420,11 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                   >
                     + Add New Attendee
                   </button>
-                ) : (
+                </div>
+              ) : null}
+
+              {!isMeetingType(formData.type) && showNewSubscriberForm ? (
+                <div className="data-modal-field data-modal-field--full">
                   <div style={{ border: "1px solid #e0e0e0", borderRadius: "8px", padding: "1rem", marginTop: "1rem" }}>
                     <h4 style={{ marginBottom: "1rem" }}>Add New Attendee</h4>
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
@@ -2093,13 +3485,205 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
                       </button>
                     </div>
                   </div>
-                )}
-              </div>
+                </div>
+              ) : null}
 
+              {!isMeetingType(formData.type) ? (
+                <div className="data-modal-field data-modal-field--full">
+                  <p style={{ fontSize: "0.875rem", color: "#666", marginTop: "0.5rem" }}>
+                    Total attendees: {(formData.attendees || []).length}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {activityTab === "minutes" && isMeetingType(formData.type) ? (
+            <div className="data-modal-grid">
               <div className="data-modal-field data-modal-field--full">
-                <p style={{ fontSize: "0.875rem", color: "#666", marginTop: "0.5rem" }}>
-                  Total attendees: {(formData.attendees || []).length}
-                </p>
+                <div
+                  style={{
+                    border: "1px solid #dbe3ee",
+                    borderRadius: "12px",
+                    padding: "1rem",
+                    background: "#f8fbff",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: "1rem",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <strong>Quick draft</strong>
+                    <p style={{ margin: "0.35rem 0 0", color: "#64748b" }}>
+                      Build a draft from the selected agenda and organization leadership roles, then
+                      edit it freely before generating the PDF.
+                    </p>
+                    <p style={{ margin: "0.35rem 0 0", color: "#64748b" }}>
+                      Ask Habuks can draft the first formal version for you. If the AI path is not
+                      available, the standard agenda-based draft still runs.
+                    </p>
+                  </div>
+                  <div className="meeting-minutes-draft-actions">
+                    <button
+                      type="button"
+                      className={`data-modal-btn meeting-minutes-ai-toggle${useAiMinutesBackup ? " is-active" : ""}${aiMinutesBackupConfigured ? " is-configured" : ""}`}
+                      onClick={() => setUseAiMinutesBackup((prev) => !prev)}
+                      aria-pressed={useAiMinutesBackup}
+                      aria-label={useAiMinutesBackup ? "Ask Habuks activated" : "Ask Habuks"}
+                      title={useAiMinutesBackup ? "Ask Habuks activated" : "Ask Habuks"}
+                      disabled={draftingWithAi}
+                    >
+                      <span className="meeting-minutes-ai-tooltip" aria-hidden="true">
+                        Ask Habuks
+                      </span>
+                      <span className="meeting-minutes-ai-mark" aria-hidden="true">
+                        <img src="/assets/logo.png" alt="" />
+                        <span className="meeting-minutes-ai-badge">
+                          <Icon name="star" size={10} />
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="data-modal-btn"
+                      onClick={() => handleBuildMinutesDraft({ overwrite: false })}
+                      disabled={draftingWithAi}
+                    >
+                      {draftingWithAi ? "Drafting..." : "Draft from agenda"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <label className="data-modal-field data-modal-field--full">
+                Preliminaries
+                <textarea
+                  rows="4"
+                  value={formData.minutes_data?.preliminaries || ""}
+                  onChange={(event) =>
+                    handleMinutesFieldChange("preliminaries", null, event.target.value)
+                  }
+                  placeholder="Opening remarks, prayers, introductions, or procedural preliminaries."
+                />
+              </label>
+              <label className="data-modal-field">
+                Previous minutes status
+                <input
+                  type="text"
+                  value={formData.minutes_data?.previous_minutes?.status || ""}
+                  onChange={(event) =>
+                    handleMinutesFieldChange("previous_minutes", "status", event.target.value)
+                  }
+                  placeholder="e.g. Confirmed as true record"
+                />
+              </label>
+              <label className="data-modal-field data-modal-field--full">
+                Previous minutes notes
+                <textarea
+                  rows="3"
+                  value={formData.minutes_data?.previous_minutes?.notes || ""}
+                  onChange={(event) =>
+                    handleMinutesFieldChange("previous_minutes", "notes", event.target.value)
+                  }
+                  placeholder="Corrections, adoption notes, or follow-up observations."
+                />
+              </label>
+              <label className="data-modal-field data-modal-field--full">
+                Financial matters discussion
+                <textarea
+                  rows="4"
+                  value={formData.minutes_data?.financial_matters?.discussion || ""}
+                  onChange={(event) =>
+                    handleMinutesFieldChange("financial_matters", "discussion", event.target.value)
+                  }
+                  placeholder="Capture the finance discussion from the meeting."
+                />
+              </label>
+              <label className="data-modal-field data-modal-field--full">
+                Financial matters resolution
+                <textarea
+                  rows="3"
+                  value={formData.minutes_data?.financial_matters?.resolution || ""}
+                  onChange={(event) =>
+                    handleMinutesFieldChange("financial_matters", "resolution", event.target.value)
+                  }
+                  placeholder="State the decision taken on financial matters."
+                />
+              </label>
+              <label className="data-modal-field">
+                Next meeting date
+                <input
+                  type="date"
+                  value={formData.minutes_data?.next_meeting?.date || ""}
+                  onChange={(event) =>
+                    handleMinutesFieldChange("next_meeting", "date", event.target.value)
+                  }
+                />
+              </label>
+              <label className="data-modal-field">
+                Adjournment time
+                <input
+                  type="text"
+                  value={formData.minutes_data?.adjournment?.time || ""}
+                  onChange={(event) =>
+                    handleMinutesFieldChange("adjournment", "time", event.target.value)
+                  }
+                  placeholder="e.g. 4:30 PM"
+                />
+              </label>
+              <label className="data-modal-field data-modal-field--full">
+                Next meeting note
+                <textarea
+                  rows="3"
+                  value={formData.minutes_data?.next_meeting?.note || ""}
+                  onChange={(event) =>
+                    handleMinutesFieldChange("next_meeting", "note", event.target.value)
+                  }
+                  placeholder="Venue, host, or preparatory action for the next meeting."
+                />
+              </label>
+              <label className="data-modal-field data-modal-field--full">
+                Adjournment note
+                <textarea
+                  rows="3"
+                  value={formData.minutes_data?.adjournment?.note || ""}
+                  onChange={(event) =>
+                    handleMinutesFieldChange("adjournment", "note", event.target.value)
+                  }
+                  placeholder="Closing remarks or direction issued at adjournment."
+                />
+              </label>
+              <div className="data-modal-field data-modal-field--full">
+                <div
+                  style={{
+                    border: "1px solid #dbe3ee",
+                    borderRadius: "12px",
+                    padding: "1rem",
+                    background: "#f8fbff",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: "1rem",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                  }}
+                >
+                  <div>
+                    <strong>Generate final minutes</strong>
+                    <p style={{ margin: "0.35rem 0 0", color: "#64748b" }}>
+                      Finalizing minutes marks unrecorded invitees as absent, renders the PDF, and
+                      stores it in organization documents.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="data-modal-btn data-modal-btn--primary"
+                    onClick={handleGenerateMinutes}
+                    disabled={!selectedActivity?.id || !canManageMeetings || emittingMinutes}
+                  >
+                    {emittingMinutes ? "Generating..." : "Generate minutes PDF"}
+                  </button>
+                </div>
               </div>
             </div>
           ) : null}
@@ -2110,8 +3694,12 @@ export default function MeetingsPage({ user, tenantId, access, setActivePage }) 
               className="data-modal-btn"
               onClick={() => {
                 setShowAddActivityModal(false);
+                setSelectedActivity(null);
                 resetSourcePartnerModal();
                 resetPosterUploadState("");
+                setShowNewSubscriberForm(false);
+                setNewSubscriber({ name: "", email: "", contact: "" });
+                setSelectedAgendaPresetKey("");
               }}
               disabled={submitting}
             >

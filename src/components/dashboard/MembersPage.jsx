@@ -4,11 +4,17 @@ import ResponseModal from "./ResponseModal.jsx";
 import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import { Icon } from "../icons.jsx";
 import {
+  cancelMagicLinkInvite,
   createMagicLinkInvite,
+  deleteTenantMembershipAdmin,
   getMembersAdmin,
   getProjectMemberAssignmentsSummary,
   getProjects,
+  getTenantMemberAuditLog,
   getTenantMagicLinkInvites,
+  resendMagicLinkInvite,
+  updateMemberAdmin,
+  updateTenantMembershipAdmin,
 } from "../../lib/dataService.js";
 
 const createInviteForm = () => ({
@@ -20,6 +26,9 @@ const createInviteForm = () => ({
   project_access_scope: "selected",
   project_ids: [],
 });
+
+const MEMBER_ROLE_OPTIONS = ["member", "supervisor", "project_manager", "admin", "superadmin"];
+const MEMBER_STATUS_OPTIONS = ["active", "pending", "inactive"];
 
 const normalizeInviteProjectScope = (scope) => {
   const normalized = String(scope || "").trim().toLowerCase();
@@ -47,6 +56,30 @@ const isInviteAdminRole = (role) => {
   return normalized === "admin" || normalized === "superadmin";
 };
 
+const isAdminMembershipRole = (role) => {
+  const normalized = String(role || "").trim().toLowerCase();
+  return normalized === "admin" || normalized === "superadmin";
+};
+
+const normalizeMembershipRole = (member) =>
+  String(member?.tenant_role || member?.role || "member")
+    .trim()
+    .toLowerCase() || "member";
+
+const normalizeMembershipStatus = (member) =>
+  String(member?.tenant_status || member?.status || "active")
+    .trim()
+    .toLowerCase() || "active";
+
+const createMemberEditorForm = (member = null) => ({
+  name: String(member?.name || "").trim(),
+  email: String(member?.email || "").trim(),
+  phone_number: String(member?.phone_number || "").trim(),
+  join_date: String(member?.join_date || "").trim() || new Date().toISOString().slice(0, 10),
+  tenant_role: normalizeMembershipRole(member),
+  tenant_status: normalizeMembershipStatus(member),
+});
+
 const normalizeRoleKey = (value) =>
   String(value || "")
     .trim()
@@ -60,6 +93,18 @@ const formatDate = (value) => {
     year: "numeric",
     month: "short",
     day: "numeric",
+  });
+};
+
+const formatDateTime = (value) => {
+  const timestamp = Date.parse(String(value || ""));
+  if (!Number.isFinite(timestamp)) return "-";
+  return new Date(timestamp).toLocaleString("en-KE", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
   });
 };
 
@@ -82,6 +127,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
   const [projects, setProjects] = useState([]);
   const [projectAssignments, setProjectAssignments] = useState([]);
   const [inviteRows, setInviteRows] = useState([]);
+  const [memberAuditRows, setMemberAuditRows] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -91,6 +137,10 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
   const [showResponseModal, setShowResponseModal] = useState(false);
   const [selectedMemberDetail, setSelectedMemberDetail] = useState(null);
   const [inviteForm, setInviteForm] = useState(() => createInviteForm());
+  const [selectedMemberIds, setSelectedMemberIds] = useState([]);
+  const [showEditMemberModal, setShowEditMemberModal] = useState(false);
+  const [editingMemberId, setEditingMemberId] = useState(null);
+  const [memberEditorForm, setMemberEditorForm] = useState(() => createMemberEditorForm());
   const [responseData, setResponseData] = useState({
     type: "success",
     title: "",
@@ -98,15 +148,14 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     code: null,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [savingMember, setSavingMember] = useState(false);
+  const [membershipActionBusy, setMembershipActionBusy] = useState(false);
+  const [inviteActionBusyId, setInviteActionBusyId] = useState("");
 
   const effectiveTenantId = tenantId || tenantInfo?.id || null;
   const roleKey = normalizeRoleKey(tenantRole || user?.role || "member");
   const isAdmin = ["admin", "superadmin", "super_admin"].includes(roleKey);
-  const canManagePeople =
-    isAdmin ||
-    ["project_manager", "coordinator", "project_coordinator", "cordinator", "supervisor"].includes(
-      roleKey
-    );
+  const canAdministerMembers = isAdmin;
   const canInviteMember = isAdmin;
 
   const loadPeopleData = useCallback(async () => {
@@ -115,6 +164,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
       setProjects([]);
       setProjectAssignments([]);
       setInviteRows([]);
+      setMemberAuditRows([]);
       setLoading(false);
       return;
     }
@@ -122,11 +172,12 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     setLoading(true);
     setError("");
     try {
-      const [membersResult, projectsResult, assignmentsResult, invitesResult] = await Promise.allSettled([
+      const [membersResult, projectsResult, assignmentsResult, invitesResult, auditResult] = await Promise.allSettled([
         getMembersAdmin(effectiveTenantId),
         getProjects(effectiveTenantId),
         getProjectMemberAssignmentsSummary(effectiveTenantId),
         canInviteMember ? getTenantMagicLinkInvites(effectiveTenantId, { limit: 50 }) : Promise.resolve([]),
+        canAdministerMembers ? getTenantMemberAuditLog(effectiveTenantId, { limit: 80 }) : Promise.resolve([]),
       ]);
 
       const loadErrors = [];
@@ -165,17 +216,36 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
         }
       }
 
+      if (auditResult.status === "fulfilled") {
+        setMemberAuditRows(Array.isArray(auditResult.value) ? auditResult.value : []);
+      } else {
+        setMemberAuditRows([]);
+        if (canAdministerMembers) {
+          loadErrors.push("member audit");
+          console.error("People page: failed to load member audit", auditResult.reason);
+        }
+      }
+
       if (loadErrors.length) {
         setError(`Some data could not be loaded (${loadErrors.join(", ")}).`);
       }
     } finally {
       setLoading(false);
     }
-  }, [effectiveTenantId, canInviteMember]);
+  }, [effectiveTenantId, canAdministerMembers, canInviteMember]);
 
   useEffect(() => {
     loadPeopleData();
   }, [loadPeopleData]);
+
+  useEffect(() => {
+    const availableIds = new Set(
+      members
+        .map((member) => Number.parseInt(String(member?.id || ""), 10))
+        .filter((memberId) => Number.isInteger(memberId) && memberId > 0)
+    );
+    setSelectedMemberIds((prev) => prev.filter((memberId) => availableIds.has(memberId)));
+  }, [members]);
 
   const projectSummaryByMemberId = useMemo(() => {
     const summaryMap = new Map();
@@ -198,6 +268,46 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     return summaryMap;
   }, [projectAssignments]);
 
+  const memberById = useMemo(
+    () =>
+      new Map(
+        members
+          .map((member) => {
+            const memberId = Number.parseInt(String(member?.id || ""), 10);
+            if (!Number.isInteger(memberId) || memberId <= 0) return null;
+            return [memberId, member];
+          })
+          .filter(Boolean)
+      ),
+    [members]
+  );
+
+  const selectedMembers = useMemo(
+    () => selectedMemberIds.map((memberId) => memberById.get(memberId)).filter(Boolean),
+    [memberById, selectedMemberIds]
+  );
+
+  const memberAuditByMemberId = useMemo(() => {
+    const auditMap = new Map();
+    memberAuditRows.forEach((entry) => {
+      const memberId = Number.parseInt(String(entry?.member_id || ""), 10);
+      if (!Number.isInteger(memberId) || memberId <= 0) return;
+      const existing = auditMap.get(memberId) || [];
+      existing.push(entry);
+      auditMap.set(memberId, existing);
+    });
+    return auditMap;
+  }, [memberAuditRows]);
+
+  const activeAdminCount = useMemo(
+    () =>
+      members.filter(
+        (member) =>
+          normalizeMembershipStatus(member) === "active" && isAdminMembershipRole(normalizeMembershipRole(member))
+      ).length,
+    [members]
+  );
+
   const filteredMembers = useMemo(() => {
     const query = String(searchQuery || "").trim().toLowerCase();
     if (!query) return members;
@@ -206,8 +316,8 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
         member?.name,
         member?.email,
         member?.phone_number,
-        member?.role,
-        member?.status,
+        normalizeMembershipRole(member),
+        normalizeMembershipStatus(member),
       ]
         .map((value) => String(value || "").toLowerCase())
         .join(" ");
@@ -216,9 +326,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
   }, [members, searchQuery]);
 
   const stats = useMemo(() => {
-    const activeCount = members.filter(
-      (member) => String(member?.status || "active").trim().toLowerCase() === "active"
-    ).length;
+    const activeCount = members.filter((member) => normalizeMembershipStatus(member) === "active").length;
     const withoutProjectsCount = members.filter((member) => {
       const memberId = Number.parseInt(String(member?.id || ""), 10);
       if (!Number.isInteger(memberId) || memberId <= 0) return true;
@@ -249,6 +357,16 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     [inviteRows]
   );
 
+  const recentAuditEntries = useMemo(() => memberAuditRows.slice(0, 6), [memberAuditRows]);
+
+  const selectedMemberAuditEntries = useMemo(() => {
+    const selectedMemberId = Number.parseInt(String(selectedMemberDetail?.member?.id || ""), 10);
+    if (!Number.isInteger(selectedMemberId) || selectedMemberId <= 0) {
+      return [];
+    }
+    return memberAuditByMemberId.get(selectedMemberId) || [];
+  }, [memberAuditByMemberId, selectedMemberDetail]);
+
   const peopleStatCards = useMemo(
     () => [
       { key: "total", label: "Total members", value: stats.total, icon: "users", tone: "teal" },
@@ -278,8 +396,8 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
       const projectCount = projectSummary?.count || 0;
       return [
         member?.name || "",
-        toLabel(member?.role, "Member"),
-        toLabel(member?.status, "Active"),
+        toLabel(normalizeMembershipRole(member), "Member"),
+        toLabel(normalizeMembershipStatus(member), "Active"),
         projectCount,
         member?.email || "",
         member?.phone_number || "",
@@ -421,11 +539,335 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     }
   };
 
+  const getMemberSummary = useCallback(
+    (member) => {
+      const memberId = Number.parseInt(String(member?.id || ""), 10);
+      const summary = projectSummaryByMemberId.get(memberId) || null;
+      const projectNames = summary ? Array.from(summary.projectNames) : [];
+      const safeStatus = normalizeMembershipStatus(member).replace(/[^a-z0-9_]+/g, "_");
+      return {
+        member,
+        projectCount: summary?.count || 0,
+        projectNames,
+        safeStatus,
+      };
+    },
+    [projectSummaryByMemberId]
+  );
+
+  const openMemberDetail = useCallback(
+    (member) => {
+      if (!member) return;
+      setSelectedMemberDetail(getMemberSummary(member));
+    },
+    [getMemberSummary]
+  );
+
+  const openMemberEditor = useCallback((member) => {
+    if (!member) return;
+    setSelectedMemberDetail(null);
+    setEditingMemberId(member.id || null);
+    setMemberEditorForm(createMemberEditorForm(member));
+    setShowEditMemberModal(true);
+  }, []);
+
+  const toggleSelectedMember = (memberId) => {
+    setSelectedMemberIds((prev) =>
+      prev.includes(memberId) ? prev.filter((id) => id !== memberId) : [...prev, memberId]
+    );
+  };
+
+  const toggleAllVisibleMembers = () => {
+    const visibleIds = filteredMembers
+      .map((member) => Number.parseInt(String(member?.id || ""), 10))
+      .filter((memberId) => Number.isInteger(memberId) && memberId > 0);
+    if (!visibleIds.length) return;
+    setSelectedMemberIds((prev) => {
+      const allSelected = visibleIds.every((memberId) => prev.includes(memberId));
+      if (allSelected) {
+        return prev.filter((memberId) => !visibleIds.includes(memberId));
+      }
+      return Array.from(new Set([...prev, ...visibleIds]));
+    });
+  };
+
+  const ensureMembershipActionAllowed = useCallback(
+    (member, nextRole, nextStatus, actionLabel) => {
+      const memberId = Number.parseInt(String(member?.id || ""), 10);
+      const currentRole = normalizeMembershipRole(member);
+      const currentStatus = normalizeMembershipStatus(member);
+      const willRemainAdmin = isAdminMembershipRole(nextRole ?? currentRole);
+      const willRemainActive = String(nextStatus || currentStatus).trim().toLowerCase() === "active";
+      const targetsCurrentUser =
+        Number.isInteger(memberId) &&
+        memberId > 0 &&
+        String(memberId) === String(user?.id || "");
+
+      if (targetsCurrentUser && (!willRemainAdmin || !willRemainActive)) {
+        throw new Error("You cannot terminate, dismiss, or demote your own active admin access here.");
+      }
+
+      if (
+        currentStatus === "active" &&
+        isAdminMembershipRole(currentRole) &&
+        (!willRemainAdmin || !willRemainActive) &&
+        activeAdminCount <= 1
+      ) {
+        throw new Error(`Cannot ${actionLabel}. The workspace must retain at least one active admin.`);
+      }
+    },
+    [activeAdminCount, user?.id]
+  );
+
+  const applyMembershipAction = useCallback(
+    async (membersToUpdate, action) => {
+      if (!canAdministerMembers) {
+        throw new Error("Only workspace admins can manage members.");
+      }
+
+      const safeMembers = Array.isArray(membersToUpdate) ? membersToUpdate.filter(Boolean) : [];
+      if (!safeMembers.length) {
+        return;
+      }
+
+      const selectedActiveAdminCount = safeMembers.filter(
+        (member) =>
+          normalizeMembershipStatus(member) === "active" && isAdminMembershipRole(normalizeMembershipRole(member))
+      ).length;
+      if ((action === "dismiss" || action === "remove") && selectedActiveAdminCount >= activeAdminCount) {
+        throw new Error("Cannot terminate or dismiss all active admins from the workspace.");
+      }
+
+      setMembershipActionBusy(true);
+      setError("");
+      setNotice("");
+      try {
+        if (action === "give_admin") {
+          for (const member of safeMembers) {
+            const membershipId = member?.tenant_membership_id;
+            if (!membershipId) {
+              throw new Error(`Missing tenant membership for ${member?.name || "member"}.`);
+            }
+            await updateTenantMembershipAdmin(membershipId, { role: "admin" });
+          }
+          setNotice(
+            safeMembers.length === 1
+              ? "Member is now an admin."
+              : `${safeMembers.length} members are now admins.`
+          );
+        }
+
+        if (action === "dismiss") {
+          for (const member of safeMembers) {
+            const membershipId = member?.tenant_membership_id;
+            if (!membershipId) {
+              throw new Error(`Missing tenant membership for ${member?.name || "member"}.`);
+            }
+            ensureMembershipActionAllowed(member, normalizeMembershipRole(member), "inactive", "dismiss member");
+            await updateTenantMembershipAdmin(membershipId, { status: "inactive" });
+          }
+          setNotice(
+            safeMembers.length === 1 ? "Member dismissed." : `${safeMembers.length} members dismissed.`
+          );
+        }
+
+        if (action === "reinstate") {
+          for (const member of safeMembers) {
+            const membershipId = member?.tenant_membership_id;
+            if (!membershipId) {
+              throw new Error(`Missing tenant membership for ${member?.name || "member"}.`);
+            }
+            await updateTenantMembershipAdmin(membershipId, { status: "active" });
+          }
+          setNotice(
+            safeMembers.length === 1
+              ? "Member reinstated."
+              : `${safeMembers.length} members reinstated.`
+          );
+        }
+
+        if (action === "remove") {
+          for (const member of safeMembers) {
+            const membershipId = member?.tenant_membership_id;
+            if (!membershipId) {
+              throw new Error(`Missing tenant membership for ${member?.name || "member"}.`);
+            }
+            ensureMembershipActionAllowed(member, normalizeMembershipRole(member), "inactive", "terminate member");
+            await deleteTenantMembershipAdmin(membershipId);
+          }
+          setNotice(
+            safeMembers.length === 1
+              ? "Member terminated from the organization."
+              : `${safeMembers.length} members terminated from the organization.`
+          );
+        }
+
+        setSelectedMemberIds((prev) =>
+          prev.filter((memberId) => !safeMembers.some((member) => String(member?.id || "") === String(memberId)))
+        );
+        setSelectedMemberDetail((prev) => {
+          if (!prev?.member?.id) return prev;
+          return safeMembers.some((member) => String(member?.id || "") === String(prev.member.id)) ? null : prev;
+        });
+        await loadPeopleData();
+      } catch (actionError) {
+        await loadPeopleData();
+        throw actionError;
+      } finally {
+        setMembershipActionBusy(false);
+      }
+    },
+    [canAdministerMembers, ensureMembershipActionAllowed, loadPeopleData]
+  );
+
+  const confirmAndApplyMembershipAction = async (membersToUpdate, action) => {
+    const count = Array.isArray(membersToUpdate) ? membersToUpdate.filter(Boolean).length : 0;
+    if (!count) return;
+
+    const actionLabel =
+      action === "give_admin"
+        ? "make admin"
+        : action === "dismiss"
+          ? "dismiss"
+          : action === "reinstate"
+            ? "reinstate"
+            : "terminate";
+    const prompt =
+      action === "remove"
+        ? `Terminate ${count === 1 ? "this member" : `${count} members`} from the organization?`
+        : `${actionLabel.charAt(0).toUpperCase()}${actionLabel.slice(1)} ${count === 1 ? "this member" : `${count} members`}?`;
+
+    if (!window.confirm(prompt)) {
+      return;
+    }
+
+    try {
+      await applyMembershipAction(membersToUpdate, action);
+    } catch (actionError) {
+      setError(actionError?.message || "Could not update member access.");
+    }
+  };
+
+  const handleSaveMemberEdit = async (event) => {
+    event.preventDefault();
+    if (!editingMemberId) {
+      return;
+    }
+
+    const member = memberById.get(Number.parseInt(String(editingMemberId || ""), 10));
+    if (!member) {
+      setError("That member could not be found.");
+      return;
+    }
+
+    if (!String(memberEditorForm.name || "").trim()) {
+      setError("Member name is required.");
+      return;
+    }
+
+    if (!member?.tenant_membership_id) {
+      setError("Tenant membership is missing for this member.");
+      return;
+    }
+
+    try {
+      setSavingMember(true);
+      setError("");
+      setNotice("");
+      ensureMembershipActionAllowed(
+        member,
+        memberEditorForm.tenant_role,
+        memberEditorForm.tenant_status,
+        "save member changes"
+      );
+      await updateMemberAdmin(editingMemberId, {
+        name: memberEditorForm.name,
+        email: memberEditorForm.email,
+        phone_number: memberEditorForm.phone_number,
+        join_date: memberEditorForm.join_date,
+      });
+      await updateTenantMembershipAdmin(member.tenant_membership_id, {
+        role: memberEditorForm.tenant_role,
+        status: memberEditorForm.tenant_status,
+      });
+      setNotice("Member updated successfully.");
+      setShowEditMemberModal(false);
+      setEditingMemberId(null);
+      await loadPeopleData();
+      setSelectedMemberDetail(null);
+    } catch (saveError) {
+      setError(saveError?.message || "Failed to update member.");
+    } finally {
+      setSavingMember(false);
+    }
+  };
+
+  const isInviteExpired = useCallback((invite) => {
+    const expiresAt = Date.parse(String(invite?.expires_at || ""));
+    return Number.isFinite(expiresAt) && expiresAt < Date.now();
+  }, []);
+
+  const handleResendInvite = async (invite) => {
+    if (!canInviteMember || !invite?.id) {
+      return;
+    }
+
+    try {
+      setInviteActionBusyId(String(invite.id));
+      setError("");
+      setNotice("");
+      const updatedInvite = await resendMagicLinkInvite(invite.id);
+      await loadPeopleData();
+      setResponseData({
+        type: "success",
+        title: "Invite ready to share",
+        message: `Share this invite number with ${updatedInvite?.email || "the invited member"}. It is now active again.`,
+        code: updatedInvite?.invite_number || null,
+      });
+      setShowResponseModal(true);
+      setNotice(`Invite reissued for ${updatedInvite?.email || "the invited member"}.`);
+    } catch (inviteError) {
+      setError(inviteError?.message || "Could not resend that invite.");
+    } finally {
+      setInviteActionBusyId("");
+    }
+  };
+
+  const handleCancelInvite = async (invite) => {
+    if (!canInviteMember || !invite?.id) {
+      return;
+    }
+
+    const email = invite?.email || "this invited member";
+    if (!window.confirm(`Cancel the invite for ${email}?`)) {
+      return;
+    }
+
+    try {
+      setInviteActionBusyId(String(invite.id));
+      setError("");
+      setNotice("");
+      await cancelMagicLinkInvite(invite.id);
+      await loadPeopleData();
+      setNotice(`Invite canceled for ${email}.`);
+    } catch (inviteError) {
+      setError(inviteError?.message || "Could not cancel that invite.");
+    } finally {
+      setInviteActionBusyId("");
+    }
+  };
+
   const inviteRoleIsAdmin = isInviteAdminRole(inviteForm.role);
   const inviteProjectScope = inviteRoleIsAdmin
     ? "all"
     : normalizeInviteProjectScope(inviteForm.project_access_scope);
   const inviteProjectIds = normalizeInviteProjectIds(inviteForm.project_ids);
+  const allVisibleMemberIds = filteredMembers
+    .map((member) => Number.parseInt(String(member?.id || ""), 10))
+    .filter((memberId) => Number.isInteger(memberId) && memberId > 0);
+  const allVisibleSelected =
+    allVisibleMemberIds.length > 0 &&
+    allVisibleMemberIds.every((memberId) => selectedMemberIds.includes(memberId));
 
   return (
     <div className="members-shell dashboard-mobile-shell">
@@ -472,9 +914,9 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
 
         {notice ? <p className="projects-notice projects-notice--success">{notice}</p> : null}
         {error ? <p className="projects-notice projects-notice--warning">{error}</p> : null}
-        {!canManagePeople ? (
+        {!canAdministerMembers ? (
           <p className="projects-notice projects-notice--warning">
-            You are in read-only mode. Admins manage organization members; project roles are managed inside project tabs.
+            You are in read-only mode. Workspace admins manage organization members here; project roles stay inside project tabs.
           </p>
         ) : null}
 
@@ -509,7 +951,82 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
               />
             </label>
 
-            <div className="members-shell-table-head members-shell-table-head--live">
+            {canAdministerMembers && selectedMembers.length ? (
+              <div className="members-shell-selection-bar">
+                <strong>{selectedMembers.length} selected</strong>
+                <div className="members-shell-selection-actions">
+                  <button
+                    type="button"
+                    className="members-shell-btn members-shell-btn--ghost members-shell-action-icon is-admin"
+                    onClick={() => confirmAndApplyMembershipAction(selectedMembers, "give_admin")}
+                    disabled={membershipActionBusy}
+                    aria-label="Make admin"
+                    title="Make admin"
+                  >
+                    <Icon name="shield" size={16} />
+                    <span className="members-shell-action-tooltip">Make admin</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="members-shell-btn members-shell-btn--ghost members-shell-action-icon is-dismiss"
+                    onClick={() => confirmAndApplyMembershipAction(selectedMembers, "dismiss")}
+                    disabled={membershipActionBusy}
+                    aria-label="Dismiss"
+                    title="Dismiss"
+                  >
+                    <Icon name="user-minus" size={16} />
+                    <span className="members-shell-action-tooltip">Dismiss</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="members-shell-btn members-shell-btn--ghost members-shell-action-icon is-reinstate"
+                    onClick={() => confirmAndApplyMembershipAction(selectedMembers, "reinstate")}
+                    disabled={membershipActionBusy}
+                    aria-label="Reinstate"
+                    title="Reinstate"
+                  >
+                    <Icon name="refresh-cw" size={16} />
+                    <span className="members-shell-action-tooltip">Reinstate</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="members-shell-btn members-shell-btn--ghost members-shell-action-icon is-terminate"
+                    onClick={() => confirmAndApplyMembershipAction(selectedMembers, "remove")}
+                    disabled={membershipActionBusy}
+                    aria-label="Terminate"
+                    title="Terminate"
+                  >
+                    <Icon name="trash" size={16} />
+                    <span className="members-shell-action-tooltip">Terminate</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="members-shell-btn members-shell-btn--ghost members-shell-action-icon is-clear"
+                    onClick={() => setSelectedMemberIds([])}
+                    disabled={membershipActionBusy}
+                    aria-label="Clear selection"
+                    title="Clear selection"
+                  >
+                    <Icon name="x" size={16} />
+                    <span className="members-shell-action-tooltip">Clear</span>
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div
+              className={`members-shell-table-head members-shell-table-head--live${canAdministerMembers ? " is-selectable" : ""}`}
+            >
+              {canAdministerMembers ? (
+                <label className="members-shell-checkbox-head">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleAllVisibleMembers}
+                    aria-label="Select visible members"
+                  />
+                </label>
+              ) : null}
               <span>Name</span>
               <span>Org role</span>
               <span>Status</span>
@@ -532,36 +1049,35 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
                   const summary = projectSummaryByMemberId.get(memberId) || null;
                   const projectNames = summary ? Array.from(summary.projectNames) : [];
                   const projectCount = summary?.count || 0;
-                  const safeStatus = String(member?.status || "active")
-                    .trim()
-                    .toLowerCase()
-                    .replace(/[^a-z0-9_]+/g, "_");
+                  const safeStatus = normalizeMembershipStatus(member).replace(/[^a-z0-9_]+/g, "_");
                   return (
                     <div
-                      className="members-shell-row members-shell-row--live"
+                      className={`members-shell-row members-shell-row--live${canAdministerMembers ? " is-selectable" : ""}`}
                       key={`member-${member?.id || member?.email}`}
                       role="button"
                       tabIndex={0}
-                      onClick={() =>
-                        setSelectedMemberDetail({
-                          member,
-                          projectCount,
-                          projectNames,
-                          safeStatus,
-                        })
-                      }
+                      onClick={() => openMemberDetail(member)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          setSelectedMemberDetail({
-                            member,
-                            projectCount,
-                            projectNames,
-                            safeStatus,
-                          });
+                          openMemberDetail(member);
                         }
                       }}
                     >
+                      {canAdministerMembers ? (
+                        <label
+                          className="members-shell-checkbox-cell"
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedMemberIds.includes(memberId)}
+                            onChange={() => toggleSelectedMember(memberId)}
+                            aria-label={`Select ${member?.name || "member"}`}
+                          />
+                        </label>
+                      ) : null}
                       <div className="members-shell-cell-main">
                         <span className="members-shell-cell-label">Name</span>
                         <strong>{member?.name || `Member #${member?.id || "-"}`}</strong>
@@ -569,12 +1085,14 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
                       </div>
                       <div className="members-shell-role-cell">
                         <span className="members-shell-cell-label">Org role</span>
-                        <span className="members-shell-pill">{toLabel(member?.role, "Member")}</span>
+                        <span className="members-shell-pill">
+                          {toLabel(normalizeMembershipRole(member), "Member")}
+                        </span>
                       </div>
                       <div className="members-shell-status-cell">
                         <span className="members-shell-cell-label">Status</span>
                         <span className={`members-shell-pill is-status is-${safeStatus}`}>
-                          {toLabel(member?.status, "Active")}
+                          {toLabel(normalizeMembershipStatus(member), "Active")}
                         </span>
                       </div>
                       <div className="members-shell-projects-cell">
@@ -613,13 +1131,37 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
                   <div className="members-shell-invite-list">
                     {pendingInvites.map((invite) => (
                       <div className="members-shell-invite-item" key={invite?.id || invite?.invite_number}>
-                        <div>
+                        <div className="members-shell-invite-copy">
                           <strong>{invite?.email || "No email"}</strong>
                           <small>
                             #{invite?.invite_number || "-"} · {toLabel(invite?.role, "Member")}
+                            {invite?.expires_at ? ` · Expires ${formatDate(invite.expires_at)}` : ""}
                           </small>
+                          {isInviteExpired(invite) ? (
+                            <small className="members-shell-invite-expired">Expired. Resend to refresh access.</small>
+                          ) : null}
                         </div>
-                        <span>{formatDate(invite?.created_at)}</span>
+                        <div className="members-shell-invite-meta">
+                          <span>{formatDate(invite?.created_at)}</span>
+                          <div className="members-shell-invite-actions">
+                            <button
+                              type="button"
+                              className="members-shell-link-btn"
+                              onClick={() => handleResendInvite(invite)}
+                              disabled={inviteActionBusyId === String(invite?.id || "")}
+                            >
+                              {inviteActionBusyId === String(invite?.id || "") ? "Working..." : "Resend"}
+                            </button>
+                            <button
+                              type="button"
+                              className="members-shell-link-btn is-danger"
+                              onClick={() => handleCancelInvite(invite)}
+                              disabled={inviteActionBusyId === String(invite?.id || "")}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -630,6 +1172,32 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
                 <p className="members-shell-muted">
                   Organization-level invites are admin-only. Use project tabs for scoped invites.
                 </p>
+              )}
+            </article>
+
+            <article className="members-shell-panel">
+              <div className="members-shell-panel-header">
+                <h3>Access notes</h3>
+                <span className="members-shell-chip">{canAdministerMembers ? recentAuditEntries.length : "Admin only"}</span>
+              </div>
+              {canAdministerMembers ? (
+                recentAuditEntries.length ? (
+                  <div className="members-shell-audit-list">
+                    {recentAuditEntries.map((entry) => (
+                      <div className="members-shell-audit-item" key={entry?.id || `${entry?.member_id}-${entry?.occurred_at}`}>
+                        <strong>{entry?.note || "Membership updated."}</strong>
+                        <small>
+                          {entry?.member_name || "Member"} · {entry?.actor_name || "System"} ·{" "}
+                          {formatDateTime(entry?.occurred_at)}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="members-shell-muted">No access notes recorded yet.</p>
+                )
+              ) : (
+                <p className="members-shell-muted">Access notes are visible to workspace admins only.</p>
               )}
             </article>
 
@@ -800,11 +1368,11 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
               </div>
               <div className="members-detail-field">
                 <span>Org role</span>
-                <strong>{toLabel(selectedMemberDetail.member?.role, "Member")}</strong>
+                <strong>{toLabel(normalizeMembershipRole(selectedMemberDetail.member), "Member")}</strong>
               </div>
               <div className="members-detail-field">
                 <span>Status</span>
-                <strong>{toLabel(selectedMemberDetail.member?.status, "Active")}</strong>
+                <strong>{toLabel(normalizeMembershipStatus(selectedMemberDetail.member), "Active")}</strong>
               </div>
               <div className="members-detail-field">
                 <span>Joined</span>
@@ -829,8 +1397,193 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
                   : "No project assignment yet."}
               </p>
             </div>
+
+            {canAdministerMembers ? (
+              <div className="members-detail-history">
+                <span>Access history</span>
+                {selectedMemberAuditEntries.length ? (
+                  <div className="members-detail-history-list">
+                    {selectedMemberAuditEntries.slice(0, 8).map((entry) => (
+                      <div
+                        className="members-detail-history-item"
+                        key={entry?.id || `${entry?.member_id}-${entry?.occurred_at}`}
+                      >
+                        <strong>{entry?.note || "Membership updated."}</strong>
+                        <small>
+                          {entry?.actor_name || "System"} · {formatDateTime(entry?.occurred_at)}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="members-shell-muted">No access notes recorded yet for this member.</p>
+                )}
+              </div>
+            ) : null}
+
+            {canAdministerMembers ? (
+              <div className="members-detail-actions">
+                <button
+                  type="button"
+                  className="data-modal-btn"
+                  onClick={() => openMemberEditor(selectedMemberDetail.member)}
+                  disabled={savingMember || membershipActionBusy}
+                >
+                  Edit member
+                </button>
+                {!isAdminMembershipRole(normalizeMembershipRole(selectedMemberDetail.member)) ? (
+                  <button
+                    type="button"
+                    className="data-modal-btn"
+                    onClick={() =>
+                      confirmAndApplyMembershipAction([selectedMemberDetail.member], "give_admin")
+                    }
+                    disabled={membershipActionBusy}
+                  >
+                    Make admin
+                  </button>
+                ) : null}
+                {normalizeMembershipStatus(selectedMemberDetail.member) === "inactive" ? (
+                  <button
+                    type="button"
+                    className="data-modal-btn"
+                    onClick={() =>
+                      confirmAndApplyMembershipAction([selectedMemberDetail.member], "reinstate")
+                    }
+                    disabled={membershipActionBusy}
+                  >
+                    Reinstate
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="data-modal-btn"
+                    onClick={() =>
+                      confirmAndApplyMembershipAction([selectedMemberDetail.member], "dismiss")
+                    }
+                    disabled={membershipActionBusy}
+                  >
+                    Dismiss
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="data-modal-btn data-modal-btn--danger"
+                  onClick={() => confirmAndApplyMembershipAction([selectedMemberDetail.member], "remove")}
+                  disabled={membershipActionBusy}
+                >
+                  Terminate
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
+      </DataModal>
+
+      <DataModal
+        open={showEditMemberModal}
+        onClose={() => {
+          setShowEditMemberModal(false);
+          setEditingMemberId(null);
+          setMemberEditorForm(createMemberEditorForm());
+        }}
+        title="Edit member"
+        subtitle="Update profile details and organization access."
+        icon="users"
+      >
+        <form className="data-modal-form" onSubmit={handleSaveMemberEdit}>
+          <div className="data-modal-grid">
+            <label className="data-modal-field data-modal-field--full">
+              Name *
+              <input
+                type="text"
+                value={memberEditorForm.name}
+                onChange={(event) =>
+                  setMemberEditorForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+                required
+              />
+            </label>
+            <label className="data-modal-field">
+              E-mail
+              <input
+                type="email"
+                value={memberEditorForm.email}
+                onChange={(event) =>
+                  setMemberEditorForm((prev) => ({ ...prev, email: event.target.value }))
+                }
+              />
+            </label>
+            <label className="data-modal-field">
+              Phone
+              <input
+                type="tel"
+                value={memberEditorForm.phone_number}
+                onChange={(event) =>
+                  setMemberEditorForm((prev) => ({ ...prev, phone_number: event.target.value }))
+                }
+              />
+            </label>
+            <label className="data-modal-field">
+              Org role
+              <select
+                value={memberEditorForm.tenant_role}
+                onChange={(event) =>
+                  setMemberEditorForm((prev) => ({ ...prev, tenant_role: event.target.value }))
+                }
+              >
+                {MEMBER_ROLE_OPTIONS.map((role) => (
+                  <option key={role} value={role}>
+                    {toLabel(role)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="data-modal-field">
+              Org status
+              <select
+                value={memberEditorForm.tenant_status}
+                onChange={(event) =>
+                  setMemberEditorForm((prev) => ({ ...prev, tenant_status: event.target.value }))
+                }
+              >
+                {MEMBER_STATUS_OPTIONS.map((status) => (
+                  <option key={status} value={status}>
+                    {toLabel(status)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="data-modal-field data-modal-field--full">
+              Join date
+              <input
+                type="date"
+                value={memberEditorForm.join_date}
+                onChange={(event) =>
+                  setMemberEditorForm((prev) => ({ ...prev, join_date: event.target.value }))
+                }
+              />
+            </label>
+          </div>
+
+          <div className="data-modal-actions">
+            <button
+              type="button"
+              className="data-modal-btn"
+              onClick={() => {
+                setShowEditMemberModal(false);
+                setEditingMemberId(null);
+                setMemberEditorForm(createMemberEditorForm());
+              }}
+              disabled={savingMember}
+            >
+              Cancel
+            </button>
+            <button type="submit" className="data-modal-btn data-modal-btn--primary" disabled={savingMember}>
+              {savingMember ? "Saving..." : "Save changes"}
+            </button>
+          </div>
+        </form>
       </DataModal>
 
       {canInviteMember ? (

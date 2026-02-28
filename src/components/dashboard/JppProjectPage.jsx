@@ -24,6 +24,7 @@ import {
   updateJppDailyLog,
   updateJppWeeklyGrowth,
 } from "../../lib/dataService.js";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 const deathCauseOptions = [
   { value: "", label: "None" },
@@ -83,6 +84,7 @@ const toDateKey = (value) => {
 };
 
 export default function JppProjectPage({ user, tenantRole, tenantId, activeProjectId, onProjectChange }) {
+  const { formatCurrency: formatTenantCurrency } = useTenantCurrency();
   const today = new Date().toISOString().slice(0, 10);
   const effectiveRole = String(tenantRole || user?.role || "member").toLowerCase();
   const canManage = ["admin", "superadmin", "project_manager"].includes(effectiveRole);
@@ -571,7 +573,8 @@ export default function JppProjectPage({ user, tenantRole, tenantId, activeProje
   const formatNumber = (value) => toNumber(value).toLocaleString("en-KE");
   const formatKg = (value) =>
     `${toNumber(value).toLocaleString("en-KE", { maximumFractionDigits: 1 })} kg`;
-  const formatCurrency = (value) => `Ksh. ${toNumber(value).toLocaleString("en-KE")}`;
+  const formatCurrency = (value) =>
+    formatTenantCurrency(toNumber(value), { maximumFractionDigits: 0 });
   const formatPercent = (value) => `${toNumber(value).toFixed(2)}%`;
   const formatDate = (dateStr) => {
     if (!dateStr) return "N/A";

@@ -11,6 +11,7 @@ import {
   getProjectsWithMembership,
   updateProjectExpense,
 } from "../../lib/dataService.js";
+import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 const EXPENSE_CONFIGS = {
   jpp: {
@@ -29,6 +30,7 @@ const EXPENSE_RANGE_OPTIONS = [
 ];
 
 export default function ExpensesPage({ user, tenantId }) {
+  const { formatCurrency: formatTenantCurrency } = useTenantCurrency();
   const today = new Date().toISOString().slice(0, 10);
 
   const initialExpenseForm = {
@@ -339,7 +341,8 @@ export default function ExpensesPage({ user, tenantId }) {
     return Number.isFinite(parsed) ? parsed : 0;
   };
 
-  const formatCurrency = (value) => `Ksh. ${toNumber(value).toLocaleString("en-KE")}`;
+  const formatCurrency = (value) =>
+    formatTenantCurrency(toNumber(value), { maximumFractionDigits: 0 });
   const formatDate = (dateStr) => {
     if (!dateStr) return "N/A";
     return new Date(dateStr).toLocaleDateString("en-KE", {

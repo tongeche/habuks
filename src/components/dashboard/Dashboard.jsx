@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { DashboardLayout } from "./DashboardLayout.jsx";
+import DashboardLayout from "./DashboardLayout.jsx";
 import DashboardOverview from "./DashboardOverview.jsx";
 import { ProjectsPage } from "./ProjectsPage.jsx";
 import JppProjectPage from "./JppProjectPage.jsx";
@@ -12,6 +12,7 @@ import MembersPage from "./MembersPage.jsx";
 import FinanceRecordsPage from "./FinanceRecordsPage.jsx";
 import SettingsPage from "./SettingsPage.jsx";
 import AdminPage from "./AdminPage.jsx";
+import { TenantCurrencyProvider } from "./TenantCurrencyContext.jsx";
 import { getCurrentMember, getProjectsWithMembership, getTenantMembershipForSlug } from "../../lib/dataService.js";
 import { buildTenantBrand, buildTenantFeatures, buildTenantThemeVars } from "../../lib/tenantBranding.js";
 import { getRoleAccess, isAdminRole } from "./roleAccess.js";
@@ -190,6 +191,7 @@ export default function Dashboard() {
             access={access}
             setActivePage={setActivePage}
             tenantId={tenantInfo?.id}
+            tenantBrand={tenantBrand}
             onManageProject={(project) => {
               const raw = project?.module_key || project?.code || "";
               const lower = String(raw).trim().toLowerCase();
@@ -302,15 +304,17 @@ export default function Dashboard() {
   };
 
   return (
-    <DashboardLayout
-      activePage={activePage}
-      setActivePage={setActivePage}
-      user={user}
-      access={access}
-      tenant={tenantBrand}
-      tenantTheme={tenantTheme}
-    >
-      {renderPage()}
-    </DashboardLayout>
+    <TenantCurrencyProvider tenant={tenantInfo}>
+      <DashboardLayout
+        activePage={activePage}
+        setActivePage={setActivePage}
+        user={user}
+        access={access}
+        tenant={tenantBrand}
+        tenantTheme={tenantTheme}
+      >
+        {renderPage()}
+      </DashboardLayout>
+    </TenantCurrencyProvider>
   );
 }
