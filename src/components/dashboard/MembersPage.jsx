@@ -29,6 +29,17 @@ const createInviteForm = () => ({
 
 const MEMBER_ROLE_OPTIONS = ["member", "supervisor", "project_manager", "admin", "superadmin"];
 const MEMBER_STATUS_OPTIONS = ["active", "pending", "inactive"];
+const MEMBERS_MOBILE_TOUR_STORAGE_KEY = "members-mobile-tour-complete";
+const MEMBERS_MOBILE_TOUR_STEPS = [
+  {
+    title: "Invite new members",
+    description: "Send organization invites from the People page without leaving the member directory.",
+  },
+  {
+    title: "Use the quick add button",
+    description: "Tap the glowing + button anytime to open the invite form faster on mobile.",
+  },
+];
 
 const normalizeInviteProjectScope = (scope) => {
   const normalized = String(scope || "").trim().toLowerCase();
@@ -122,6 +133,9 @@ const buildCsvValue = (value) => {
   return `"${text.replace(/"/g, '""')}"`;
 };
 
+const getMembersMobileTourStorageKey = (tenantId, userId) =>
+  `${MEMBERS_MOBILE_TOUR_STORAGE_KEY}:${String(tenantId || "tenant")}::${String(userId || "user")}`;
+
 export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, access, setActivePage }) {
   const [members, setMembers] = useState([]);
   const [projects, setProjects] = useState([]);
@@ -151,12 +165,17 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
   const [savingMember, setSavingMember] = useState(false);
   const [membershipActionBusy, setMembershipActionBusy] = useState(false);
   const [inviteActionBusyId, setInviteActionBusyId] = useState("");
+  const [peopleTourStep, setPeopleTourStep] = useState(0);
 
   const effectiveTenantId = tenantId || tenantInfo?.id || null;
   const roleKey = normalizeRoleKey(tenantRole || user?.role || "member");
   const isAdmin = ["admin", "superadmin", "super_admin"].includes(roleKey);
   const canAdministerMembers = isAdmin;
   const canInviteMember = isAdmin;
+  const peopleTourOpen = peopleTourStep > 0;
+  const peopleTourStorageKey =
+    effectiveTenantId && user?.id ? getMembersMobileTourStorageKey(effectiveTenantId, user.id) : "";
+  const peopleTourContent = MEMBERS_MOBILE_TOUR_STEPS[Math.max(peopleTourStep - 1, 0)] || MEMBERS_MOBILE_TOUR_STEPS[0];
 
   const loadPeopleData = useCallback(async () => {
     if (!effectiveTenantId) {
@@ -237,6 +256,48 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
   useEffect(() => {
     loadPeopleData();
   }, [loadPeopleData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    if (
+      !canInviteMember ||
+      !effectiveTenantId ||
+      !user?.id ||
+      loading ||
+      peopleTourOpen ||
+      showInviteModal ||
+      showEditMemberModal ||
+      showResponseModal ||
+      selectedMemberDetail
+    ) {
+      return undefined;
+    }
+    if (!window.matchMedia("(max-width: 768px)").matches) {
+      return undefined;
+    }
+    if (window.localStorage.getItem(peopleTourStorageKey) === "done") {
+      return undefined;
+    }
+
+    const timerId = window.setTimeout(() => {
+      setPeopleTourStep(1);
+    }, 2000);
+
+    return () => window.clearTimeout(timerId);
+  }, [
+    canInviteMember,
+    effectiveTenantId,
+    loading,
+    peopleTourOpen,
+    peopleTourStorageKey,
+    selectedMemberDetail,
+    showEditMemberModal,
+    showInviteModal,
+    showResponseModal,
+    user?.id,
+  ]);
 
   useEffect(() => {
     const availableIds = new Set(
@@ -857,6 +918,28 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     }
   };
 
+  const finishPeopleTour = useCallback(() => {
+    if (typeof window !== "undefined" && peopleTourStorageKey) {
+      window.localStorage.setItem(peopleTourStorageKey, "done");
+    }
+    setPeopleTourStep(0);
+  }, [peopleTourStorageKey]);
+
+  const handlePeopleTourPrimaryAction = useCallback(() => {
+    setPeopleTourStep((prev) => {
+      if (prev < MEMBERS_MOBILE_TOUR_STEPS.length) {
+        return prev + 1;
+      }
+      return prev;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (peopleTourStep > MEMBERS_MOBILE_TOUR_STEPS.length) {
+      finishPeopleTour();
+    }
+  }, [finishPeopleTour, peopleTourStep]);
+
   const inviteRoleIsAdmin = isInviteAdminRole(inviteForm.role);
   const inviteProjectScope = inviteRoleIsAdmin
     ? "all"
@@ -870,7 +953,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     allVisibleMemberIds.every((memberId) => selectedMemberIds.includes(memberId));
 
   return (
-    <div className="members-shell dashboard-mobile-shell">
+    <div className={`members-shell dashboard-mobile-shell${peopleTourOpen ? " members-shell-tour-open" : ""}`}>
       <section className="members-shell-card">
         <header className="members-shell-header">
           <div>
@@ -1586,10 +1669,50 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
         </form>
       </DataModal>
 
+      {peopleTourOpen ? (
+        <>
+          <div className="members-shell-tour-overlay" />
+          <div
+            className="members-shell-tour-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="members-tour-title"
+          >
+            <div className="members-shell-tour-progress">
+              <span>
+                {Math.min(peopleTourStep, MEMBERS_MOBILE_TOUR_STEPS.length)} / {MEMBERS_MOBILE_TOUR_STEPS.length}
+              </span>
+              <div className="members-shell-tour-dots" aria-hidden="true">
+                {MEMBERS_MOBILE_TOUR_STEPS.map((_, index) => (
+                  <span
+                    key={`members-tour-step-${index + 1}`}
+                    className={index + 1 === peopleTourStep ? "is-active" : ""}
+                  />
+                ))}
+              </div>
+            </div>
+            <h3 id="members-tour-title">{peopleTourContent.title}</h3>
+            <p>{peopleTourContent.description}</p>
+            <div className="members-shell-tour-actions">
+              <button type="button" className="members-shell-tour-skip" onClick={finishPeopleTour}>
+                Skip
+              </button>
+              <button
+                type="button"
+                className="members-shell-btn members-shell-btn--primary"
+                onClick={handlePeopleTourPrimaryAction}
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </>
+      ) : null}
+
       {canInviteMember ? (
         <button
           type="button"
-          className="dashboard-page-fab"
+          className={`dashboard-page-fab${peopleTourOpen ? " is-tour-highlighted" : ""}`}
           onClick={() => setShowInviteModal(true)}
           disabled={!effectiveTenantId}
           aria-label="Invite member"

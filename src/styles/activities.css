@@ -1789,6 +1789,16 @@
   color: #eef4ff;
 }
 
+.dashboard-layout.is-dark .activities-data-modal .data-modal-field select {
+  color-scheme: dark;
+}
+
+.dashboard-layout.is-dark .activities-data-modal .data-modal-field select option,
+.dashboard-layout.is-dark .activities-data-modal .data-modal-field select optgroup {
+  background: #081120;
+  color: #eef4ff;
+}
+
 .dashboard-layout.is-dark .activities-data-modal .data-modal-field input::placeholder,
 .dashboard-layout.is-dark .activities-data-modal .data-modal-field textarea::placeholder,
 .dashboard-layout.is-dark .activities-data-modal .activities-modal-inline-row input::placeholder,

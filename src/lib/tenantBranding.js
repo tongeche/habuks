@@ -26,6 +26,7 @@ const toObject = (value) => (value && typeof value === "object" ? value : {});
 export function buildTenantBrand(tenant, baseData = {}) {
   const overrides = toObject(tenant?.site_data);
   return {
+    id: tenant?.id ?? null,
     name: overrides.orgName ?? tenant?.name ?? baseData.orgName ?? "Habuks",
     tagline: overrides.orgTagline ?? tenant?.tagline ?? baseData.orgTagline ?? "",
     logoUrl: overrides.logoUrl ?? tenant?.logo_url ?? baseData.logoUrl ?? "/assets/logo.png",

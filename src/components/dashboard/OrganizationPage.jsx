@@ -5260,6 +5260,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         title="Edit Organization"
         subtitle="Update profile, website content sections, media, and program visibility."
         icon="briefcase"
+        className="org-editor-modal"
       >
         <form className="data-modal-form" onSubmit={handleSaveOrganization}>
           {orgFormError ? <p className="data-modal-feedback data-modal-feedback--error">{orgFormError}</p> : null}

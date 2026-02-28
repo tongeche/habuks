@@ -133,6 +133,7 @@ function getFormat(extension) {
 async function listTemplateFiles(directoryPath) {
   const entries = await fs.readdir(directoryPath, { withFileTypes: true });
   const files = [];
+  const seenTemplateKeys = new Map();
 
   for (const entry of entries) {
     if (!entry.isFile()) continue;
@@ -144,6 +145,14 @@ async function listTemplateFiles(directoryPath) {
     if (!CONTENT_TYPE_BY_EXTENSION[extension]) continue;
     const stats = await fs.stat(absolutePath);
     if (!stats.size) continue;
+    const templateKey = sanitizeSegment(entry.name.replace(/\.[^.]+$/, ""), "template");
+    const previousFileName = seenTemplateKeys.get(templateKey);
+    if (previousFileName) {
+      throw new Error(
+        `Duplicate template key "${templateKey}" detected in ${directoryPath}: ${previousFileName} and ${entry.name}. Keep one file per template key in the upload directory.`
+      );
+    }
+    seenTemplateKeys.set(templateKey, entry.name);
     files.push({
       absolutePath,
       fileName: entry.name,

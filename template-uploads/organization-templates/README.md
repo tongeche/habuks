@@ -19,6 +19,9 @@ Use `template_key` as filename so metadata updates automatically:
 - `member-attendance-register-template.xlsx`
 - `procurement-request-template.docx`
 
+Keep only one file per `template_key` in this root upload folder. If you are preparing an alternate format
+or a later batch, place it in a subfolder until it has its own template key or rollout step.
+
 ## Commands
 
 Global templates (default path prefix: `global/organization/templates/...`):

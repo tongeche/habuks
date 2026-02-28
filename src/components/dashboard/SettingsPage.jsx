@@ -1,23 +1,38 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../icons.jsx";
 import ProfilePage from "./ProfilePage.jsx";
-import OrganizationPage from "./OrganizationPage.jsx";
+import * as OrganizationPageModule from "./OrganizationPage.jsx";
 
 const ADMIN_ROLES = ["admin", "superadmin", "project_manager", "supervisor"];
+const OrganizationPage =
+  OrganizationPageModule.OrganizationPage || OrganizationPageModule.default;
 
 export default function SettingsPage({
   user,
   onUserUpdate,
   tenantId,
   tenant,
+  tenantRole,
+  requestedTab = "my-settings",
   onTenantUpdated,
   setActivePage,
 }) {
-  const userRole = String(user?.role || "member").toLowerCase();
-  const canAccessOrgSettings = ADMIN_ROLES.includes(userRole);
+  const effectiveRole = String(tenantRole || user?.role || "member").toLowerCase();
+  const canAccessOrgSettings = ADMIN_ROLES.includes(effectiveRole);
+  const resolveSettingsTab = (tabKey) => {
+    const normalizedTab = String(tabKey || "my-settings").trim().toLowerCase();
+    if (normalizedTab === "organization-settings" && canAccessOrgSettings) {
+      return "organization-settings";
+    }
+    return "my-settings";
+  };
 
   // Initialize to "my-settings" if user can't access org settings, otherwise "my-settings" by default
-  const [activeSettingsTab, setActiveSettingsTab] = useState("my-settings");
+  const [activeSettingsTab, setActiveSettingsTab] = useState(() => resolveSettingsTab(requestedTab));
+
+  useEffect(() => {
+    setActiveSettingsTab(resolveSettingsTab(requestedTab));
+  }, [requestedTab, canAccessOrgSettings]);
 
   const settingsTabs = [
     { key: "my-settings", label: "My Settings", icon: "user" },
@@ -52,16 +67,22 @@ export default function SettingsPage({
           <ProfilePage user={user} onUserUpdate={onUserUpdate} />
         )}
         {activeSettingsTab === "organization-settings" && canAccessOrgSettings && (
-          <OrganizationPage
-            user={user}
-            tenantId={tenantId}
-            tenant={tenant}
-            onTenantUpdated={onTenantUpdated}
-            setActivePage={setActivePage}
-          />
+          tenantId ? (
+            <OrganizationPage
+              user={user}
+              tenantId={tenantId}
+              tenant={tenant}
+              onTenantUpdated={onTenantUpdated}
+              setActivePage={setActivePage}
+            />
+          ) : (
+            <div className="project-expenses-loading org-shell-loading">
+              <div className="loading-spinner" />
+              <span>Loading organization workspace...</span>
+            </div>
+          )
         )}
       </div>
     </div>
   );
 }
-

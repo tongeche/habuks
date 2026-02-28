@@ -55,18 +55,6 @@ export default function TenantSelectPage() {
         if (!active) return;
         setMemberships(list);
 
-        if (list.length === 1 && list[0]?.tenant?.slug) {
-          const slug = list[0].tenant.slug;
-          localStorage.setItem("lastTenantSlug", slug);
-          navigate(`/tenant/${slug}/dashboard`);
-          return;
-        }
-
-        const lastSlug = localStorage.getItem("lastTenantSlug");
-        if (lastSlug && list.some((item) => item.tenant?.slug === lastSlug)) {
-          navigate(`/tenant/${lastSlug}/dashboard`);
-          return;
-        }
       } catch (err) {
         if (!active) return;
         setError(err?.message || "Unable to load your tenant access.");

@@ -6,45 +6,18 @@ import {
   markMemberNotificationRead,
   refreshMemberNotificationReminders,
 } from "../../lib/dataService.js";
+import {
+  buildNotificationReminderRefreshStorageKey,
+  formatRelativeNotificationTime,
+  getNotificationGroupLabel,
+  getNotificationGroupKey,
+  getNotificationTypeKey,
+  groupNotificationsByDay,
+  NOTIFICATION_ICON_BY_TYPE,
+  REMINDER_REFRESH_INTERVAL_MS,
+} from "./notificationMeta.js";
 
-const NOTIFICATION_ICON_BY_TYPE = {
-  task_assigned: "folder",
-  task_updated: "folder",
-  task_due_soon: "clock-alert",
-  task_overdue: "alert",
-  meeting_invite: "calendar",
-  meeting_reminder: "clock-alert",
-  meeting_minutes_ready: "notes",
-  news_update: "newspaper",
-};
-
-const REMINDER_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
-
-const formatRelativeNotificationTime = (value) => {
-  const timestamp = Date.parse(String(value || ""));
-  if (!Number.isFinite(timestamp)) return "";
-
-  const elapsedMs = Date.now() - timestamp;
-  const future = elapsedMs < 0;
-  const absoluteMs = Math.abs(elapsedMs);
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-
-  if (absoluteMs < minute) return future ? "in moments" : "just now";
-  if (absoluteMs < hour) {
-    const count = Math.round(absoluteMs / minute);
-    return future ? `in ${count} min` : `${count} min ago`;
-  }
-  if (absoluteMs < day) {
-    const count = Math.round(absoluteMs / hour);
-    return future ? `in ${count} hr` : `${count} hr ago`;
-  }
-  const count = Math.round(absoluteMs / day);
-  return future ? `in ${count} day${count === 1 ? "" : "s"}` : `${count} day${count === 1 ? "" : "s"} ago`;
-};
-
-export default function NotificationBell({ tenantId, user, setActivePage }) {
+export default function NotificationBell({ tenantId, user, setActivePage, quietModeUntil = null }) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -52,6 +25,7 @@ export default function NotificationBell({ tenantId, user, setActivePage }) {
   const [busyId, setBusyId] = useState("");
   const [markingAll, setMarkingAll] = useState(false);
   const panelRef = useRef(null);
+  const quietModeActive = Number.isFinite(Number(quietModeUntil)) && Number(quietModeUntil) > Date.now();
 
   const loadNotifications = useCallback(async () => {
     if (!tenantId || !user?.id) {
@@ -76,7 +50,7 @@ export default function NotificationBell({ tenantId, user, setActivePage }) {
   const maybeRefreshReminderNotifications = useCallback(
     async (force = false) => {
       if (!tenantId || !user?.id) return false;
-      const storageKey = `habuks:notification-reminder-refresh:${tenantId}:${user.id}`;
+      const storageKey = buildNotificationReminderRefreshStorageKey(tenantId, user.id);
       const lastRefresh = Number.parseInt(localStorage.getItem(storageKey) || "", 10);
       if (!force && Number.isFinite(lastRefresh) && Date.now() - lastRefresh < REMINDER_REFRESH_INTERVAL_MS) {
         return false;
@@ -99,7 +73,7 @@ export default function NotificationBell({ tenantId, user, setActivePage }) {
 
     const loadInbox = async () => {
       await loadNotifications();
-      const refreshed = await maybeRefreshReminderNotifications();
+      const refreshed = quietModeActive ? false : await maybeRefreshReminderNotifications();
       if (refreshed && isMounted) {
         await loadNotifications();
       }
@@ -110,15 +84,15 @@ export default function NotificationBell({ tenantId, user, setActivePage }) {
     return () => {
       isMounted = false;
     };
-  }, [loadNotifications, maybeRefreshReminderNotifications]);
+  }, [loadNotifications, maybeRefreshReminderNotifications, quietModeActive]);
 
   useEffect(() => {
-    if (!tenantId || !user?.id) return undefined;
+    if (!tenantId || !user?.id || quietModeActive) return undefined;
     const timer = window.setInterval(() => {
       loadNotifications();
     }, 60000);
     return () => window.clearInterval(timer);
-  }, [loadNotifications, tenantId, user?.id]);
+  }, [loadNotifications, tenantId, user?.id, quietModeActive]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -136,12 +110,17 @@ export default function NotificationBell({ tenantId, user, setActivePage }) {
     () => notifications.filter((item) => String(item?.status || "unread").toLowerCase() === "unread").length,
     [notifications]
   );
+  const displayedUnreadCount = quietModeActive ? 0 : unreadCount;
+  const notificationSections = useMemo(
+    () => groupNotificationsByDay(notifications),
+    [notifications]
+  );
 
   const handleToggle = async () => {
     const nextOpen = !isOpen;
     setIsOpen(nextOpen);
     if (nextOpen) {
-      const refreshed = await maybeRefreshReminderNotifications();
+      const refreshed = quietModeActive ? false : await maybeRefreshReminderNotifications();
       if (refreshed) {
         await loadNotifications();
         return;
@@ -197,6 +176,11 @@ export default function NotificationBell({ tenantId, user, setActivePage }) {
     }
   };
 
+  const handleViewAll = () => {
+    setActivePage("notifications");
+    setIsOpen(false);
+  };
+
   return (
     <div className="dashboard-notification-bell" ref={panelRef}>
       <button
@@ -207,24 +191,37 @@ export default function NotificationBell({ tenantId, user, setActivePage }) {
         onClick={handleToggle}
       >
         <Icon name="bell" size={18} />
-        {unreadCount ? <span className="dashboard-notification-badge">{unreadCount > 9 ? "9+" : unreadCount}</span> : null}
+        {displayedUnreadCount ? (
+          <span className="dashboard-notification-badge">
+            {displayedUnreadCount > 9 ? "9+" : displayedUnreadCount}
+          </span>
+        ) : null}
       </button>
 
       {isOpen ? (
         <div className="dashboard-notification-panel">
           <div className="dashboard-notification-panel-header">
-            <div>
+            <div className="dashboard-notification-panel-heading">
               <strong>Notifications</strong>
-              <span>{unreadCount ? `${unreadCount} unread` : "All caught up"}</span>
+              <span>Tasks, meetings, and workspace updates</span>
             </div>
-            <button
-              type="button"
-              className="dashboard-notification-mark-all"
-              onClick={handleMarkAllRead}
-              disabled={!unreadCount || markingAll}
-            >
-              {markingAll ? "Working..." : "Mark all read"}
-            </button>
+            <div className="dashboard-notification-panel-actions">
+              <span className="dashboard-notification-panel-count">
+                {quietModeActive
+                  ? "Quiet mode active"
+                  : unreadCount
+                    ? `${unreadCount} unread`
+                    : "All caught up"}
+              </span>
+              <button
+                type="button"
+                className="dashboard-notification-mark-all"
+                onClick={handleMarkAllRead}
+                disabled={!unreadCount || markingAll}
+              >
+                {markingAll ? "Working..." : "Mark all read"}
+              </button>
+            </div>
           </div>
 
           {loading ? (
@@ -233,40 +230,64 @@ export default function NotificationBell({ tenantId, user, setActivePage }) {
             <div className="dashboard-notification-empty">{error}</div>
           ) : notifications.length ? (
             <div className="dashboard-notification-list">
-              {notifications.map((notification) => {
-                const notificationId = String(notification?.id || "");
-                const notificationType = String(notification?.type || "notice").trim().toLowerCase();
-                const isUnread = String(notification?.status || "unread").trim().toLowerCase() === "unread";
-                const iconName = NOTIFICATION_ICON_BY_TYPE[notificationType] || "bell";
-                return (
-                  <button
-                    type="button"
-                    key={notificationId || `${notificationType}-${notification?.created_at || ""}`}
-                    className={`dashboard-notification-item${isUnread ? " is-unread" : ""}`}
-                    onClick={() => handleNotificationClick(notification)}
-                    disabled={busyId === notificationId}
-                  >
-                    <span className={`dashboard-notification-item-icon is-${String(notification?.kind || "system").toLowerCase()}`}>
-                      <Icon name={iconName} size={16} />
-                    </span>
-                    <span className="dashboard-notification-item-copy">
-                      <span className="dashboard-notification-item-head">
-                        <strong>{notification?.title || "Notification"}</strong>
-                        <small>{formatRelativeNotificationTime(notification?.created_at)}</small>
-                      </span>
-                      {notification?.body ? <span>{notification.body}</span> : null}
-                      <span className="dashboard-notification-item-meta">
-                        {notification?.action_label || "Open"}
-                        {isUnread ? <em>New</em> : null}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
+              {notificationSections.map((section) => (
+                <section className="dashboard-notification-section" key={section.key}>
+                  <div className="dashboard-notification-section-label">{section.label}</div>
+                  <div className="dashboard-notification-section-items">
+                    {section.items.map((notification) => {
+                      const notificationId = String(notification?.id || "");
+                      const notificationType = getNotificationTypeKey(notification);
+                      const notificationGroup = getNotificationGroupKey(notification);
+                      const isUnread =
+                        String(notification?.status || "unread").trim().toLowerCase() === "unread";
+                      const iconName = NOTIFICATION_ICON_BY_TYPE[notificationType] || "bell";
+                      return (
+                        <button
+                          type="button"
+                          key={notificationId || `${notificationType}-${notification?.created_at || ""}`}
+                          className={`dashboard-notification-item${isUnread ? " is-unread" : ""}`}
+                          onClick={() => handleNotificationClick(notification)}
+                          disabled={busyId === notificationId}
+                        >
+                          <span className="dashboard-notification-item-rail" aria-hidden="true">
+                            <span className={`dashboard-notification-item-dot is-${notificationGroup}`} />
+                            <span className={`dashboard-notification-item-icon is-${notificationGroup}`}>
+                              <Icon name={iconName} size={16} />
+                            </span>
+                          </span>
+                          <span className="dashboard-notification-item-copy">
+                            <span className="dashboard-notification-item-head">
+                              <span className="dashboard-notification-item-tags">
+                                <em className={`dashboard-notification-item-kind is-${notificationGroup}`}>
+                                  {getNotificationGroupLabel(notification)}
+                                </em>
+                                <small>{formatRelativeNotificationTime(notification?.created_at)}</small>
+                              </span>
+                              {isUnread ? <i className="dashboard-notification-item-unread" /> : null}
+                            </span>
+                            <strong>{notification?.title || "Notification"}</strong>
+                            {notification?.body ? <span>{notification.body}</span> : null}
+                            <span className="dashboard-notification-item-meta">
+                              {notification?.action_label || "Open"}
+                              {isUnread ? <em>New</em> : null}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
             </div>
           ) : (
             <div className="dashboard-notification-empty">No reminders yet.</div>
           )}
+
+          <div className="dashboard-notification-panel-footer">
+            <button type="button" className="dashboard-notification-view-all" onClick={handleViewAll}>
+              Open full inbox
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

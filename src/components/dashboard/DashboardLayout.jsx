@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "../icons.jsx";
 import { signOut, createMagicLinkInvite, getProjects } from "../../lib/dataService.js";
-import UserDropdown from "./UserDropdown.jsx";
+import * as UserDropdownModule from "./UserDropdown.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import DataModal from "./DataModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
+const UserDropdown = UserDropdownModule.UserDropdown || UserDropdownModule.default;
 const baseMenuItems = [
   {
     key: "overview",
@@ -150,6 +151,7 @@ const isInviteAdminRole = (role) => {
 };
 
 const DASHBOARD_THEME_STORAGE_KEY = "dashboard-theme-mode";
+const DASHBOARD_QUIET_MODE_STORAGE_KEY = "dashboard-quiet-mode-until";
 
 const getInitialDashboardThemeMode = () => {
   if (typeof window === "undefined") {
@@ -164,6 +166,19 @@ const getInitialDashboardThemeMode = () => {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 };
 
+const getInitialQuietModeUntil = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = window.localStorage.getItem(DASHBOARD_QUIET_MODE_STORAGE_KEY);
+  const parsed = Number.parseInt(String(raw || ""), 10);
+  if (!Number.isFinite(parsed) || parsed <= Date.now()) {
+    window.localStorage.removeItem(DASHBOARD_QUIET_MODE_STORAGE_KEY);
+    return null;
+  }
+  return parsed;
+};
+
 export default function DashboardLayout({
   activePage,
   setActivePage,
@@ -171,7 +186,9 @@ export default function DashboardLayout({
   user,
   access,
   tenant,
+  tenantRole,
   tenantTheme,
+  onRequestSettingsTab,
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openSections, setOpenSections] = useState(() => new Set());
@@ -181,6 +198,7 @@ export default function DashboardLayout({
     return saved ? JSON.parse(saved) : false;
   });
   const [dashboardThemeMode, setDashboardThemeMode] = useState(getInitialDashboardThemeMode);
+  const [quietModeUntil, setQuietModeUntil] = useState(getInitialQuietModeUntil);
   const [sidebarHovered, setSidebarHovered] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showResponseModal, setShowResponseModal] = useState(false);
@@ -204,6 +222,18 @@ export default function DashboardLayout({
   useEffect(() => {
     window.localStorage.setItem(DASHBOARD_THEME_STORAGE_KEY, dashboardThemeMode);
   }, [dashboardThemeMode]);
+
+  useEffect(() => {
+    if (!quietModeUntil || quietModeUntil <= Date.now()) {
+      window.localStorage.removeItem(DASHBOARD_QUIET_MODE_STORAGE_KEY);
+      return undefined;
+    }
+    window.localStorage.setItem(DASHBOARD_QUIET_MODE_STORAGE_KEY, String(quietModeUntil));
+    const timer = window.setTimeout(() => {
+      setQuietModeUntil(null);
+    }, quietModeUntil - Date.now());
+    return () => window.clearTimeout(timer);
+  }, [quietModeUntil]);
 
   const brandName = tenant?.name || "Habuks";
   const brandTagline = tenant?.tagline || "";
@@ -246,6 +276,8 @@ export default function DashboardLayout({
   const pageTitle =
     (financePages.has(activePage)
       ? "Finance & Records"
+      : activePage === "notifications"
+        ? "Notifications"
       : flatMenuItems.find((m) => m.key === activePage)?.label) ||
     (activePage === "settings" ? "Settings" : "Dashboard");
 
@@ -450,6 +482,104 @@ export default function DashboardLayout({
 
   const sidebarWidth = isCollapsed ? "96px" : "280px";
   const isDarkMode = dashboardThemeMode === "dark";
+  const openSettingsTab = (tabKey) => {
+    onRequestSettingsTab?.(tabKey);
+    setActivePage("settings");
+  };
+  const normalizedTenantRole = String(tenantRole || user?.role || "member").trim().toLowerCase();
+  const canManageWorkspace =
+    normalizedTenantRole === "admin" ||
+    normalizedTenantRole === "superadmin" ||
+    normalizedTenantRole === "project_manager" ||
+    normalizedTenantRole === "supervisor";
+  const canOpenAdminConsole = allowedPages.has("admin");
+  const canInviteMembers = canManageWorkspace;
+  const workspaceAppItems = [
+    allowedPages.has("projects")
+      ? {
+          key: "projects",
+          label: "Projects",
+          icon: "folder",
+          tone: "blue",
+          onClick: () => setActivePage("projects"),
+        }
+      : null,
+    allowedPages.has("meetings")
+      ? {
+          key: "activities",
+          label: "Activities",
+          icon: "flag",
+          tone: "violet",
+          onClick: () => setActivePage("meetings"),
+        }
+      : null,
+    allowedPages.has("members")
+      ? {
+          key: "people",
+          label: "People",
+          icon: "users",
+          tone: "indigo",
+          onClick: () => setActivePage("members"),
+        }
+      : null,
+    allowedPages.has("reports")
+      ? {
+          key: "reports",
+          label: "Reports",
+          icon: "trending-up",
+          tone: "teal",
+          onClick: () => setActivePage("reports"),
+        }
+      : null,
+    allowedPages.has("expenses") || allowedPages.has("documents") || allowedPages.has("contributions")
+      ? {
+          key: "finance",
+          label: "Finance",
+          icon: "wallet",
+          tone: "emerald",
+          onClick: () => {
+            if (allowedPages.has("expenses")) {
+              setActivePage("expenses");
+              return;
+            }
+            if (allowedPages.has("contributions")) {
+              setActivePage("contributions");
+              return;
+            }
+            setActivePage("documents");
+          },
+        }
+      : null,
+    allowedPages.has("notifications")
+      ? {
+          key: "inbox",
+          label: "Inbox",
+          icon: "bell",
+          tone: "amber",
+          onClick: () => setActivePage("notifications"),
+        }
+      : null,
+    allowedPages.has("news")
+      ? {
+          key: "updates",
+          label: "Updates",
+          icon: "check-circle",
+          tone: "mint",
+          onClick: () => setActivePage("news"),
+        }
+      : null,
+    canOpenAdminConsole
+      ? {
+          key: "roles",
+          label: "Access",
+          icon: "shield",
+          tone: "sky",
+          onClick: () => setActivePage("admin"),
+        }
+      : null,
+  ]
+    .filter(Boolean)
+    .slice(0, 6);
 
   return (
     <div
@@ -616,38 +746,62 @@ export default function DashboardLayout({
             >
               <Icon name="menu" size={22} />
             </button>
-            <h1>{pageTitle}</h1>
+            <div className="dashboard-header-title-block">
+              <span className="dashboard-header-kicker">{tenant?.name || "Workspace"}</span>
+              <h1>{pageTitle}</h1>
+            </div>
           </div>
           <div className="dashboard-header-search">
             <Icon name="search" size={18} />
             <input type="search" placeholder="Search for something" aria-label="Search dashboard" />
           </div>
           <div className="dashboard-header-actions">
-            <button
-              className={`dashboard-icon-btn dashboard-theme-toggle${isDarkMode ? " is-dark" : ""}`}
-              type="button"
-              aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
-              aria-pressed={isDarkMode}
-              title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
-              onClick={() =>
-                setDashboardThemeMode((prev) => (prev === "dark" ? "light" : "dark"))
-              }
-            >
-              <Icon name={isDarkMode ? "sun" : "moon"} size={18} />
-            </button>
-            <button
-              className={`dashboard-icon-btn${activePage === "settings" ? " active" : ""}`}
-              type="button"
-              aria-label="Settings"
-              onClick={() => setActivePage("settings")}
-            >
-              <Icon name="settings" size={18} />
-            </button>
-            <NotificationBell tenantId={activeTenantId} user={user} setActivePage={setActivePage} />
+            <div className="dashboard-header-action-dock">
+              <button
+                className={`dashboard-icon-btn dashboard-theme-toggle${isDarkMode ? " is-dark" : ""}`}
+                type="button"
+                aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+                aria-pressed={isDarkMode}
+                title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+                onClick={() =>
+                  setDashboardThemeMode((prev) => (prev === "dark" ? "light" : "dark"))
+                }
+              >
+                <Icon name={isDarkMode ? "sun" : "moon"} size={18} />
+              </button>
+              <button
+                className={`dashboard-icon-btn${activePage === "settings" ? " active" : ""}`}
+                type="button"
+                aria-label="Settings"
+                onClick={() => openSettingsTab("my-settings")}
+              >
+                <Icon name="settings" size={18} />
+              </button>
+              <NotificationBell
+                tenantId={activeTenantId}
+                user={user}
+                setActivePage={setActivePage}
+                quietModeUntil={quietModeUntil}
+              />
+            </div>
             <UserDropdown
               user={user}
+              tenant={tenant}
+              tenantRole={normalizedTenantRole}
+              canInviteMembers={canInviteMembers}
+              canManageWorkspace={canManageWorkspace}
+              canOpenAdminConsole={canOpenAdminConsole}
+              themeMode={dashboardThemeMode}
+              onThemeModeChange={setDashboardThemeMode}
+              quietModeUntil={quietModeUntil}
+              onQuietModeUntilChange={setQuietModeUntil}
               onOpenInviteModal={() => setShowInviteModal(true)}
-              onOpenProfileSettings={() => setActivePage("settings")}
+              onOpenProfileSettings={() => openSettingsTab("my-settings")}
+              onOpenWorkspaceSettings={() => openSettingsTab("organization-settings")}
+              onOpenAdminConsole={() => setActivePage("admin")}
+              onOpenNotifications={() => setActivePage("notifications")}
+              onSwitchWorkspace={() => navigate("/select-tenant")}
+              workspaceAppItems={workspaceAppItems}
             />
           </div>
         </header>

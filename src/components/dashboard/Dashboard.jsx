@@ -7,6 +7,7 @@ import JppProjectPage from "./JppProjectPage.jsx";
 import { JgfProjectPage } from "./JgfProjectPage.jsx";
 import ReportsPage from "./ReportsPage.jsx";
 import NewsPage from "./NewsPage.jsx";
+import NotificationsPage from "./NotificationsPage.jsx";
 import { MeetingsPage } from "./MeetingsPage.jsx";
 import MembersPage from "./MembersPage.jsx";
 import FinanceRecordsPage from "./FinanceRecordsPage.jsx";
@@ -27,6 +28,7 @@ export default function Dashboard() {
   const [tenantInfo, setTenantInfo] = useState(null);
   const [activeJppProjectId, setActiveJppProjectId] = useState(null);
   const [activeJgfProjectId, setActiveJgfProjectId] = useState(null);
+  const [settingsTabRequest, setSettingsTabRequest] = useState("my-settings");
   const navigate = useNavigate();
   const { slug } = useParams();
   const baseSiteData = useMemo(() => {
@@ -109,6 +111,12 @@ export default function Dashboard() {
 
     loadTenantRole();
   }, [user, slug]);
+
+  useEffect(() => {
+    const normalizedSlug = String(tenantInfo?.slug || slug || "").trim();
+    if (!normalizedSlug || typeof window === "undefined") return;
+    window.localStorage.setItem("lastTenantSlug", normalizedSlug);
+  }, [tenantInfo?.slug, slug]);
 
   const tenantBrand = useMemo(
     () => buildTenantBrand(tenantInfo, baseSiteData),
@@ -244,6 +252,14 @@ export default function Dashboard() {
             tenantId={tenantInfo?.id}
           />
         );
+      case "notifications":
+        return (
+          <NotificationsPage
+            tenantId={tenantInfo?.id}
+            user={user}
+            setActivePage={setActivePage}
+          />
+        );
       case "news":
         return <NewsPage user={user} tenantId={tenantInfo?.id} />;
       case "documents":
@@ -275,6 +291,8 @@ export default function Dashboard() {
             onUserUpdate={setUser}
             tenantId={tenantInfo?.id}
             tenant={tenantInfo}
+            tenantRole={tenantRole}
+            requestedTab={settingsTabRequest}
             onTenantUpdated={setTenantInfo}
             setActivePage={setActivePage}
           />
@@ -311,7 +329,9 @@ export default function Dashboard() {
         user={user}
         access={access}
         tenant={tenantBrand}
+        tenantRole={tenantRole}
         tenantTheme={tenantTheme}
+        onRequestSettingsTab={setSettingsTabRequest}
       >
         {renderPage()}
       </DashboardLayout>

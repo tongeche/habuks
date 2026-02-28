@@ -218,6 +218,21 @@ const getProjectExpenseCategoryIcon = (category) => {
   return "receipt";
 };
 
+const hasExpenseReceiptFile = (expense) => {
+  if (!expense || typeof expense !== "object") return false;
+  const hasResolvedReceiptUrl =
+    Boolean(String(expense?.receipt_download_url || "").trim()) ||
+    Boolean(String(expense?.receipt_file_url || "").trim());
+  const hasStoragePath = Boolean(String(expense?.receipt_file_path || "").trim());
+  if (expense?.receipt_storage_missing) {
+    return hasResolvedReceiptUrl;
+  }
+  return Boolean(expense?.receipt) || hasResolvedReceiptUrl || hasStoragePath;
+};
+
+const hasExpenseProof = (expense) =>
+  hasExpenseReceiptFile(expense) || Boolean(String(expense?.payment_reference || "").trim());
+
 const asPlainObject = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value;
@@ -817,6 +832,7 @@ export function ProjectsPage({
     formatFieldLabel,
   } = useTenantCurrency();
   const projectDocumentInputRef = useRef(null);
+  const projectDocumentTemplateMenuRef = useRef(null);
   const expenseReceiptInputRef = useRef(null);
   const expenseFormReceiptInputRef = useRef(null);
   const [projects, setProjects] = useState([]);
@@ -852,6 +868,7 @@ export function ProjectsPage({
   const [projectDocumentsError, setProjectDocumentsError] = useState("");
   const [projectDocumentMode, setProjectDocumentMode] = useState("upload");
   const [emitDocumentType, setEmitDocumentType] = useState(PROJECT_EMIT_DOCUMENT_OPTIONS[0].value);
+  const [projectDocumentTemplateMenuOpen, setProjectDocumentTemplateMenuOpen] = useState(false);
   const [emittingProjectDocument, setEmittingProjectDocument] = useState(false);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
   const [uploadingProjectDocument, setUploadingProjectDocument] = useState(false);
@@ -2429,11 +2446,7 @@ export function ProjectsPage({
         timestamp: Number.isFinite(expenseTimestamp) ? expenseTimestamp : null,
       });
 
-      const hasProof =
-        Boolean(expense?.receipt) ||
-        Boolean(expense?.receipt_file_path) ||
-        Boolean(expense?.receipt_file_url) ||
-        Boolean(String(expense?.payment_reference || "").trim());
+      const hasProof = hasExpenseProof(expense);
       if (hasProof) {
         expenseProofCount += 1;
       }
@@ -2727,11 +2740,7 @@ export function ProjectsPage({
     const topCategoryMax = topCategories.reduce((maxValue, item) => Math.max(maxValue, item.amount), 0);
 
     const recentExpensesFeed = recentProjectExpenses.slice(0, 5).map((expense, index) => {
-      const hasProof =
-        Boolean(expense?.receipt) ||
-        Boolean(expense?.receipt_file_path) ||
-        Boolean(expense?.receipt_file_url) ||
-        Boolean(String(expense?.payment_reference || "").trim());
+      const hasProof = hasExpenseProof(expense);
       return {
         id: String(expense?.id || `expense-${index + 1}`),
         title: String(expense?.title || expense?.category || "Expense item").trim() || "Expense item",
@@ -3250,12 +3259,7 @@ export function ProjectsPage({
       const safeAmount = Number.isFinite(amount) && amount > 0 ? amount : 0;
       const category = String(expense?.category || "Other").trim() || "Other";
       const vendor = String(expense?.vendor || "").trim() || "Unknown vendor";
-      const hasProof =
-        Boolean(expense?.receipt) ||
-        Boolean(expense?.receipt_download_url) ||
-        Boolean(expense?.receipt_file_path) ||
-        Boolean(expense?.receipt_file_url) ||
-        Boolean(String(expense?.payment_reference || "").trim());
+      const hasProof = hasExpenseProof(expense);
 
       categoryTotals.set(category, (categoryTotals.get(category) || 0) + safeAmount);
       const vendorCurrent = vendorTotals.get(vendor) || { name: vendor, amount: 0, count: 0 };
@@ -4003,10 +4007,7 @@ export function ProjectsPage({
           projectExpenses.find(
             (expense) => String(expense?.id ?? "") === normalizedEditingExpenseId
           ) || null;
-        const hasExistingReceipt =
-          Boolean(existingExpense?.receipt) ||
-          Boolean(existingExpense?.receipt_file_path) ||
-          Boolean(existingExpense?.receipt_file_url);
+        const hasExistingReceipt = hasExpenseReceiptFile(existingExpense);
 
         savedExpense = await updateProjectExpense(
           normalizedEditingExpenseId,
@@ -4122,10 +4123,44 @@ export function ProjectsPage({
     [sortedProjectDocuments]
   );
 
+  const selectedEmitDocumentOption = useMemo(
+    () =>
+      PROJECT_EMIT_DOCUMENT_OPTIONS.find((option) => option.value === emitDocumentType) ||
+      PROJECT_EMIT_DOCUMENT_OPTIONS[0],
+    [emitDocumentType]
+  );
+
   useEffect(() => {
     const visibleDocumentSet = new Set(documentRowIds);
     setSelectedDocumentIds((prev) => prev.filter((documentId) => visibleDocumentSet.has(documentId)));
   }, [documentRowIds]);
+
+  useEffect(() => {
+    if (!projectDocumentTemplateMenuOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (projectDocumentTemplateMenuRef.current?.contains(event.target)) return;
+      setProjectDocumentTemplateMenuOpen(false);
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setProjectDocumentTemplateMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [projectDocumentTemplateMenuOpen]);
+
+  useEffect(() => {
+    setProjectDocumentTemplateMenuOpen(false);
+  }, [selectedProject?.id, projectDocumentMode]);
 
   const allDocumentsSelected =
     documentRowIds.length > 0 &&
@@ -4443,13 +4478,7 @@ export function ProjectsPage({
       return priorityKey === "high" || priorityKey === "urgent";
     }).length;
 
-    const expensesWithProofCount = expensesSorted.filter(
-      (expense) =>
-        Boolean(expense?.receipt) ||
-        Boolean(expense?.receipt_file_path) ||
-        Boolean(expense?.receipt_file_url) ||
-        Boolean(String(expense?.payment_reference || "").trim())
-    ).length;
+    const expensesWithProofCount = expensesSorted.filter((expense) => hasExpenseProof(expense)).length;
     const expenseProofPercent =
       expensesSorted.length > 0 ? (expensesWithProofCount / expensesSorted.length) * 100 : null;
 
@@ -6907,13 +6936,17 @@ export function ProjectsPage({
                                           >
                                             Open
                                           </a>
+                                        ) : expense?.receipt_storage_missing ? (
+                                          <span className="projects-table-status hidden">
+                                            Missing file
+                                          </span>
                                         ) : (
                                           <span
                                             className={`projects-table-status${
-                                              expense?.receipt || expense?.payment_reference ? "" : " hidden"
+                                              hasExpenseProof(expense) ? "" : " hidden"
                                             }`}
                                           >
-                                            {expense?.receipt || expense?.payment_reference ? "Available" : "Missing"}
+                                            {hasExpenseProof(expense) ? "Available" : "Missing"}
                                           </span>
                                         )}
                                       </div>
@@ -7055,17 +7088,42 @@ export function ProjectsPage({
                         <div className="project-documents-emit">
                           <label className="project-detail-filter project-detail-filter--search">
                             <span>Document template</span>
-                            <select
-                              value={emitDocumentType}
-                              onChange={(event) => setEmitDocumentType(event.target.value)}
-                              disabled={emittingProjectDocument || renamingDocument}
-                            >
-                              {PROJECT_EMIT_DOCUMENT_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
+                            <div className="project-detail-custom-select" ref={projectDocumentTemplateMenuRef}>
+                              <button
+                                type="button"
+                                className={`project-detail-custom-select-trigger${projectDocumentTemplateMenuOpen ? " is-open" : ""}`}
+                                onClick={() => {
+                                  if (emittingProjectDocument || renamingDocument) return;
+                                  setProjectDocumentTemplateMenuOpen((open) => !open);
+                                }}
+                                disabled={emittingProjectDocument || renamingDocument}
+                                aria-haspopup="listbox"
+                                aria-expanded={projectDocumentTemplateMenuOpen}
+                              >
+                                <span>{selectedEmitDocumentOption.label}</span>
+                                <Icon name="chevron" size={16} />
+                              </button>
+                              {projectDocumentTemplateMenuOpen ? (
+                                <div className="project-detail-custom-select-menu" role="listbox" aria-label="Document template">
+                                  {PROJECT_EMIT_DOCUMENT_OPTIONS.map((option) => (
+                                    <button
+                                      key={option.value}
+                                      type="button"
+                                      role="option"
+                                      aria-selected={option.value === emitDocumentType}
+                                      className={`project-detail-custom-select-option${option.value === emitDocumentType ? " is-active" : ""}`}
+                                      onClick={() => {
+                                        setEmitDocumentType(option.value);
+                                        setProjectDocumentTemplateMenuOpen(false);
+                                      }}
+                                    >
+                                      <span>{option.label}</span>
+                                      {option.value === emitDocumentType ? <Icon name="check" size={14} /> : null}
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
                           </label>
                           <p className="project-documents-emit-note">
                             All templates emit generated PDFs using current project data and KPI summaries.

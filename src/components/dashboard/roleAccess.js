@@ -2,6 +2,7 @@ const ADMIN_ROLES = ["admin", "superadmin"];
 
 const ALL_PAGES = [
   "overview",
+  "notifications",
   "welfare",
   "payouts",
   "contributions",
@@ -102,6 +103,7 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
     const supervisorPages = applyFeatureAccess(
       ensureSet([
         "overview",
+        "notifications",
         "reports",
         "expenses",
         "meetings",
@@ -125,6 +127,7 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
     const managerPages = applyFeatureAccess(
       ensureSet([
         "overview",
+        "notifications",
         "projects",
         "members",
         "settings",
@@ -146,6 +149,7 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
   const memberPages = applyFeatureAccess(
     ensureSet([
       "overview",
+      "notifications",
       "welfare",
       "payouts",
       "contributions",

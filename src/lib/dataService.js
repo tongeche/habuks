@@ -2154,6 +2154,7 @@ async function attachExpenseReceiptSignedUrls(rows = []) {
   }
 
   const signedUrlMap = new Map();
+  const missingPathSet = new Set();
   const uniquePaths = Array.from(
     new Set(
       rows
@@ -2164,10 +2165,20 @@ async function attachExpenseReceiptSignedUrls(rows = []) {
 
   await Promise.all(
     uniquePaths.map(async (path) => {
+      const objectExists = await doesStorageObjectExist(PROJECT_DOCUMENT_BUCKET, path);
+      if (objectExists === false) {
+        missingPathSet.add(path);
+        return;
+      }
+
       const { data: signedData, error: signedError } = await supabase.storage
         .from(PROJECT_DOCUMENT_BUCKET)
         .createSignedUrl(path, 60 * 60);
       if (signedError) {
+        if (isMissingStorageObjectError(signedError)) {
+          missingPathSet.add(path);
+          return;
+        }
         console.warn("Error creating signed URL for expense receipt:", signedError);
         return;
       }
@@ -2177,10 +2188,20 @@ async function attachExpenseReceiptSignedUrls(rows = []) {
 
   return rows.map((row) => {
     const path = String(row?.receipt_file_path || "").trim();
+    const receiptStorageMissing = path ? missingPathSet.has(path) : false;
+    const legacyReceiptUrl = String(row?.receipt_file_url || "").trim();
+    const resolvedReceiptUrl =
+      (path ? signedUrlMap.get(path) : null) ||
+      (receiptStorageMissing && isSupabaseStorageUrl(legacyReceiptUrl) ? null : legacyReceiptUrl) ||
+      null;
     return {
       ...row,
-      receipt_download_url:
-        (path ? signedUrlMap.get(path) : null) || row?.receipt_file_url || null,
+      receipt_storage_missing: receiptStorageMissing,
+      receipt_download_url: resolvedReceiptUrl,
+      receipt_file_url:
+        receiptStorageMissing && isSupabaseStorageUrl(legacyReceiptUrl)
+          ? null
+          : legacyReceiptUrl || null,
     };
   });
 }
@@ -3776,6 +3797,45 @@ const extractStorageMessage = (error) => {
   const message = String(error?.message || error?.details || "").trim();
   if (!message) return "";
   return message.toLowerCase();
+};
+
+const isMissingStorageObjectError = (error) => {
+  const message = extractStorageMessage(error);
+  if (!message) return false;
+  return message.includes("object not found") || message.includes("not found");
+};
+
+const isSupabaseStorageUrl = (value) => {
+  const url = String(value || "").trim();
+  return /^https?:\/\//i.test(url) && url.includes("/storage/v1/object/");
+};
+
+const doesStorageObjectExist = async (bucketName, path) => {
+  const normalizedPath = String(path || "").trim().replace(/^\/+/, "");
+  if (!normalizedPath || !supabase || !bucketName) return false;
+
+  const lastSlashIndex = normalizedPath.lastIndexOf("/");
+  const folderPath = lastSlashIndex >= 0 ? normalizedPath.slice(0, lastSlashIndex) : "";
+  const fileName =
+    lastSlashIndex >= 0 ? normalizedPath.slice(lastSlashIndex + 1).trim() : normalizedPath;
+
+  if (!fileName) return false;
+
+  const { data, error } = await supabase.storage.from(bucketName).list(folderPath, {
+    limit: 100,
+    search: fileName,
+  });
+
+  if (error) {
+    if (isMissingStorageObjectError(error)) {
+      return false;
+    }
+    return null;
+  }
+
+  return Array.isArray(data)
+    ? data.some((entry) => String(entry?.name || "").trim() === fileName)
+    : false;
 };
 
 export async function uploadOrganizationActivityPoster(file, tenantId, options = {}) {
