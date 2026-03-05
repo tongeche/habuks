@@ -43,7 +43,7 @@ const buildFixedMobileItems = (allowedPages) => {
     if (item.key === "projects") return hasProjects;
     if (item.key === "finance") return Boolean(financeTarget);
     if (item.key === "members") return hasMembers;
-    if (item.key === "more") return Boolean(moreTarget);
+    if (item.key === "more") return true;
     return false;
   }).map((item) => {
     if (item.key === "finance") {
@@ -87,6 +87,7 @@ export default function DashboardMobileNav({
   activePage,
   access,
   setActivePage,
+  onMoreTap,
   ariaLabel = "Primary mobile navigation",
 }) {
   const items = useMemo(
@@ -106,11 +107,15 @@ export default function DashboardMobileNav({
           type="button"
           className={`dashboard-mobile-nav-btn${item.isCurrent ? " active" : ""}`}
           onClick={() => {
+            if (item.key === "more" && onMoreTap) {
+              onMoreTap();
+              return;
+            }
             if (!item.targetPage) return;
             setActivePage(item.targetPage);
           }}
           aria-current={item.isCurrent ? "page" : undefined}
-          disabled={!item.targetPage}
+          disabled={!item.targetPage && !(item.key === "more" && onMoreTap)}
         >
           <Icon name={item.icon} size={20} />
           <span>{item.label}</span>

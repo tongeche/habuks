@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../icons.jsx";
-import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import {
   getProjectExpensesForProjects,
   getProjectSalesForProjects,
@@ -39,7 +38,7 @@ const resolveModuleKey = (project) => {
   return "";
 };
 
-export default function ReportsPage({ user, access, setActivePage, tenantId }) {
+export default function ReportsPage({ user, tenantId }) {
   const { formatCurrency } = useTenantCurrency();
   const [projects, setProjects] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -563,7 +562,6 @@ export default function ReportsPage({ user, access, setActivePage, tenantId }) {
         </>
       )}
 
-      <DashboardMobileNav activePage="reports" access={access} setActivePage={setActivePage} />
     </div>
   );
 }

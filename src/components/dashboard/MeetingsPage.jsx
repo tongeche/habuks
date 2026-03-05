@@ -19,7 +19,6 @@ import {
 } from "../../lib/dataService.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
-import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 import { buildMeetingMinutesReportFile } from "../../lib/reporting/meetingMinutesReport.js";
 import { buildTenantBrand } from "../../lib/tenantBranding.js";
@@ -545,7 +544,7 @@ const createActivityForm = (defaults = {}) => ({
       : [],
 });
 
-function MeetingsPage({ user, tenantId, access, setActivePage }) {
+function MeetingsPage({ user, tenantId }) {
   const { formatCurrency, formatFieldLabel } = useTenantCurrency();
   const [meetings, setMeetings] = useState([]);
   const [meetingParticipants, setMeetingParticipants] = useState([]);
@@ -3708,7 +3707,6 @@ function MeetingsPage({ user, tenantId, access, setActivePage }) {
       >
         <Icon name="plus" size={20} />
       </button>
-      <DashboardMobileNav activePage="meetings" access={access} setActivePage={setActivePage} />
     </div>
   );
 }

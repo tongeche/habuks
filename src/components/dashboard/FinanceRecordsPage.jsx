@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
-import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 
 const recordsSeed = [
@@ -103,6 +102,7 @@ const periodLabels = {
 
 const statusOptions = ["pending", "paid", "posted", "approved", "received", "scheduled"];
 const outflowTypes = new Set(["expense", "payout"]);
+const financePageKeys = new Set(["contributions", "expenses", "documents", "welfare", "payouts"]);
 
 const getDefaultFormType = (initialType) =>
   initialType && initialType !== "all" ? initialType : "contribution";
@@ -139,8 +139,6 @@ const formatDate = (dateStr) =>
 export default function FinanceRecordsPage({
   initialType = "all",
   activePage = "",
-  access,
-  setActivePage,
 }) {
   const { formatCurrency, formatFieldLabel } = useTenantCurrency();
   const [records, setRecords] = useState(recordsSeed);
@@ -150,6 +148,7 @@ export default function FinanceRecordsPage({
   const [projectFilter, setProjectFilter] = useState("all");
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
   const [addRecordForm, setAddRecordForm] = useState(() => createInitialForm(initialType));
+  const showMobileFab = financePageKeys.has(String(activePage || "").trim().toLowerCase());
   const formatAmount = (value) =>
     formatCurrency(Math.abs(Number(value) || 0), { maximumFractionDigits: 0 });
 
@@ -244,7 +243,7 @@ export default function FinanceRecordsPage({
       <div
         className={`finance-records-page dashboard-mobile-shell${
           activePage === "expenses" ? " finance-records-page--expenses" : ""
-        }`}
+        }${showMobileFab ? " finance-records-page--mobile-action" : ""}`}
       >
         <div className="finance-records-stats">
           <article className="finance-stat-card">
@@ -518,18 +517,15 @@ export default function FinanceRecordsPage({
           </div>
         </form>
       </DataModal>
-      {activePage === "expenses" ? (
+      {showMobileFab ? (
         <button
           type="button"
           className="dashboard-page-fab"
           onClick={handleOpenAddRecord}
-          aria-label="Add expense"
+          aria-label="Add record transaction"
         >
           <Icon name="plus" size={20} />
         </button>
-      ) : null}
-      {activePage === "expenses" ? (
-        <DashboardMobileNav activePage={activePage} access={access} setActivePage={setActivePage} />
       ) : null}
     </>
   );

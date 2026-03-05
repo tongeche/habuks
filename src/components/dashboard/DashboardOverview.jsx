@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../icons.jsx";
-import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import {
   getMeetings,
   getMembersAdmin,
@@ -1877,7 +1876,6 @@ export default function DashboardOverview({
         </>
       )}
 
-      <DashboardMobileNav activePage="overview" access={access} setActivePage={setActivePage} />
     </div>
   );
 }

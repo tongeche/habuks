@@ -6,6 +6,7 @@ import * as UserDropdownModule from "./UserDropdown.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import DataModal from "./DataModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
+import DashboardMobileNav from "./DashboardMobileNav.jsx";
 const UserDropdown = UserDropdownModule.UserDropdown || UserDropdownModule.default;
 const baseMenuItems = [
   {
@@ -218,8 +219,11 @@ export default function DashboardLayout({
   const [showMobileSearchDrawer, setShowMobileSearchDrawer] = useState(false);
   const [mobileSearchQuery, setMobileSearchQuery] = useState("");
   const [mobileSearchDrawerOffsetY, setMobileSearchDrawerOffsetY] = useState(0);
+  const [showMobileMoreDrawer, setShowMobileMoreDrawer] = useState(false);
+  const [mobileMoreDrawerOffsetY, setMobileMoreDrawerOffsetY] = useState(0);
   const mobileSearchInputRef = useRef(null);
   const mobileSearchTouchStartRef = useRef(null);
+  const mobileMoreTouchStartRef = useRef(null);
   const navigate = useNavigate();
 
   // Persist sidebar state to localStorage whenever it changes
@@ -259,16 +263,32 @@ export default function DashboardLayout({
   }, [isMobileViewport, showMobileSearchDrawer]);
 
   useEffect(() => {
-    if (!showMobileSearchDrawer) return undefined;
+    if (isMobileViewport) return;
+    if (!showMobileMoreDrawer) return;
+    setShowMobileMoreDrawer(false);
+    setMobileMoreDrawerOffsetY(0);
+  }, [isMobileViewport, showMobileMoreDrawer]);
+
+  useEffect(() => {
+    if (!showMobileSearchDrawer && !showMobileMoreDrawer) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    window.requestAnimationFrame(() => {
-      mobileSearchInputRef.current?.focus();
-    });
+    if (showMobileSearchDrawer) {
+      window.requestAnimationFrame(() => {
+        mobileSearchInputRef.current?.focus();
+      });
+    }
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [showMobileSearchDrawer]);
+  }, [showMobileSearchDrawer, showMobileMoreDrawer]);
+
+  useEffect(() => {
+    if (!showMobileMoreDrawer) return;
+    setShowMobileMoreDrawer(false);
+    setMobileMoreDrawerOffsetY(0);
+    mobileMoreTouchStartRef.current = null;
+  }, [activePage, showMobileMoreDrawer]);
 
   useEffect(() => {
     window.localStorage.setItem(DASHBOARD_THEME_STORAGE_KEY, dashboardThemeMode);
@@ -545,6 +565,9 @@ export default function DashboardLayout({
     normalizedTenantRole === "supervisor";
   const openMobileSearchDrawer = () => {
     if (!isMobileViewport) return;
+    setShowMobileMoreDrawer(false);
+    setMobileMoreDrawerOffsetY(0);
+    mobileMoreTouchStartRef.current = null;
     setShowMobileSearchDrawer(true);
   };
   const closeMobileSearchDrawer = () => {
@@ -571,6 +594,39 @@ export default function DashboardLayout({
     setMobileSearchDrawerOffsetY(0);
     if (shouldClose) {
       closeMobileSearchDrawer();
+    }
+  };
+  const openMobileMoreDrawer = () => {
+    if (!isMobileViewport) return;
+    setShowMobileSearchDrawer(false);
+    setMobileSearchDrawerOffsetY(0);
+    mobileSearchTouchStartRef.current = null;
+    setShowMobileMoreDrawer(true);
+  };
+  const closeMobileMoreDrawer = () => {
+    setShowMobileMoreDrawer(false);
+    setMobileMoreDrawerOffsetY(0);
+    mobileMoreTouchStartRef.current = null;
+  };
+  const handleMobileMoreTouchStart = (event) => {
+    if (!event.touches?.length) return;
+    mobileMoreTouchStartRef.current = event.touches[0].clientY;
+  };
+  const handleMobileMoreTouchMove = (event) => {
+    if (!event.touches?.length || mobileMoreTouchStartRef.current === null) return;
+    const deltaY = event.touches[0].clientY - mobileMoreTouchStartRef.current;
+    if (deltaY <= 0) {
+      setMobileMoreDrawerOffsetY(0);
+      return;
+    }
+    setMobileMoreDrawerOffsetY(Math.min(deltaY, 180));
+  };
+  const handleMobileMoreTouchEnd = () => {
+    const shouldClose = mobileMoreDrawerOffsetY > 84;
+    mobileMoreTouchStartRef.current = null;
+    setMobileMoreDrawerOffsetY(0);
+    if (shouldClose) {
+      closeMobileMoreDrawer();
     }
   };
   const normalizedMobileSearchQuery = String(mobileSearchQuery || "").trim().toLowerCase();
@@ -661,6 +717,64 @@ export default function DashboardLayout({
   };
   const canOpenAdminConsole = allowedPages.has("admin");
   const canInviteMembers = canManageWorkspace;
+  const mobileMoreActions = [
+    canManageWorkspace
+      ? {
+          key: "more-org-settings",
+          label: "Organization settings",
+          description: "Members, templates, and records workspace",
+          icon: "layers",
+          onClick: () => openSettingsTab("organization-settings"),
+        }
+      : null,
+    canManageWorkspace
+      ? {
+          key: "more-templates",
+          label: "Templates",
+          description: "Manage shared organization templates",
+          icon: "notes",
+          onClick: () => openSettingsTab("organization-settings"),
+        }
+      : null,
+    canManageWorkspace
+      ? {
+          key: "more-records",
+          label: "Records",
+          description: "Open organization records and activities",
+          icon: "folder",
+          onClick: () => openSettingsTab("organization-settings"),
+        }
+      : null,
+    canManageWorkspace
+      ? {
+          key: "more-partners",
+          label: "Partners",
+          description: "Manage partner and donor relationships",
+          icon: "users",
+          onClick: () => openSettingsTab("organization-settings"),
+        }
+      : null,
+    allowedPages.has("settings")
+      ? {
+          key: "more-app-settings",
+          label: "App settings",
+          description: "Personal profile and account preferences",
+          icon: "settings",
+          onClick: () => openSettingsTab("my-settings"),
+        }
+      : null,
+    {
+      key: "more-help",
+      label: "Help",
+      description: "Open guides and support resources",
+      icon: "newspaper",
+      onClick: () => navigate("/resources"),
+    },
+  ].filter(Boolean);
+  const handleMobileMoreActionSelect = (action) => {
+    action?.onClick?.();
+    closeMobileMoreDrawer();
+  };
   const workspaceAppItems = [
     allowedPages.has("projects")
       ? {
@@ -1028,6 +1142,12 @@ export default function DashboardLayout({
         </header>
         <section className="dashboard-content">{children}</section>
       </main>
+      <DashboardMobileNav
+        activePage={activePage}
+        access={access}
+        setActivePage={setActivePage}
+        onMoreTap={openMobileMoreDrawer}
+      />
 
       {showMobileSearchDrawer && isMobileViewport ? (
         <>
@@ -1088,6 +1208,56 @@ export default function DashboardLayout({
               {!mobileSearchHasResults ? (
                 <div className="dashboard-mobile-search-none">No results found for this query.</div>
               ) : null}
+            </div>
+          </div>
+        </>
+      ) : null}
+      {showMobileMoreDrawer && isMobileViewport ? (
+        <>
+          <button
+            type="button"
+            className="dashboard-mobile-drawer-backdrop"
+            aria-label="Close more menu"
+            onClick={closeMobileMoreDrawer}
+          />
+          <div
+            className="dashboard-mobile-more-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="More actions"
+            style={{ transform: `translateY(${mobileMoreDrawerOffsetY}px)` }}
+            onTouchStart={handleMobileMoreTouchStart}
+            onTouchMove={handleMobileMoreTouchMove}
+            onTouchEnd={handleMobileMoreTouchEnd}
+          >
+            <div className="dashboard-mobile-search-handle" aria-hidden="true" />
+            <div className="dashboard-mobile-search-head">
+              <strong>More</strong>
+              <button type="button" className="dashboard-mobile-search-close" onClick={closeMobileMoreDrawer}>
+                Close
+              </button>
+            </div>
+            <div className="dashboard-mobile-more-actions">
+              {mobileMoreActions.length ? (
+                mobileMoreActions.map((action) => (
+                  <button
+                    key={action.key}
+                    type="button"
+                    className="dashboard-mobile-more-action"
+                    onClick={() => handleMobileMoreActionSelect(action)}
+                  >
+                    <span className="dashboard-mobile-more-action-icon">
+                      <Icon name={action.icon} size={18} />
+                    </span>
+                    <span className="dashboard-mobile-more-action-copy">
+                      <strong>{action.label}</strong>
+                      <span>{action.description}</span>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <p className="dashboard-mobile-search-none">No actions available for this account.</p>
+              )}
             </div>
           </div>
         </>

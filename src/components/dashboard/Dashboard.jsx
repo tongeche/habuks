@@ -186,11 +186,32 @@ export default function Dashboard() {
           />
         );
       case "contributions":
-        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="contribution" />;
+        return (
+          <FinanceRecordsPage
+            user={user}
+            tenantId={tenantInfo?.id}
+            initialType="contribution"
+            activePage="contributions"
+          />
+        );
       case "payouts":
-        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="payout" />;
+        return (
+          <FinanceRecordsPage
+            user={user}
+            tenantId={tenantInfo?.id}
+            initialType="payout"
+            activePage="payouts"
+          />
+        );
       case "welfare":
-        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="welfare" />;
+        return (
+          <FinanceRecordsPage
+            user={user}
+            tenantId={tenantInfo?.id}
+            initialType="welfare"
+            activePage="welfare"
+          />
+        );
       case "projects":
         return (
           <ProjectsPage
@@ -247,8 +268,6 @@ export default function Dashboard() {
         return (
           <ReportsPage
             user={user}
-            access={access}
-            setActivePage={setActivePage}
             tenantId={tenantInfo?.id}
           />
         );
@@ -263,14 +282,19 @@ export default function Dashboard() {
       case "news":
         return <NewsPage user={user} tenantId={tenantInfo?.id} />;
       case "documents":
-        return <FinanceRecordsPage user={user} tenantId={tenantInfo?.id} initialType="all" />;
+        return (
+          <FinanceRecordsPage
+            user={user}
+            tenantId={tenantInfo?.id}
+            initialType="all"
+            activePage="documents"
+          />
+        );
       case "meetings":
         return (
           <MeetingsPage
             user={user}
             tenantId={tenantInfo?.id}
-            access={access}
-            setActivePage={setActivePage}
           />
         );
       case "members":

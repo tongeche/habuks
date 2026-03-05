@@ -46,7 +46,6 @@ import { formatCurrencyAmount } from "../../lib/currency.js";
 import { buildProjectCompletionReportFile } from "../../lib/reporting/projectCompletionReport.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
-import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import ProjectEditorForm from "./ProjectEditorForm.jsx";
 import ResponseModal from "./ResponseModal.jsx";
 import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
@@ -6440,8 +6439,6 @@ export function ProjectsPage({
           <Icon name="plus" size={20} />
         </button>
       ) : null}
-
-      <DashboardMobileNav activePage="projects" access={access} setActivePage={setActivePage} />
 
       <DataModal
         open={showCreateModal}

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DataModal from "./DataModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
-import DashboardMobileNav from "./DashboardMobileNav.jsx";
 import { Icon } from "../icons.jsx";
 import {
   cancelMagicLinkInvite,
@@ -1721,7 +1720,6 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
         </button>
       ) : null}
 
-      <DashboardMobileNav activePage="members" access={access} setActivePage={setActivePage} />
     </div>
   );
 }

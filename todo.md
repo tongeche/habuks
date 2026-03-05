@@ -1,310 +1,101 @@
-# HABUKS – Mobile Navigation System
+# HABUKS – Project Management Mobile IA
 
 ## Objective
 
-Define a consistent navigation system for the mobile application.
+Define the mobile information architecture for managing projects.
 
 Goals:
-- Eliminate desktop-style navigation patterns
-- Provide predictable movement between modules
-- Reduce cognitive load
-- Support contextual project workspaces
-- Maintain one primary action per screen
-
-The navigation system consists of:
-
-1. Global Header
-2. Bottom Navigation
-3. Floating Action Button (FAB)
-4. Bottom Drawers for secondary actions
-5. Context Scoping (Project vs Organization)
+- Provide a clear operational workspace for each project
+- Keep project data scoped and organized
+- Reduce clutter from dashboard-style layouts
+- Support quick task execution and documentation
+- Maintain consistency with the global mobile navigation system
 
 ---
 
-# 1. Global Navigation Layers
+# 1. Entry Point
 
-Mobile navigation is structured in 3 layers.
+Route:
 
-Layer 1 – Global navigation  
-Layer 2 – Section navigation  
-Layer 3 – Context actions
+/projects
 
----
-
-## Layer 1 – Global Navigation
-
-Controlled by **Bottom Navigation**.
-
-Accessible from anywhere.
-
-Modules:
-
-Home  
-Projects  
-Finance  
-People  
-More
-
-These represent the primary areas of the app.
+Displays the **Project List**.
 
 ---
 
-## Layer 2 – Section Navigation
+# 2. Project List Screen
 
-Occurs within modules.
+## Layout
 
-Examples:
+Header:
+Projects
 
-Projects → Project list → Project detail  
-Finance → Contributions / Expenses / Transactions  
-Settings → Members / Templates / Records
+Search bar (optional)
 
-Section navigation always uses:
-
-- full screen transitions
-- back arrow navigation
-
-Never nested tabs inside mobile settings.
+Project list below.
 
 ---
 
-## Layer 3 – Context Actions
+## Project Card
 
-Actions related to the current screen.
+Each project appears as a card containing:
 
-Examples:
+Project Title  
+Category  
+Status badge  
+Progress bar  
+Member count  
+Start date  
 
-Add project  
-Upload document  
-Generate document  
-Add member
+Tap → open Project Detail.
 
-These are triggered through:
-
-Floating Action Button (FAB)
-
-or
-
-Bottom drawer actions.
+Long press → enable selection mode.
 
 ---
 
-# 2. Bottom Navigation
+## Primary Action
 
-Located at the bottom of the screen.
-
--------------------------------------------------
-Home | Projects | Finance | People | More
--------------------------------------------------
-
-Maximum 5 items.
-
-Icons + labels.
-
----
-
-## 2.1 Home
-
-Purpose:
-Workspace overview.
-
-Displays:
-
-Hero project  
-Upcoming activities  
-Recent activity  
-
-No FAB.
-
----
-
-## 2.2 Projects
-
-Purpose:
-Project management.
-
-Displays:
-
-Project list.
-
-Tap project → Project detail.
-
-FAB action:
+FAB:
 
 + New Project
 
----
+Opens bottom drawer.
 
-## 2.3 Finance
+Options:
 
-Purpose:
-Financial tracking.
-
-Includes:
-
-Contributions  
-Expenses  
-Transactions  
-
-FAB action:
-
-+ Record
+Create project manually  
+Import project template
 
 ---
 
-## 2.4 People
+# 3. Project Detail Workspace
 
-Purpose:
-Member management.
+Route:
 
-Displays:
+/projects/:projectId
 
-Members list.
-
-FAB action:
-
-+ Add Member
+The project page acts as a mini workspace.
 
 ---
 
-## 2.5 More
+## Header
 
-Purpose:
-Access less frequently used modules.
+Back arrow  
+Project name  
+⋯ (project actions)
 
-Contains:
+Project actions drawer:
 
-Organization settings  
-Templates  
-Records  
-Partners  
-Help  
-App settings
-
----
-
-# 3. Floating Action Button (FAB)
-
-Each section has **one primary action**.
-
-Rules:
-
-- Only one FAB visible at a time
-- Always bottom-right
-- Circular button
-- Primary color
+Edit project  
+Duplicate project  
+Archive project  
+Delete project
 
 ---
 
-## Section FAB Map
+# 4. Project Navigation
 
-Home → none
-
-Projects → + New Project
-
-Finance → + Record Transaction
-
-People → + Add Member
-
-Documents → + Add Document
-
-Templates → + Create Template
-
-Partners → + Add Partner
-
----
-
-## FAB Interaction
-
-Tap FAB → bottom drawer.
-
-Example:
-
-Add Document:
-
-Upload file  
-Generate from template
-
-Example:
-
-Add Member:
-
-Add manually  
-Invite by email  
-Import CSV
-
----
-
-# 4. Bottom Drawer Pattern
-
-Bottom drawers are used for:
-
-- Action selection
-- Quick configuration
-- Secondary menus
-
-Used instead of modals or navigation pushes.
-
----
-
-## Drawer Behavior
-
-Slides from bottom.
-
-Max height:
-60–70% screen.
-
-Dismiss:
-
-Swipe down  
-Tap outside
-
----
-
-## Drawer Examples
-
-Account drawer (avatar tap)
-
-Search drawer
-
-Notification drawer
-
-FAB action drawers
-
-Project action drawer
-
----
-
-# 5. Context Scoping
-
-The system supports **context switching**.
-
-Two scopes exist:
-
-Organization scope  
-Project scope
-
----
-
-## Organization Scope
-
-Used for:
-
-Members  
-Records  
-Templates  
-Partners  
-Organization defaults
-
-These apply globally.
-
----
-
-## Project Scope
-
-Activated when user enters a project.
-
-Project navigation contains:
+Project sections are accessed through tabs.
 
 Overview  
 Expenses  
@@ -312,72 +103,218 @@ Documents
 Tasks  
 Notes
 
-All data automatically filtered by project.
+Each tab represents a functional workspace.
 
 ---
 
-# 6. Navigation Principles
+# 5. Overview Tab
 
-The mobile navigation system follows strict rules.
+Purpose:
+Provide quick project status.
 
----
+Displays:
 
-## Rule 1
+Project summary  
+Progress bar  
+Member count  
+Start date  
+Completion rate  
 
-Maximum **one primary action per screen**.
+Task summary:
 
----
+Total tasks  
+Completed tasks  
+Overdue tasks  
 
-## Rule 2
+Financial snapshot:
 
-Avoid multiple navigation systems.
-
-No:
-
-Sidebar + bottom navigation.
-
----
-
-## Rule 3
-
-Avoid dashboard analytics in configuration screens.
-
-Settings should not look like dashboards.
+Total budget  
+Total spent  
+Remaining balance
 
 ---
 
-## Rule 4
+# 6. Tasks Tab
 
-Actions must be discoverable.
+Purpose:
+Manage project execution.
 
-If action frequency > weekly → FAB.
+Displays:
 
-If action frequency < monthly → inside settings.
+Task list grouped by status.
+
+Statuses:
+
+To Do  
+In Progress  
+Completed  
+
+Task card contains:
+
+Task title  
+Assigned member  
+Priority  
+Due date  
+
+Tap task → open task detail.
 
 ---
 
-## Rule 5
+## Primary Action
 
-Do not mix tabs and pills.
+FAB:
 
-Use:
++ Add Task
 
-Full screen navigation  
-OR segmented tabs
+Opens task creation drawer.
 
-Never both.
+Fields:
+
+Task title  
+Assigned member  
+Priority  
+Due date  
+Description
 
 ---
 
-# 7. Navigation Hierarchy Example
+# 7. Expenses Tab
 
-Example flow:
+Purpose:
+Track project financial activity.
 
-Home  
-→ Projects  
+Displays:
+
+Expense list.
+
+Expense item:
+
+Title  
+Amount  
+Category  
+Date  
+Proof indicator
+
+---
+
+## Primary Action
+
+FAB:
+
++ Record Expense
+
+Drawer fields:
+
+Expense title  
+Amount  
+Category  
+Proof attachment  
+Notes
+
+---
+
+# 8. Documents Tab
+
+Purpose:
+Manage project documentation.
+
+Displays:
+
+Document list.
+
+Document item:
+
+File icon  
+Title  
+Type  
+Upload date  
+
+Tap → open preview.
+
+---
+
+## Primary Action
+
+FAB:
+
++ Add Document
+
+Drawer options:
+
+Upload file  
+Generate from template
+
+---
+
+# 9. Notes Tab
+
+Purpose:
+Capture project observations and discussions.
+
+Displays:
+
+Chronological note feed.
+
+Each note contains:
+
+Author  
+Date  
+Content  
+
+Tap note → expand full view.
+
+---
+
+## Primary Action
+
+FAB:
+
++ Add Note
+
+Drawer fields:
+
+Title  
+Content
+
+---
+
+# 10. Project Actions Drawer
+
+Triggered by the ⋯ icon.
+
+Options:
+
+Edit project  
+Duplicate project  
+Archive project  
+Delete project
+
+Destructive actions require confirmation.
+
+---
+
+# 11. Data Scope
+
+When user is inside a project:
+
+All modules filter automatically by project_id.
+
+Affected modules:
+
+Tasks  
+Expenses  
+Documents  
+Notes  
+Activities
+
+---
+
+# 12. Navigation Flow Example
+
+Projects  
 → Project Detail  
-→ Documents  
-→ Generate Document
+→ Tasks  
+→ Task Detail
 
 Back navigation returns step-by-step.
 
@@ -385,31 +322,27 @@ No deep modal stacks.
 
 ---
 
-# 8. Mobile Design Constraints
+# 13. Design Rules
 
-Touch targets ≥ 44px.
+Each project screen must follow these rules:
 
-Icons 24px.
+One FAB per tab.
 
-Bottom navigation height 56px.
+No analytics dashboards inside operational screens.
 
-FAB offset from bottom nav:
+No KPI blocks above lists.
 
-16px.
+Actions accessible via FAB or drawer.
 
 ---
 
-# 9. Accessibility
+# 14. Accessibility
 
-Ensure:
+Touch targets ≥ 44px.
 
-Keyboard accessible search.
+Scrollable lists must remain responsive.
 
-Large tap targets.
-
-Readable contrast.
-
-Drawer dismiss gesture available.
+FAB reachable with thumb zone.
 
 ---
 
