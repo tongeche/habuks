@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons.jsx";
 import {
   getMeetings,
@@ -438,6 +438,7 @@ const buildRecentTimeline = ({
       tone: getMeetingTone(meeting),
       actor,
       action: getMeetingTitle(meeting),
+      projectId: Number(meeting?.project_id) || null,
       detail: `${getMeetingStatusLabel(meeting)} • ${projectLabel}`,
       timestampLabel: formatTimeLabel(timestampValue),
       dateLabel: formatDate(timestampValue, { month: "short", day: "numeric" }),
@@ -453,6 +454,7 @@ const buildRecentTimeline = ({
       tone: "amber",
       actor: formatLabel(expense?.category, "Finance desk"),
       action: expense?.description || "Expense logged",
+      projectId: Number(expense?.project_id) || null,
       detail: `${projectLabel} • ${formatCurrency(expense?.amount, true)}`,
       timestampLabel: formatTimeLabel(expense?.expense_date || expense?.created_at),
       dateLabel: formatDate(expense?.expense_date || expense?.created_at, { month: "short", day: "numeric" }),
@@ -469,6 +471,7 @@ const buildRecentTimeline = ({
       tone: "green",
       actor,
       action: sale?.customer_name ? "Payment received and posted" : "Revenue posted",
+      projectId: Number(sale?.project_id) || null,
       detail: `${projectLabel} • ${formatCurrency(getSaleTotal(sale), true)}`,
       timestampLabel: formatTimeLabel(sale?.sale_date || sale?.created_at),
       dateLabel: formatDate(sale?.sale_date || sale?.created_at, { month: "short", day: "numeric" }),
@@ -483,6 +486,7 @@ const buildRecentTimeline = ({
         tone: "blue",
         actor: formatHandleLabel(invite?.email, "Team admin"),
         action: invite?.email ? `Invite created for ${invite.email}` : "Member invite created",
+        projectId: null,
         detail: `${formatLabel(invite?.role, "Member")} • ${formatLabel(invite?.status, "Pending")}`,
         timestampLabel: formatTimeLabel(invite?.created_at),
         dateLabel: formatDate(invite?.created_at, { month: "short", day: "numeric" }),
@@ -631,6 +635,11 @@ export default function DashboardOverview({
   const [assignments, setAssignments] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [sales, setSales] = useState([]);
+  const [isMobileOverview, setIsMobileOverview] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 768px)").matches : false
+  );
+  const [activeMobileProjectIndex, setActiveMobileProjectIndex] = useState(0);
+  const mobileProjectCarouselRef = useRef(null);
 
   const normalizedRole = String(tenantRole || user?.role || "member").trim().toLowerCase();
   const canViewAllProjects = isAdminRole(normalizedRole) || normalizedRole === "supervisor";
@@ -642,6 +651,21 @@ export default function DashboardOverview({
     compact
       ? formatCompactCurrency(value, { maximumFractionDigits: 1 })
       : formatCurrency(value, { maximumFractionDigits: 0 });
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia("(max-width: 768px)");
+    const handleChange = () => setIsMobileOverview(mediaQuery.matches);
+    handleChange();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+    mediaQuery.addListener(handleChange);
+    return () => mediaQuery.removeListener(handleChange);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1328,12 +1352,299 @@ export default function DashboardOverview({
     canSeeInvites,
   ]);
 
+  useEffect(() => {
+    if (!projectCards.length) {
+      if (activeMobileProjectIndex !== 0) {
+        setActiveMobileProjectIndex(0);
+      }
+      return;
+    }
+    if (activeMobileProjectIndex > projectCards.length - 1) {
+      setActiveMobileProjectIndex(projectCards.length - 1);
+    }
+  }, [activeMobileProjectIndex, projectCards.length]);
+
+  const handleMobileProjectCarouselScroll = (event) => {
+    const node = event.currentTarget;
+    const containerWidth = node.clientWidth;
+    if (!containerWidth || !projectCards.length) return;
+    const nextIndex = Math.round(node.scrollLeft / containerWidth);
+    const clampedIndex = Math.max(0, Math.min(projectCards.length - 1, nextIndex));
+    if (clampedIndex !== activeMobileProjectIndex) {
+      setActiveMobileProjectIndex(clampedIndex);
+    }
+  };
+
+  const handleSelectMobileProject = (index) => {
+    const clampedIndex = Math.max(0, Math.min(projectCards.length - 1, index));
+    setActiveMobileProjectIndex(clampedIndex);
+    const node = mobileProjectCarouselRef.current;
+    if (!node) return;
+    node.scrollTo({ left: node.clientWidth * clampedIndex, behavior: "smooth" });
+  };
+
+  const selectedMobileProject = useMemo(
+    () => projectCards[activeMobileProjectIndex] || null,
+    [activeMobileProjectIndex, projectCards]
+  );
+
+  const selectedMobileProjectUpcoming = useMemo(() => {
+    if (!selectedMobileProject?.id) return meetingStats.upcoming;
+    return meetings.filter((meeting) => {
+      const projectId = Number(meeting?.project_id);
+      if (projectId !== Number(selectedMobileProject.id)) return false;
+      const status = normalizeMeetingStatus(meeting);
+      return status === "upcoming" || status === "today" || status === "in_progress";
+    }).length;
+  }, [meetings, meetingStats.upcoming, selectedMobileProject?.id]);
+
+  const selectedMobileProjectRecordCount = useMemo(() => {
+    if (!selectedMobileProject?.id) return expenses.length + sales.length;
+    const projectId = Number(selectedMobileProject.id);
+    const projectExpenses = expenses.filter((expense) => Number(expense?.project_id) === projectId).length;
+    const projectSales = sales.filter((sale) => Number(sale?.project_id) === projectId).length;
+    return projectExpenses + projectSales;
+  }, [expenses, sales, selectedMobileProject?.id]);
+
+  const mobileActivityFeed = useMemo(() => {
+    if (!selectedMobileProject?.id) {
+      return recentTimeline.slice(0, 7);
+    }
+    const filtered = recentTimeline.filter(
+      (item) => Number(item?.projectId) === Number(selectedMobileProject.id)
+    );
+    return (filtered.length ? filtered : recentTimeline).slice(0, 7);
+  }, [recentTimeline, selectedMobileProject?.id]);
+
+  const handleCreateProjectFromOverview = () => {
+    setActivePage?.("projects");
+  };
+
   const todayLabel = new Date().toLocaleDateString("en-KE", {
     weekday: "short",
     day: "numeric",
     month: "short",
     year: "numeric",
   });
+
+  if (isMobileOverview) {
+    return (
+      <div className="overview-mobile dashboard-mobile-shell">
+        <section className="overview-mobile-hero">
+          <div className="overview-mobile-hero-head">
+            <span>Workspace home</span>
+            <h2>{workspaceName}</h2>
+            <p>{workspaceTagline}</p>
+          </div>
+          <div className="overview-mobile-pill-row">
+            <span className="overview-mobile-pill">
+              <Icon name="shield" size={13} />
+              {formatLabel(normalizedRole, "Member")}
+            </span>
+            <span className="overview-mobile-pill">
+              <Icon name="briefcase" size={13} />
+              {canViewAllProjects
+                ? `${projectStats.total} workspace projects`
+                : `${projectStats.total} assigned projects`}
+            </span>
+            <span className="overview-mobile-pill">
+              <Icon name={canLoadActivities ? "calendar" : "globe"} size={13} />
+              {canLoadActivities ? `${meetingStats.upcoming} upcoming` : `${projectStats.visible} public`}
+            </span>
+          </div>
+          <div className="overview-mobile-context-row">
+            <article>
+              <span>Today</span>
+              <strong>{todayLabel}</strong>
+            </article>
+            <article>
+              <span>Scope</span>
+              <strong>{canViewAllProjects ? "Full workspace" : "Assigned projects"}</strong>
+            </article>
+          </div>
+        </section>
+
+        {loadError ? (
+          <div className="overview-home-banner" role="status">
+            <Icon name="alert" size={16} />
+            <span>{loadError}</span>
+          </div>
+        ) : null}
+
+        {loading ? (
+          <section className="overview-mobile-loading" aria-hidden="true">
+            <div className="overview-home-skeleton overview-home-skeleton--panel" />
+            <div className="overview-home-skeleton overview-home-skeleton--panel" />
+            <div className="overview-home-skeleton overview-home-skeleton--panel" />
+          </section>
+        ) : (
+          <>
+            <section className="overview-mobile-members">
+              <div className="overview-mobile-members-copy">
+                <span>Active Members</span>
+                <strong>{memberStats.active.toLocaleString("en-KE")}</strong>
+                <small>{memberStats.total.toLocaleString("en-KE")} in organization</small>
+              </div>
+              <div className="overview-mobile-members-icon">
+                <Icon name="users" size={18} />
+              </div>
+            </section>
+
+            <section className="overview-mobile-projects">
+              <div className="overview-mobile-section-head">
+                <div>
+                  <span>Projects in view</span>
+                  <h3>{selectedMobileProject ? selectedMobileProject.name : "No projects yet"}</h3>
+                </div>
+                <small>
+                  {projectCards.length
+                    ? `${activeMobileProjectIndex + 1}/${projectCards.length}`
+                    : "0/0"}
+                </small>
+              </div>
+
+              {projectCards.length ? (
+                <>
+                  <div
+                    ref={mobileProjectCarouselRef}
+                    className="overview-mobile-project-carousel"
+                    onScroll={handleMobileProjectCarouselScroll}
+                  >
+                    {projectCards.map((project, index) => (
+                      <article
+                        key={project.id}
+                        className={`overview-mobile-project-card${
+                          index === activeMobileProjectIndex ? " is-active" : ""
+                        }`}
+                      >
+                        <div className="overview-mobile-project-head">
+                          <div>
+                            <strong>{project.name}</strong>
+                            <span>{project.startDate}</span>
+                          </div>
+                          <span className={`overview-home-status-pill tone-${project.statusTone}`}>
+                            {project.statusLabel}
+                          </span>
+                        </div>
+                        {project.description ? <p>{project.description}</p> : null}
+                        <div className="overview-mobile-project-metrics">
+                          <article>
+                            <span>Members</span>
+                            <strong>{project.members}</strong>
+                          </article>
+                          <article>
+                            <span>Progress</span>
+                            <strong>{project.revenuePercent}%</strong>
+                          </article>
+                          <article>
+                            <span>Net</span>
+                            <strong className={`tone-${getCurrencyDirectionTone(project.net)}`}>
+                              {formatMoney(project.net, true)}
+                            </strong>
+                          </article>
+                        </div>
+                        <div className="overview-mobile-project-tracks">
+                          <div className="overview-mobile-track">
+                            <div className="overview-mobile-track-head">
+                              <span>Budget used</span>
+                              <strong>{project.budgetUsePercent}%</strong>
+                            </div>
+                            <div className="overview-mobile-track-line">
+                              <span style={{ width: `${project.budgetUsePercent}%` }} />
+                            </div>
+                          </div>
+                          <div className="overview-mobile-track">
+                            <div className="overview-mobile-track-head">
+                              <span>Income target</span>
+                              <strong>{project.revenuePercent}%</strong>
+                            </div>
+                            <div className="overview-mobile-track-line">
+                              <span className="tone-green" style={{ width: `${project.revenuePercent}%` }} />
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+
+                  <div className="overview-mobile-carousel-dots">
+                    {projectCards.map((project, index) => (
+                      <button
+                        key={`project-dot-${project.id}`}
+                        type="button"
+                        className={`overview-mobile-carousel-dot${
+                          index === activeMobileProjectIndex ? " is-active" : ""
+                        }`}
+                        aria-label={`View ${project.name}`}
+                        onClick={() => handleSelectMobileProject(index)}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="overview-mobile-context-grid">
+                    <article>
+                      <span>Net position</span>
+                      <strong>{formatMoney(selectedMobileProject?.net ?? financeStats.net, true)}</strong>
+                    </article>
+                    <article>
+                      <span>Upcoming activities</span>
+                      <strong>{selectedMobileProjectUpcoming}</strong>
+                    </article>
+                    <article>
+                      <span>Related records</span>
+                      <strong>{selectedMobileProjectRecordCount}</strong>
+                    </article>
+                  </div>
+                </>
+              ) : (
+                <div className="overview-mobile-empty">
+                  <p>Create your first project to start managing activities.</p>
+                  <button type="button" onClick={handleCreateProjectFromOverview}>
+                    Create Project
+                  </button>
+                </div>
+              )}
+            </section>
+
+            <section className="overview-mobile-activity">
+              <div className="overview-mobile-section-head">
+                <div>
+                  <span>Recent activity</span>
+                  <h3>
+                    {selectedMobileProject ? `${selectedMobileProject.name} timeline` : "Workspace timeline"}
+                  </h3>
+                </div>
+                <small>{mobileActivityFeed.length} updates</small>
+              </div>
+
+              {mobileActivityFeed.length ? (
+                <div className="overview-mobile-activity-list">
+                  {mobileActivityFeed.map((item) => (
+                    <article key={item.id} className="overview-mobile-activity-item">
+                      <span className={`overview-mobile-activity-icon tone-${item.tone}`}>
+                        <Icon name={item.icon} size={14} />
+                      </span>
+                      <div className="overview-mobile-activity-copy">
+                        <strong>{item.action}</strong>
+                        <p>{item.detail}</p>
+                        <small>
+                          {item.dateLabel} • {item.timestampLabel}
+                        </small>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="overview-mobile-empty overview-mobile-empty--muted">
+                  <p>No recent updates yet.</p>
+                </div>
+              )}
+            </section>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="overview-home dashboard-mobile-shell">

@@ -7,6 +7,7 @@ import NotificationBell from "./NotificationBell.jsx";
 import DataModal from "./DataModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
 import DashboardMobileNav from "./DashboardMobileNav.jsx";
+import { usePwaInstall } from "../../hooks/usePwaInstall.js";
 const UserDropdown = UserDropdownModule.UserDropdown || UserDropdownModule.default;
 const baseMenuItems = [
   {
@@ -180,7 +181,7 @@ const getInitialQuietModeUntil = () => {
   return parsed;
 };
 
-export default function DashboardLayout({
+function DashboardLayout({
   activePage,
   setActivePage,
   children,
@@ -221,10 +222,26 @@ export default function DashboardLayout({
   const [mobileSearchDrawerOffsetY, setMobileSearchDrawerOffsetY] = useState(0);
   const [showMobileMoreDrawer, setShowMobileMoreDrawer] = useState(false);
   const [mobileMoreDrawerOffsetY, setMobileMoreDrawerOffsetY] = useState(0);
+  const [showInstallInstructionsDrawer, setShowInstallInstructionsDrawer] = useState(false);
+  const [installInstructionsDrawerOffsetY, setInstallInstructionsDrawerOffsetY] = useState(0);
+  const [installToastMessage, setInstallToastMessage] = useState("");
   const mobileSearchInputRef = useRef(null);
   const mobileSearchTouchStartRef = useRef(null);
   const mobileMoreTouchStartRef = useRef(null);
+  const installDrawerTouchStartRef = useRef(null);
+  const wasInstalledRef = useRef(false);
   const navigate = useNavigate();
+  const {
+    canInstall,
+    canPromptInstall,
+    dismissInstallBannerForDays,
+    hideInstallBanner,
+    isAndroid,
+    isInstalled,
+    isIosSafari,
+    requestInstall,
+    shouldShowInstallBanner,
+  } = usePwaInstall();
 
   // Persist sidebar state to localStorage whenever it changes
   useEffect(() => {
@@ -270,7 +287,9 @@ export default function DashboardLayout({
   }, [isMobileViewport, showMobileMoreDrawer]);
 
   useEffect(() => {
-    if (!showMobileSearchDrawer && !showMobileMoreDrawer) return undefined;
+    if (!showMobileSearchDrawer && !showMobileMoreDrawer && !showInstallInstructionsDrawer) {
+      return undefined;
+    }
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     if (showMobileSearchDrawer) {
@@ -281,7 +300,7 @@ export default function DashboardLayout({
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [showMobileSearchDrawer, showMobileMoreDrawer]);
+  }, [showInstallInstructionsDrawer, showMobileSearchDrawer, showMobileMoreDrawer]);
 
   useEffect(() => {
     if (!showMobileMoreDrawer) return;
@@ -289,6 +308,13 @@ export default function DashboardLayout({
     setMobileMoreDrawerOffsetY(0);
     mobileMoreTouchStartRef.current = null;
   }, [activePage, showMobileMoreDrawer]);
+
+  useEffect(() => {
+    if (!showInstallInstructionsDrawer) return;
+    setShowInstallInstructionsDrawer(false);
+    setInstallInstructionsDrawerOffsetY(0);
+    installDrawerTouchStartRef.current = null;
+  }, [activePage, showInstallInstructionsDrawer]);
 
   useEffect(() => {
     window.localStorage.setItem(DASHBOARD_THEME_STORAGE_KEY, dashboardThemeMode);
@@ -305,6 +331,24 @@ export default function DashboardLayout({
     }, quietModeUntil - Date.now());
     return () => window.clearTimeout(timer);
   }, [quietModeUntil]);
+
+  useEffect(() => {
+    if (!installToastMessage) return undefined;
+    const timer = window.setTimeout(() => {
+      setInstallToastMessage("");
+    }, 2800);
+    return () => window.clearTimeout(timer);
+  }, [installToastMessage]);
+
+  useEffect(() => {
+    if (!wasInstalledRef.current && isInstalled) {
+      setInstallToastMessage("Habuks installed successfully");
+      setShowInstallInstructionsDrawer(false);
+      setInstallInstructionsDrawerOffsetY(0);
+      installDrawerTouchStartRef.current = null;
+    }
+    wasInstalledRef.current = isInstalled;
+  }, [isInstalled]);
 
   const brandName = tenant?.name || "Habuks";
   const brandTagline = tenant?.tagline || "";
@@ -563,11 +607,63 @@ export default function DashboardLayout({
     normalizedTenantRole === "superadmin" ||
     normalizedTenantRole === "project_manager" ||
     normalizedTenantRole === "supervisor";
+  const showInstallEntry = canInstall;
+  const installActionDescription = canPromptInstall
+    ? "Install for faster access and offline use."
+    : "Show how to add Habuks to your home screen.";
+  const closeInstallInstructionsDrawer = () => {
+    setShowInstallInstructionsDrawer(false);
+    setInstallInstructionsDrawerOffsetY(0);
+    installDrawerTouchStartRef.current = null;
+  };
+  const handleInstallAction = async () => {
+    if (!showInstallEntry) return;
+    hideInstallBanner();
+    const result = await requestInstall();
+    if (result?.status === "accepted") {
+      setInstallToastMessage("Install request sent. Confirm in your browser.");
+      return;
+    }
+    if (result?.status === "dismissed") {
+      setInstallToastMessage("Install dismissed. You can retry anytime.");
+      return;
+    }
+    if (result?.status === "manual") {
+      setShowInstallInstructionsDrawer(true);
+      return;
+    }
+  };
+  const handleInstallBannerNotNow = () => {
+    dismissInstallBannerForDays(7);
+    setInstallToastMessage("Install reminder hidden for 7 days.");
+  };
+  const handleInstallDrawerTouchStart = (event) => {
+    if (!event.touches?.length) return;
+    installDrawerTouchStartRef.current = event.touches[0].clientY;
+  };
+  const handleInstallDrawerTouchMove = (event) => {
+    if (!event.touches?.length || installDrawerTouchStartRef.current === null) return;
+    const deltaY = event.touches[0].clientY - installDrawerTouchStartRef.current;
+    if (deltaY <= 0) {
+      setInstallInstructionsDrawerOffsetY(0);
+      return;
+    }
+    setInstallInstructionsDrawerOffsetY(Math.min(deltaY, 180));
+  };
+  const handleInstallDrawerTouchEnd = () => {
+    const shouldClose = installInstructionsDrawerOffsetY > 84;
+    installDrawerTouchStartRef.current = null;
+    setInstallInstructionsDrawerOffsetY(0);
+    if (shouldClose) {
+      closeInstallInstructionsDrawer();
+    }
+  };
   const openMobileSearchDrawer = () => {
     if (!isMobileViewport) return;
     setShowMobileMoreDrawer(false);
     setMobileMoreDrawerOffsetY(0);
     mobileMoreTouchStartRef.current = null;
+    closeInstallInstructionsDrawer();
     setShowMobileSearchDrawer(true);
   };
   const closeMobileSearchDrawer = () => {
@@ -601,6 +697,7 @@ export default function DashboardLayout({
     setShowMobileSearchDrawer(false);
     setMobileSearchDrawerOffsetY(0);
     mobileSearchTouchStartRef.current = null;
+    closeInstallInstructionsDrawer();
     setShowMobileMoreDrawer(true);
   };
   const closeMobileMoreDrawer = () => {
@@ -763,6 +860,15 @@ export default function DashboardLayout({
           onClick: () => openSettingsTab("my-settings"),
         }
       : null,
+    showInstallEntry
+      ? {
+          key: "more-install",
+          label: "Install app",
+          description: installActionDescription,
+          icon: "download",
+          onClick: handleInstallAction,
+        }
+      : null,
     {
       key: "more-help",
       label: "Help",
@@ -861,6 +967,26 @@ export default function DashboardLayout({
   ]
     .filter(Boolean)
     .slice(0, 6);
+  const installInstructions = isIosSafari
+    ? [
+        "Tap the Share icon in Safari.",
+        'Scroll and choose "Add to Home Screen".',
+        "Tap Add to install Habuks.",
+      ]
+    : isAndroid
+      ? [
+          "Open your browser menu.",
+          'Tap "Install app" or "Add to Home screen".',
+          "Confirm the install action.",
+        ]
+      : [
+          "Open your browser menu.",
+          'Look for "Install app" or "Add to Home Screen".',
+          "Confirm to save Habuks to your device.",
+        ];
+  const installInstructionsHint = isIosSafari
+    ? "Safari does not show the automatic install prompt, so use these manual steps."
+    : "If you do not see install options, try Chrome or Edge for full PWA support.";
 
   return (
     <div
@@ -1040,6 +1166,9 @@ export default function DashboardLayout({
                   onOpenNotifications={() => setActivePage("notifications")}
                   onSwitchWorkspace={() => navigate("/select-tenant")}
                   onOpenHelp={() => navigate("/resources")}
+                  canInstallApp={showInstallEntry}
+                  onInstallApp={handleInstallAction}
+                  installActionDescription={installActionDescription}
                   workspaceAppItems={workspaceAppItems}
                   isMobile={true}
                 />
@@ -1133,6 +1262,9 @@ export default function DashboardLayout({
                   onOpenNotifications={() => setActivePage("notifications")}
                   onSwitchWorkspace={() => navigate("/select-tenant")}
                   onOpenHelp={() => navigate("/resources")}
+                  canInstallApp={showInstallEntry}
+                  onInstallApp={handleInstallAction}
+                  installActionDescription={installActionDescription}
                   workspaceAppItems={workspaceAppItems}
                   isMobile={false}
                 />
@@ -1140,7 +1272,33 @@ export default function DashboardLayout({
             </>
           )}
         </header>
-        <section className="dashboard-content">{children}</section>
+        <section className="dashboard-content">
+          {shouldShowInstallBanner ? (
+            <div className="dashboard-install-banner" role="region" aria-label="Install Habuks app">
+              <div className="dashboard-install-banner-copy">
+                <strong>Habuks works better as an app</strong>
+                <span>Install for faster access, offline use, and one-tap launch.</span>
+              </div>
+              <div className="dashboard-install-banner-actions">
+                <button
+                  type="button"
+                  className="dashboard-install-banner-btn dashboard-install-banner-btn--primary"
+                  onClick={handleInstallAction}
+                >
+                  Install
+                </button>
+                <button
+                  type="button"
+                  className="dashboard-install-banner-btn dashboard-install-banner-btn--ghost"
+                  onClick={handleInstallBannerNotNow}
+                >
+                  Not now
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {children}
+        </section>
       </main>
       <DashboardMobileNav
         activePage={activePage}
@@ -1261,6 +1419,58 @@ export default function DashboardLayout({
             </div>
           </div>
         </>
+      ) : null}
+      {showInstallInstructionsDrawer ? (
+        <>
+          <button
+            type="button"
+            className="dashboard-mobile-drawer-backdrop"
+            aria-label="Close install instructions"
+            onClick={closeInstallInstructionsDrawer}
+          />
+          <div
+            className="dashboard-mobile-install-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Install Habuks"
+            style={{ transform: `translateY(${installInstructionsDrawerOffsetY}px)` }}
+            onTouchStart={handleInstallDrawerTouchStart}
+            onTouchMove={handleInstallDrawerTouchMove}
+            onTouchEnd={handleInstallDrawerTouchEnd}
+          >
+            <div className="dashboard-mobile-search-handle" aria-hidden="true" />
+            <div className="dashboard-mobile-search-head">
+              <strong>Install Habuks</strong>
+              <button
+                type="button"
+                className="dashboard-mobile-search-close"
+                onClick={closeInstallInstructionsDrawer}
+              >
+                Close
+              </button>
+            </div>
+            <div className="dashboard-install-drawer-body">
+              <p className="dashboard-install-drawer-intro">{installInstructionsHint}</p>
+              <ol className="dashboard-install-drawer-steps">
+                {installInstructions.map((step, index) => (
+                  <li key={`install-step-${index}`}>{step}</li>
+                ))}
+              </ol>
+              <button
+                type="button"
+                className="dashboard-install-banner-btn dashboard-install-banner-btn--primary"
+                onClick={closeInstallInstructionsDrawer}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </>
+      ) : null}
+      {installToastMessage ? (
+        <div className="dashboard-install-toast" role="status" aria-live="polite">
+          {installToastMessage}
+        </div>
       ) : null}
 
       {/* Invite Modal */}
@@ -1419,3 +1629,6 @@ export default function DashboardLayout({
     </div>
   );
 }
+
+export { DashboardLayout };
+export default DashboardLayout;

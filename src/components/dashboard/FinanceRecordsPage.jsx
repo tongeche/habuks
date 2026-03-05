@@ -136,7 +136,7 @@ const formatDate = (dateStr) =>
     year: "numeric",
   });
 
-export default function FinanceRecordsPage({
+export function FinanceRecordsPage({
   initialType = "all",
   activePage = "",
 }) {
@@ -530,3 +530,5 @@ export default function FinanceRecordsPage({
     </>
   );
 }
+
+export default FinanceRecordsPage;

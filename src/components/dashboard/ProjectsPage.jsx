@@ -66,10 +66,11 @@ const PROJECT_DETAIL_TAB_META = {
 };
 
 const PROJECT_MOBILE_PILLS = [
+  { key: "overview", label: "Overview" },
+  { key: "expenses", label: "Expenses" },
+  { key: "documents", label: "Docs" },
   { key: "tasks", label: "Tasks" },
-  { key: "expenses", label: "Finance" },
-  { key: "files", label: "Files" },
-  { key: "more", label: "More ▾" },
+  { key: "notes", label: "Notes" },
 ];
 
 const PROJECT_VIEW_OPTIONS = [
@@ -842,10 +843,13 @@ export function ProjectsPage({
   const projectDocumentTemplateMenuRef = useRef(null);
   const expenseReceiptInputRef = useRef(null);
   const expenseFormReceiptInputRef = useRef(null);
+  const projectLongPressTimerRef = useRef(null);
+  const suppressProjectOpenRef = useRef(false);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [joiningId, setJoiningId] = useState(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showCreateProjectActionSheet, setShowCreateProjectActionSheet] = useState(false);
   const [activeTab, setActiveTab] = useState("info");
   const [createProjectForm, setCreateProjectForm] = useState(() => createInitialProjectForm());
   const [creatingProject, setCreatingProject] = useState(false);
@@ -1064,14 +1068,39 @@ export function ProjectsPage({
     setCreateProjectError("");
   };
 
-  const openCreateProjectModal = () => {
+  const openCreateProjectModal = ({ fromTemplate = false } = {}) => {
     if (!canCreateProject) return;
+    setShowCreateProjectActionSheet(false);
     setActiveTab("info");
     setEditingProjectId(null);
     setLoadingProjectEditor(false);
     resetCreateProjectForm();
+    if (fromTemplate) {
+      setCreateProjectForm((prev) => ({
+        ...prev,
+        moduleKey: "jpp",
+      }));
+    }
     setProjectsNotice(null);
     setShowCreateModal(true);
+  };
+
+  const closeCreateProjectActionSheet = () => {
+    setShowCreateProjectActionSheet(false);
+  };
+
+  const openCreateProjectEntry = () => {
+    if (!canCreateProject) return;
+    if (isMobileProjectViewport) {
+      setShowCreateProjectActionSheet(true);
+      return;
+    }
+    openCreateProjectModal();
+  };
+
+  const handleCreateProjectActionSelect = (mode) => {
+    closeCreateProjectActionSheet();
+    openCreateProjectModal({ fromTemplate: mode === "template" });
   };
 
   const openEditProjectModal = async (project) => {
@@ -1762,14 +1791,6 @@ export function ProjectsPage({
   };
 
   const handleMobileProjectPillClick = (pillKey) => {
-    if (pillKey === "more") {
-      openProjectActionSheet();
-      return;
-    }
-    if (pillKey === "files") {
-      setDetailTab("files");
-      return;
-    }
     setDetailTab(pillKey);
   };
 
@@ -2237,10 +2258,7 @@ export function ProjectsPage({
   }, [canViewProjectInvites]);
 
   const activeProjectMobilePill = useMemo(() => {
-    if (detailTab === "tasks") return "tasks";
-    if (detailTab === "expenses") return "expenses";
-    if (detailTab === "files" || detailTab === "documents" || detailTab === "notes") return "files";
-    return "";
+    return PROJECT_MOBILE_PILLS.some((pill) => pill.key === detailTab) ? detailTab : "overview";
   }, [detailTab]);
 
   const openProjectDetails = (project) => {
@@ -2257,6 +2275,11 @@ export function ProjectsPage({
     setProjectInvitesError("");
   };
 
+  const closeProjectDetails = () => {
+    setShowBudgetSummaryReportModal(false);
+    setSelectedProject(null);
+  };
+
   useEffect(() => {
     if (detailTab === "invites" && !canViewProjectInvites) {
       setDetailTab("overview");
@@ -2264,17 +2287,16 @@ export function ProjectsPage({
   }, [detailTab, canViewProjectInvites]);
 
   useEffect(() => {
-    if (!isMobileProjectViewport && detailTab === "files") {
-      setDetailTab("documents");
+    if (!isMobileProjectViewport) {
+      if (showProjectActionSheet) {
+        setShowProjectActionSheet(false);
+        setMobileDeleteArmed(false);
+      }
+      if (showCreateProjectActionSheet) {
+        setShowCreateProjectActionSheet(false);
+      }
     }
-  }, [detailTab, isMobileProjectViewport]);
-
-  useEffect(() => {
-    if (!isMobileProjectViewport && showProjectActionSheet) {
-      setShowProjectActionSheet(false);
-      setMobileDeleteArmed(false);
-    }
-  }, [isMobileProjectViewport, showProjectActionSheet]);
+  }, [isMobileProjectViewport, showProjectActionSheet, showCreateProjectActionSheet]);
 
   useEffect(() => {
     if (!selectedProject) {
@@ -6041,6 +6063,43 @@ export function ProjectsPage({
     });
   };
 
+  const clearProjectLongPressTimer = () => {
+    if (!projectLongPressTimerRef.current) return;
+    window.clearTimeout(projectLongPressTimerRef.current);
+    projectLongPressTimerRef.current = null;
+  };
+
+  const handleProjectLongPressStart = (projectId) => {
+    if (!isMobileProjectViewport) return;
+    clearProjectLongPressTimer();
+    projectLongPressTimerRef.current = window.setTimeout(() => {
+      handleToggleProjectSelection(projectId);
+      suppressProjectOpenRef.current = true;
+      clearProjectLongPressTimer();
+    }, 430);
+  };
+
+  const handleProjectLongPressCancel = () => {
+    clearProjectLongPressTimer();
+  };
+
+  const openProjectDetailsFromList = (project) => {
+    if (suppressProjectOpenRef.current) {
+      suppressProjectOpenRef.current = false;
+      return;
+    }
+    openProjectDetails(project);
+  };
+
+  useEffect(
+    () => () => {
+      if (!projectLongPressTimerRef.current) return;
+      window.clearTimeout(projectLongPressTimerRef.current);
+      projectLongPressTimerRef.current = null;
+    },
+    []
+  );
+
   const handleEditSelectedProject = () => {
     if (selectedProjects.length !== 1) return;
     openEditProjectModal(selectedProjects[0]);
@@ -6127,7 +6186,7 @@ export function ProjectsPage({
           <button
             className="projects-new-btn"
             type="button"
-            onClick={openCreateProjectModal}
+            onClick={openCreateProjectEntry}
             disabled={!canCreateProject}
             title={
               !canCreateProject ? "Only project managers and admins can create projects." : undefined
@@ -6204,6 +6263,7 @@ export function ProjectsPage({
           {projectView === "grid" ? (
             <div className="projects-card-grid">
               {visibleProjects.map((project) => {
+                const projectId = Number.parseInt(String(project.id), 10);
                 const progressValue = getProjectProgress(project);
                 const avatarLetters = getAvatarLetters(project);
                 const extraMembers = Math.max((project.member_count || 0) - avatarLetters.length, 0);
@@ -6215,10 +6275,14 @@ export function ProjectsPage({
                     key={project.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => openProjectDetails(project)}
+                    onClick={() => openProjectDetailsFromList(project)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") openProjectDetails(project);
                     }}
+                    onTouchStart={() => handleProjectLongPressStart(projectId)}
+                    onTouchMove={handleProjectLongPressCancel}
+                    onTouchEnd={handleProjectLongPressCancel}
+                    onTouchCancel={handleProjectLongPressCancel}
                   >
                     <div className="project-card-hero">
                       <span className="project-pill project-pill--category">{getProjectCategory(project)}</span>
@@ -6324,7 +6388,11 @@ export function ProjectsPage({
                       <tr
                         key={project.id}
                         className={!isVisible ? "is-hidden" : ""}
-                        onClick={() => openProjectDetails(project)}
+                        onClick={() => openProjectDetailsFromList(project)}
+                        onTouchStart={() => handleProjectLongPressStart(projectId)}
+                        onTouchMove={handleProjectLongPressCancel}
+                        onTouchEnd={handleProjectLongPressCancel}
+                        onTouchCancel={handleProjectLongPressCancel}
                       >
                         <td
                           className="projects-table-check"
@@ -6380,7 +6448,11 @@ export function ProjectsPage({
                   <article
                     className={`projects-list-item${isVisible ? "" : " is-hidden"}`}
                     key={project.id}
-                    onClick={() => openProjectDetails(project)}
+                    onClick={() => openProjectDetailsFromList(project)}
+                    onTouchStart={() => handleProjectLongPressStart(projectId)}
+                    onTouchMove={handleProjectLongPressCancel}
+                    onTouchEnd={handleProjectLongPressCancel}
+                    onTouchCancel={handleProjectLongPressCancel}
                   >
                     <div className="projects-list-select" onClick={(event) => event.stopPropagation()}>
                       <input
@@ -6433,11 +6505,51 @@ export function ProjectsPage({
         <button
           type="button"
           className="dashboard-page-fab"
-          onClick={openCreateProjectModal}
+          onClick={openCreateProjectEntry}
           aria-label="Add project"
         >
           <Icon name="plus" size={20} />
         </button>
+      ) : null}
+
+      {showCreateProjectActionSheet ? (
+        <div
+          className="project-action-sheet-overlay"
+          onClick={closeCreateProjectActionSheet}
+          role="presentation"
+        >
+          <div
+            className="project-action-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create project options"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="project-action-sheet-handle" aria-hidden="true" />
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => handleCreateProjectActionSelect("manual")}
+            >
+              Create project manually
+            </button>
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => handleCreateProjectActionSelect("template")}
+            >
+              Import project template
+            </button>
+            <hr />
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={closeCreateProjectActionSheet}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       ) : null}
 
       <DataModal
@@ -6537,10 +6649,7 @@ export function ProjectsPage({
 
       <DataModal
         open={Boolean(selectedProject)}
-        onClose={() => {
-          setShowBudgetSummaryReportModal(false);
-          setSelectedProject(null);
-        }}
+        onClose={closeProjectDetails}
         title={selectedProject?.name || "Project details"}
         subtitle={selectedProject ? getProjectSubtitle(selectedProject) : ""}
         icon="briefcase"
@@ -6690,6 +6799,27 @@ export function ProjectsPage({
               )}
             </div>
             <div className="project-detail-center">
+              {isMobileProjectViewport ? (
+                <div className="project-detail-mobile-header">
+                  <button
+                    type="button"
+                    className="project-detail-mobile-back-btn"
+                    onClick={closeProjectDetails}
+                    aria-label="Back to projects"
+                  >
+                    <Icon name="arrow-left" size={16} />
+                  </button>
+                  <strong>{selectedProject?.name || "Project"}</strong>
+                  <button
+                    type="button"
+                    className="project-detail-mobile-more-btn"
+                    onClick={openProjectActionSheet}
+                    aria-label="Project actions"
+                  >
+                    <Icon name="more-horizontal" size={16} />
+                  </button>
+                </div>
+              ) : null}
               <div className="project-detail-identity">
                 <div className="project-detail-identity-top">
                   <span
@@ -6708,16 +6838,6 @@ export function ProjectsPage({
                     <span className="project-detail-identity-progress-label">
                       {formatPercentLabel(projectOverviewAnalytics.progressPercent)} progress
                     </span>
-                    {isMobileProjectViewport ? (
-                      <button
-                        type="button"
-                        className="project-detail-mobile-more-btn"
-                        onClick={openProjectActionSheet}
-                        aria-label="Project actions"
-                      >
-                        <Icon name="more-horizontal" size={16} />
-                      </button>
-                    ) : null}
                   </div>
                 </div>
                 <div className="project-detail-identity-meta">
@@ -8283,13 +8403,24 @@ export function ProjectsPage({
                   <Icon name="plus" size={20} />
                 </button>
               ) : null}
-              {isMobileProjectViewport && canManageProjectContent && detailTab === "files" ? (
+              {isMobileProjectViewport && canManageProjectContent && detailTab === "documents" ? (
                 <button
                   type="button"
                   className="project-detail-fab project-detail-fab--note"
                   onClick={triggerProjectDocumentPicker}
                   disabled={uploadingProjectDocument || deletingDocuments || renamingDocument}
                   aria-label="Upload file"
+                >
+                  <Icon name="plus" size={20} />
+                </button>
+              ) : null}
+              {isMobileProjectViewport && canManageProjectContent && detailTab === "notes" ? (
+                <button
+                  type="button"
+                  className="project-detail-fab project-detail-fab--note"
+                  onClick={openNoteModal}
+                  disabled={savingNote || deletingNotes}
+                  aria-label="Add note"
                 >
                   <Icon name="plus" size={20} />
                 </button>

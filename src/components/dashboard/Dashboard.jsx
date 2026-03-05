@@ -10,7 +10,7 @@ import NewsPage from "./NewsPage.jsx";
 import NotificationsPage from "./NotificationsPage.jsx";
 import { MeetingsPage } from "./MeetingsPage.jsx";
 import MembersPage from "./MembersPage.jsx";
-import FinanceRecordsPage from "./FinanceRecordsPage.jsx";
+import { FinanceRecordsPage } from "./FinanceRecordsPage.jsx";
 import SettingsPage from "./SettingsPage.jsx";
 import AdminPage from "./AdminPage.jsx";
 import { TenantCurrencyProvider } from "./TenantCurrencyContext.jsx";

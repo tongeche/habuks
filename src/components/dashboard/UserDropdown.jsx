@@ -121,6 +121,9 @@ function UserDropdown({
   onOpenNotifications,
   onSwitchWorkspace,
   onOpenHelp,
+  canInstallApp = false,
+  onInstallApp,
+  installActionDescription = "Install for faster access and offline use.",
   workspaceAppItems = [],
   isMobile = false,
 }) {
@@ -221,6 +224,15 @@ function UserDropdown({
       description: "Update your profile and preferences.",
       onClick: () => runAction(onOpenProfileSettings),
     },
+    canInstallApp
+      ? {
+          key: "install",
+          icon: "download",
+          title: "Install app",
+          description: installActionDescription,
+          onClick: () => runAction(onInstallApp),
+        }
+      : null,
     canManageWorkspace
       ? {
           key: "workspace",
@@ -266,6 +278,13 @@ function UserDropdown({
       label: "Switch organization",
       onClick: () => runAction(onSwitchWorkspace),
     },
+    canInstallApp
+      ? {
+          key: "install",
+          label: "Install app",
+          onClick: () => runAction(onInstallApp),
+        }
+      : null,
     {
       key: "settings",
       label: "App settings",
@@ -342,6 +361,29 @@ function UserDropdown({
                       </div>
                     </div>
                     <div className="user-drawer-mobile-actions">
+                      <div className="user-drawer-mobile-theme">
+                        <span>Theme mode</span>
+                        <div className="user-drawer-theme-toggle">
+                          <button
+                            type="button"
+                            className={`user-drawer-theme-chip${themeMode === "light" ? " is-active" : ""}`}
+                            onClick={() => onThemeModeChange?.("light")}
+                            aria-pressed={themeMode === "light"}
+                          >
+                            <Icon name="sun" size={16} />
+                            <span>Light</span>
+                          </button>
+                          <button
+                            type="button"
+                            className={`user-drawer-theme-chip${themeMode === "dark" ? " is-active" : ""}`}
+                            onClick={() => onThemeModeChange?.("dark")}
+                            aria-pressed={themeMode === "dark"}
+                          >
+                            <Icon name="moon" size={16} />
+                            <span>Dark</span>
+                          </button>
+                        </div>
+                      </div>
                       {mobileAccountActions.map((action) => (
                         <button
                           key={action.key}
