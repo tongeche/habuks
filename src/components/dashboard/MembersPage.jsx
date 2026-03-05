@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataModal from "./DataModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
+import ChoiceModal from "./ChoiceModal.jsx";
 import { Icon } from "../icons.jsx";
 import {
   createMemberAdmin,
@@ -267,6 +268,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
 
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showResponseModal, setShowResponseModal] = useState(false);
+  const [showMemberImportChoiceModal, setShowMemberImportChoiceModal] = useState(false);
   const [selectedMemberDetail, setSelectedMemberDetail] = useState(null);
   const [inviteForm, setInviteForm] = useState(() => createInviteForm());
   const [selectedMemberIds, setSelectedMemberIds] = useState([]);
@@ -647,6 +649,12 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
     if (!canAdministerMembers) return;
     if (importingMembers) return;
     memberImportInputRef.current?.click();
+  };
+
+  const openMemberImportChoiceModal = () => {
+    if (!canAdministerMembers) return;
+    if (importingMembers) return;
+    setShowMemberImportChoiceModal(true);
   };
 
   const handleImportMembersCsv = async (event) => {
@@ -1232,43 +1240,20 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
               <div className="project-detail-mobile-pills members-mobile-action-pills">
                 <button
                   type="button"
-                  className={`project-detail-mobile-pill${showDirectoryTools ? " active" : ""}`}
-                  onClick={() =>
-                    setShowDirectoryTools((current) => {
-                      if (current) {
-                        setSearchQuery("");
-                        setRoleFilter("all");
-                        setStatusFilter("all");
-                      }
-                      return !current;
-                    })
-                  }
-                >
-                  Filters
-                </button>
-                <button
-                  type="button"
                   className="project-detail-mobile-pill"
                   onClick={handleExportCsv}
                   disabled={loading || !visibleMembers.length}
                 >
                   Export
                 </button>
-                <button
-                  type="button"
-                  className="project-detail-mobile-pill"
-                  onClick={handleDownloadMemberImportTemplate}
-                >
-                  Template
-                </button>
                 {canAdministerMembers ? (
                   <button
                     type="button"
                     className="project-detail-mobile-pill"
-                    onClick={handlePickImportMembersCsv}
+                    onClick={openMemberImportChoiceModal}
                     disabled={importingMembers}
                   >
-                    {importingMembers ? "Importing..." : "Import CSV"}
+                    {importingMembers ? "Importing..." : "Import"}
                   </button>
                 ) : null}
                 {canInviteMember ? (
@@ -1319,28 +1304,18 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
               <Icon name="download" size={16} />
               <span className="members-shell-action-tooltip">Export visible members</span>
             </button>
-            <button
-              type="button"
-              className="members-shell-btn members-shell-btn--ghost members-shell-header-icon-btn"
-              onClick={handleDownloadMemberImportTemplate}
-              aria-label="Download import template"
-              title="Download import template"
-            >
-              <Icon name="newspaper" size={16} />
-              <span className="members-shell-action-tooltip">Download CSV template</span>
-            </button>
             {canAdministerMembers ? (
               <button
                 type="button"
                 className="members-shell-btn members-shell-btn--ghost members-shell-header-icon-btn"
-                onClick={handlePickImportMembersCsv}
+                onClick={openMemberImportChoiceModal}
                 disabled={importingMembers}
-                aria-label="Import members CSV"
-                title="Import members CSV"
+                aria-label="Import members"
+                title="Import members"
               >
                 <Icon name={importingMembers ? "refresh-cw" : "upload"} size={16} />
                 <span className="members-shell-action-tooltip">
-                  {importingMembers ? "Importing members..." : "Import members CSV"}
+                  {importingMembers ? "Importing members..." : "Import members"}
                 </span>
               </button>
             ) : null}
@@ -1853,6 +1828,21 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
           if (!responseData.code) return;
           navigator.clipboard.writeText(responseData.code);
         }}
+      />
+
+      <ChoiceModal
+        open={showMemberImportChoiceModal}
+        onClose={() => setShowMemberImportChoiceModal(false)}
+        title="Import members"
+        message="Do you want to download the template first, or continue with a completed CSV?"
+        option1Label="Download template"
+        option1Icon="download"
+        option1Description="Get the latest members CSV template."
+        onOption1Click={handleDownloadMemberImportTemplate}
+        option2Label="Upload CSV"
+        option2Icon="upload"
+        option2Description="Continue with a completed members CSV file."
+        onOption2Click={handlePickImportMembersCsv}
       />
 
       <DataModal
