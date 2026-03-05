@@ -36,7 +36,7 @@ const PROJECT_EDITOR_STEPS = [
     key: "budget",
     label: "Budget & finance",
     mobileLabel: "Budget",
-    note: "Budget, revenue targets, and funding.",
+    note: "Budget, funding targets, and funding source.",
     icon: "wallet",
   },
   {
@@ -97,6 +97,7 @@ function ProjectEditorForm({
   onMediaFileSelection = noop,
   selectedMediaFiles = [],
   onRemoveMediaFile = noop,
+  onGenerateSummary = null,
   getFileFingerprint = defaultFingerprint,
   formatFileSize = defaultFileSize,
   fieldClassNames = {},
@@ -309,18 +310,29 @@ function ProjectEditorForm({
               className={getFieldClass("totalBudget")}
             />
           </label>
-          <label className="data-modal-field">
-            Expected revenue (KSh)
+          <div className="data-modal-field">
+            <div className="project-editor-field-head">
+              <label htmlFor="project-editor-expected-funding">Expected funding (KSh)</label>
+              <button type="button" className="project-editor-field-help" aria-label="Expected funding help">
+                <span className="project-editor-field-help-icon" aria-hidden="true">
+                  i
+                </span>
+                <small className="project-editor-field-help-tooltip" role="tooltip">
+                  Total funding expected from donors, partners, or contributions for this project.
+                </small>
+              </button>
+            </div>
             <input
+              id="project-editor-expected-funding"
               type="number"
               min="0"
               step="0.01"
-              placeholder="240000"
+              placeholder="Enter the expected funding amount for this project."
               value={safeForm.expectedRevenue}
               onChange={(event) => onFieldChange("expectedRevenue", event.target.value)}
               className={getFieldClass("expectedRevenue")}
             />
-          </label>
+          </div>
           <label className="data-modal-field">
             Funding source
             <select
@@ -471,9 +483,21 @@ function ProjectEditorForm({
 
       {activeTab === "media" && (
         <div className="data-modal-grid">
-          <label className="data-modal-field data-modal-field--full">
-            Summary
+          <div className="data-modal-field data-modal-field--full">
+            <div className="project-editor-summary-head">
+              <label htmlFor="project-editor-summary-input">Summary</label>
+              {typeof onGenerateSummary === "function" ? (
+                <button
+                  type="button"
+                  className="project-editor-summary-generate-btn"
+                  onClick={() => onGenerateSummary({ overwrite: true })}
+                >
+                  Auto-generate
+                </button>
+              ) : null}
+            </div>
             <textarea
+              id="project-editor-summary-input"
               rows="4"
               placeholder="Describe the project goals and outcomes."
               value={safeForm.summary}
@@ -481,7 +505,10 @@ function ProjectEditorForm({
               className={getFieldClass("summary")}
               data-demo-field="summary"
             />
-          </label>
+            <small className="data-modal-hint">
+              Generated text is editable. You can keep it, change it, or replace it.
+            </small>
+          </div>
           <div className="data-modal-field data-modal-field--full">
             <div className="data-modal-upload-grid">
               {toArray(selectedExistingMedia).length === 0 ? (

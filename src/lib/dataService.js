@@ -735,7 +735,13 @@ export async function getProjectsWithMembership(memberId, tenantId) {
             if (!Number.isInteger(projectId) || projectId <= 0) return;
 
             const itemKey = String(row?.item || "").trim().toLowerCase();
-            if (itemKey !== "total budget" && itemKey !== "expected revenue") return;
+            if (
+              itemKey !== "total budget" &&
+              itemKey !== "expected revenue" &&
+              itemKey !== "expected funding"
+            ) {
+              return;
+            }
 
             const amount = Number(row?.planned_amount);
             if (!Number.isFinite(amount) || amount < 0) return;
@@ -755,7 +761,10 @@ export async function getProjectsWithMembership(memberId, tenantId) {
               current.budget_total = amount;
               current.budget_total_ts = safeTimestamp;
             }
-            if (itemKey === "expected revenue" && safeTimestamp >= current.expected_revenue_ts) {
+            if (
+              (itemKey === "expected revenue" || itemKey === "expected funding") &&
+              safeTimestamp >= current.expected_revenue_ts
+            ) {
               current.expected_revenue = amount;
               current.expected_revenue_ts = safeTimestamp;
             }
@@ -903,6 +912,7 @@ export async function createIgaProject(payload = {}, tenantId) {
 const MANAGED_BUDGET_ITEM_KEYS = new Set([
   "total budget",
   "expected revenue",
+  "expected funding",
   "budget plan details",
 ]);
 
@@ -1221,7 +1231,7 @@ export async function replaceIgaProjectBudgetPlan(projectId, plan = {}, tenantId
   }
   if (expectedRevenue !== null) {
     insertEntries.push({
-      item: "Expected revenue",
+      item: "Expected funding",
       planned_amount: expectedRevenue,
       date: budgetDate,
     });

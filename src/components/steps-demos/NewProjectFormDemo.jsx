@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../icons.jsx";
-import ProjectEditorForm from "../dashboard/ProjectEditorForm.jsx";
+import { ProjectEditorForm } from "../dashboard/ProjectEditorForm.jsx";
 import useInViewPlayback from "./hooks/useInViewPlayback.js";
 import useTimeline from "./hooks/useTimeline.js";
 

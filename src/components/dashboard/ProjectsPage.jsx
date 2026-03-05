@@ -459,6 +459,52 @@ const PAYOUT_SCHEDULE_LABELS = {
   on_completion: "On completion",
 };
 
+const PROJECT_SUMMARY_OBJECTIVE_BY_CATEGORY = [
+  {
+    keywords: ["agriculture", "food security", "livelihood", "savings", "microfinance"],
+    objective:
+      "It focuses on improving household incomes, reducing vulnerability, and strengthening member livelihoods through practical implementation.",
+  },
+  {
+    keywords: ["education", "skills", "vocational", "youth", "women", "child"],
+    objective:
+      "It focuses on improving skills, inclusion, and long-term community outcomes through structured activities and measurable milestones.",
+  },
+  {
+    keywords: ["health", "wash", "disability", "social protection"],
+    objective:
+      "It focuses on improving service access, well-being, and accountability for targeted members and households.",
+  },
+  {
+    keywords: ["climate", "environment", "conservation", "resilience", "infrastructure"],
+    objective:
+      "It focuses on resilient community systems, sustainable resource use, and practical local adaptation actions.",
+  },
+  {
+    keywords: ["governance", "advocacy", "peacebuilding", "emergency", "response"],
+    objective:
+      "It focuses on coordinated delivery, strong local governance, and timely support for priority community needs.",
+  },
+];
+
+const resolveProjectSummaryObjective = (categoryLabel) => {
+  const normalizedCategory = String(categoryLabel || "")
+    .trim()
+    .toLowerCase();
+  if (!normalizedCategory) {
+    return "It focuses on coordinated, member-led implementation with clear outcomes and accountability.";
+  }
+
+  const match = PROJECT_SUMMARY_OBJECTIVE_BY_CATEGORY.find((entry) =>
+    entry.keywords.some((keyword) => normalizedCategory.includes(keyword))
+  );
+
+  return (
+    match?.objective ||
+    "It focuses on coordinated, member-led implementation with clear outcomes and accountability."
+  );
+};
+
 const TASK_PRIORITY_LABELS = {
   normal: "Normal",
   high: "High",
@@ -709,7 +755,7 @@ const mapEditorDataToProjectForm = (editorData, currentUserId) => {
   );
 
   const totalBudgetRow = budgetByItem.get("total budget");
-  const expectedRevenueRow = budgetByItem.get("expected revenue");
+  const expectedRevenueRow = budgetByItem.get("expected revenue") || budgetByItem.get("expected funding");
   const detailsRow = budgetByItem.get("budget plan details");
   const details = parseBudgetPlanDetails(detailsRow?.notes || "");
 
@@ -1459,6 +1505,103 @@ export function ProjectsPage({
     [createProjectForm.mediaFiles]
   );
 
+  const buildAutoProjectSummary = useCallback(
+    (formState) => {
+      const snapshot = {
+        ...createInitialProjectForm(),
+        ...(formState || {}),
+      };
+
+      const projectName = String(snapshot.name || "").trim() || "This project";
+      const categoryLabel = formatProjectCategoryLabel(snapshot.moduleKey);
+      const statusLabel = toReadableLabel(snapshot.status || "active", "Active");
+      const objective = resolveProjectSummaryObjective(categoryLabel);
+      const startDateValue = String(snapshot.startDate || "").trim();
+      const startDateTimestamp = Date.parse(startDateValue);
+      const startDateLabel = Number.isFinite(startDateTimestamp)
+        ? new Date(startDateTimestamp).toLocaleDateString("en-KE", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          })
+        : "";
+
+      const totalBudget = parseOptionalMoney(snapshot.totalBudget);
+      const expectedFunding = parseOptionalMoney(snapshot.expectedRevenue);
+      const fundingSourceLabel =
+        FUNDING_SOURCE_LABELS[snapshot.fundingSource] || toReadableLabel(snapshot.fundingSource || "Funding");
+      const teamSize = (primaryContact ? 1 : 0) + selectedAdditionalMembers.length;
+      const leadLabel = String(primaryContact?.name || "").trim();
+
+      const financialClauses = [];
+      if (totalBudget !== null && !Number.isNaN(totalBudget)) {
+        financialClauses.push(
+          `a planned budget of ${formatCurrencyAmount(totalBudget, {
+            currencyCode,
+            maximumFractionDigits: 0,
+          })}`
+        );
+      }
+      if (expectedFunding !== null && !Number.isNaN(expectedFunding)) {
+        financialClauses.push(
+          `an expected funding target of ${formatCurrencyAmount(expectedFunding, {
+            currencyCode,
+            maximumFractionDigits: 0,
+          })}`
+        );
+      }
+
+      const intro = `${projectName} is a ${categoryLabel.toLowerCase()} initiative currently in the ${statusLabel.toLowerCase()} phase${
+        startDateLabel ? `, with implementation starting on ${startDateLabel}` : ""
+      }.`;
+      const objectiveSentence = objective;
+      const financeSentence = financialClauses.length
+        ? `The project is designed with ${financialClauses.join(
+            " and "
+          )}, primarily supported through ${fundingSourceLabel.toLowerCase()}.`
+        : "";
+      const teamSentence =
+        teamSize > 0
+          ? `Delivery will be coordinated by ${leadLabel || "the project lead"} with support from ${teamSize} project team member${
+              teamSize === 1 ? "" : "s"
+            }.`
+          : "Delivery will be coordinated by the project team with clear roles and regular tracking.";
+
+      return [intro, objectiveSentence, financeSentence, teamSentence].filter(Boolean).join(" ");
+    },
+    [currencyCode, primaryContact, selectedAdditionalMembers]
+  );
+
+  const handleGenerateProjectSummary = useCallback(
+    ({ overwrite = false } = {}) => {
+      setCreateProjectForm((prev) => {
+        const currentSummary = String(prev.summary || "").trim();
+        if (currentSummary && !overwrite) return prev;
+        const generatedSummary = buildAutoProjectSummary(prev);
+        if (!generatedSummary || generatedSummary === currentSummary) return prev;
+        return {
+          ...prev,
+          summary: generatedSummary,
+        };
+      });
+      if (createProjectError) {
+        setCreateProjectError("");
+      }
+    },
+    [buildAutoProjectSummary, createProjectError]
+  );
+
+  const handleProjectEditorTabChange = useCallback(
+    (nextTab) => {
+      const normalizedTab = String(nextTab || "info");
+      if (normalizedTab === "media") {
+        handleGenerateProjectSummary({ overwrite: false });
+      }
+      setActiveTab(normalizedTab);
+    },
+    [handleGenerateProjectSummary]
+  );
+
   const handleAddMemberSelection = () => {
     const memberId = parseMemberId(createProjectForm.memberToAddId);
     if (!memberId) return;
@@ -1575,7 +1718,7 @@ export function ProjectsPage({
     const expectedRevenue = parseOptionalMoney(createProjectForm.expectedRevenue);
     if (Number.isNaN(expectedRevenue)) {
       setActiveTab("budget");
-      setCreateProjectError("Expected revenue must be a valid non-negative number.");
+      setCreateProjectError("Expected funding must be a valid non-negative number.");
       return;
     }
 
@@ -1762,7 +1905,7 @@ export function ProjectsPage({
           }
           if (expectedRevenue !== null) {
             budgetEntries.push({
-              item: "Expected revenue",
+              item: "Expected funding",
               planned_amount: expectedRevenue,
               date: budgetDate,
             });
@@ -3530,10 +3673,10 @@ export function ProjectsPage({
         title: "Financial continuity",
         detail:
           safeExpectedRevenueAmount !== null
-            ? `Revenue target of ${formatCurrency(
+            ? `Funding target of ${formatCurrency(
                 safeExpectedRevenueAmount
               )} is tracked against spend and reinvestment needs.`
-            : "Revenue planning is pending; funding diversification should be prioritized.",
+            : "Funding planning is pending; funding diversification should be prioritized.",
       },
       {
         key: "capacity",
@@ -3693,7 +3836,7 @@ export function ProjectsPage({
     );
     appendWrappedPdfLine(
       lines,
-      `Leverage ratio (expected revenue vs spend): ${formatReportMetricValue(report.budgetLeverageRatio, "x")}`
+      `Leverage ratio (expected funding vs spend): ${formatReportMetricValue(report.budgetLeverageRatio, "x")}`
     );
     appendWrappedPdfLine(lines, `Narrative: ${report.valueForMoneyNarrative}`);
     appendWrappedPdfLine(lines, "");
@@ -5568,7 +5711,7 @@ export function ProjectsPage({
     appendWrappedPdfLine(lines, "");
     appendWrappedPdfLine(lines, "FINANCIAL SNAPSHOT");
     appendWrappedPdfLine(lines, `Total budget: ${formatCurrency(context.budgetAmount)}`);
-    appendWrappedPdfLine(lines, `Expected revenue: ${formatCurrency(context.revenueAmount)}`);
+    appendWrappedPdfLine(lines, `Expected funding: ${formatCurrency(context.revenueAmount)}`);
     appendWrappedPdfLine(lines, `Total spent: ${formatCurrency(context.spentAmount)}`);
     appendWrappedPdfLine(lines, `Budget remaining: ${formatCurrency(context.remainingAmount)}`);
     appendWrappedPdfLine(lines, `Budget utilization: ${formatPercentLabel(context.budgetUtilizationPercent)}`);
@@ -5630,7 +5773,7 @@ export function ProjectsPage({
     );
     appendWrappedPdfLine(
       lines,
-      `Strengthen financial outcomes by controlling expenses and moving toward expected revenue of ${formatCurrency(
+      `Strengthen financial outcomes by controlling expenses and moving toward expected funding of ${formatCurrency(
         context.revenueAmount
       )}.`
     );
@@ -5653,7 +5796,7 @@ export function ProjectsPage({
     appendWrappedPdfLine(lines, `Total budget: ${formatCurrency(context.budgetAmount)}`);
     appendWrappedPdfLine(lines, `Spent to date: ${formatCurrency(context.spentAmount)}`);
     appendWrappedPdfLine(lines, `Remaining budget: ${formatCurrency(context.remainingAmount)}`);
-    appendWrappedPdfLine(lines, `Expected revenue: ${formatCurrency(context.revenueAmount)}`);
+    appendWrappedPdfLine(lines, `Expected funding: ${formatCurrency(context.revenueAmount)}`);
     appendWrappedPdfLine(lines, "");
     appendWrappedPdfLine(lines, "5. FUNDING REQUEST NARRATIVE");
     appendWrappedPdfLine(
@@ -5692,7 +5835,7 @@ export function ProjectsPage({
       lines,
       `Financial target: protect remaining budget (${formatCurrency(
         context.remainingAmount
-      )}) while working toward expected revenue (${formatCurrency(context.revenueAmount)}).`
+      )}) while working toward expected funding (${formatCurrency(context.revenueAmount)}).`
     );
     appendWrappedPdfLine(lines, "");
     appendWrappedPdfLine(lines, "RESOURCE OVERVIEW");
@@ -7542,7 +7685,20 @@ export function ProjectsPage({
                     </div>
                     <div className="project-card-body">
                       <div className="project-card-title">
-                        <h3>{project.name}</h3>
+                        {canCreateProject && !isMobileProjectViewport ? (
+                          <button
+                            type="button"
+                            className="project-card-title-btn"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openEditProjectModal(project);
+                            }}
+                          >
+                            {project.name}
+                          </button>
+                        ) : (
+                          <h3>{project.name}</h3>
+                        )}
                         <p>{getProjectSubtitle(project)}</p>
                       </div>
                       <div className="project-card-meta">
@@ -7561,17 +7717,7 @@ export function ProjectsPage({
                         </div>
                         <span className="project-progress-value">{progressValue}%</span>
                       </div>
-                      <div className={`project-card-actions${canJoin ? "" : " is-primary-only"}`}>
-                        <button
-                          type="button"
-                          className="project-btn-primary project-btn-primary--open"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            openProjectDetails(project);
-                          }}
-                        >
-                          Open Project
-                        </button>
+                      <div className="project-card-actions">
                         {canJoin ? (
                           <button
                             className="project-btn-secondary"
@@ -7621,7 +7767,7 @@ export function ProjectsPage({
                     <th className="projects-main-col-status">Status</th>
                     <th className="projects-main-col-members">Members</th>
                     <th className="projects-main-col-budget">Budget</th>
-                    <th className="projects-main-col-revenue">Revenue</th>
+                    <th className="projects-main-col-revenue">Funding</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -7820,10 +7966,11 @@ export function ProjectsPage({
         ) : (
         <ProjectEditorForm
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={handleProjectEditorTabChange}
           form={createProjectForm}
           categoryOptions={projectCategoryOptions}
           onFieldChange={updateCreateProjectField}
+          onGenerateSummary={handleGenerateProjectSummary}
           createProjectError={createProjectError}
           onSubmit={handleCreateProjectSubmit}
           onCancel={closeCreateProjectModal}
@@ -8233,7 +8380,7 @@ export function ProjectsPage({
                               <strong>{formatCurrency(projectOverviewAnalytics.remainingAmount)}</strong>
                             </div>
                             <div className="project-overview-stat-item">
-                              <span>Expected revenue</span>
+                              <span>Expected funding</span>
                               <strong>{formatCurrency(projectOverviewAnalytics.expectedRevenueAmount)}</strong>
                             </div>
                           </div>
@@ -10752,7 +10899,7 @@ export function ProjectsPage({
                     <strong>{formatCurrency(projectSummaryReport.remainingAmount)}</strong>
                   </div>
                   <div className="project-summary-report-financial-item">
-                    <span>Expected revenue</span>
+                    <span>Expected funding</span>
                     <strong>{formatCurrency(projectSummaryReport.expectedRevenueAmount)}</strong>
                   </div>
                 </div>
