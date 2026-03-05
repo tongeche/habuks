@@ -50,14 +50,17 @@ const PROJECT_EDITOR_STEPS = [
     key: "media",
     label: "Media",
     mobileLabel: "Media",
-    note: "Project images and uploaded files.",
+    note: "Summary, project images, and uploaded files.",
     icon: "folder",
   },
 ];
 
+const DEFAULT_PROJECT_CATEGORY = "Community Development";
+const CUSTOM_PROJECT_CATEGORY_VALUE = "__custom_category__";
+
 const getDefaultForm = () => ({
   name: "",
-  moduleKey: "generic",
+  moduleKey: DEFAULT_PROJECT_CATEGORY,
   startDate: "",
   status: "active",
   summary: "",
@@ -81,6 +84,7 @@ function ProjectEditorForm({
   onCancel = noop,
   creatingProject = false,
   isEditingProject = false,
+  categoryOptions = [],
   membersLoading = false,
   memberDirectory = [],
   primaryContact = null,
@@ -99,6 +103,19 @@ function ProjectEditorForm({
   className = "",
 }) {
   const safeForm = { ...getDefaultForm(), ...(form || {}) };
+  const categorySuggestions = Array.from(
+    new Set(
+      toArray(categoryOptions)
+        .map((option) => String(option || "").trim())
+        .filter(Boolean)
+    )
+  );
+  const currentCategoryValue = String(safeForm.moduleKey || "").trim();
+  const hasCurrentCategoryOption = categorySuggestions.includes(currentCategoryValue);
+  const categorySelectValue = hasCurrentCategoryOption
+    ? currentCategoryValue
+    : CUSTOM_PROJECT_CATEGORY_VALUE;
+  const showCustomCategoryInput = categorySelectValue === CUSTOM_PROJECT_CATEGORY_VALUE;
   const stepRefs = useRef({});
   const activeStepIndex = Math.max(
     0,
@@ -115,6 +132,17 @@ function ProjectEditorForm({
   };
 
   const getFieldClass = (field) => fieldClassNames?.[field] || "";
+
+  const handleCategorySelectChange = (event) => {
+    const nextValue = String(event.target.value || "");
+    if (nextValue === CUSTOM_PROJECT_CATEGORY_VALUE) {
+      if (hasCurrentCategoryOption) {
+        onFieldChange("moduleKey", "");
+      }
+      return;
+    }
+    onFieldChange("moduleKey", nextValue);
+  };
 
   useEffect(() => {
     const activeNode = stepRefs.current?.[activeStep.key];
@@ -214,15 +242,32 @@ function ProjectEditorForm({
           <label className="data-modal-field">
             Category
             <select
-              value={safeForm.moduleKey}
-              onChange={(event) => onFieldChange("moduleKey", event.target.value)}
+              value={categorySelectValue}
+              onChange={handleCategorySelectChange}
               className={getFieldClass("moduleKey")}
               data-demo-field="moduleKey"
+              required
             >
-              <option value="generic">Agriculture</option>
-              <option value="jpp">Poultry (JPP)</option>
-              <option value="jgf">Groundnut (JGF)</option>
+              {categorySuggestions.map((option) => (
+                <option key={`project-category-option-${option}`} value={option}>
+                  {option}
+                </option>
+              ))}
+              <option value={CUSTOM_PROJECT_CATEGORY_VALUE}>Custom category</option>
             </select>
+            {showCustomCategoryInput ? (
+              <input
+                type="text"
+                placeholder="Enter custom category"
+                value={currentCategoryValue}
+                onChange={(event) => onFieldChange("moduleKey", event.target.value)}
+                className={getFieldClass("moduleKeyCustom")}
+                required
+              />
+            ) : null}
+            <small className="data-modal-hint">
+              Choose from the list, or select "Custom category" to add your own.
+            </small>
           </label>
           <label className="data-modal-field">
             Start date
@@ -246,17 +291,6 @@ function ProjectEditorForm({
               <option value="planning">Planning</option>
               <option value="completed">Completed</option>
             </select>
-          </label>
-          <label className="data-modal-field data-modal-field--full">
-            Summary
-            <textarea
-              rows="4"
-              placeholder="Describe the project goals and outcomes."
-              value={safeForm.summary}
-              onChange={(event) => onFieldChange("summary", event.target.value)}
-              className={getFieldClass("summary")}
-              data-demo-field="summary"
-            />
           </label>
         </div>
       )}
@@ -437,6 +471,17 @@ function ProjectEditorForm({
 
       {activeTab === "media" && (
         <div className="data-modal-grid">
+          <label className="data-modal-field data-modal-field--full">
+            Summary
+            <textarea
+              rows="4"
+              placeholder="Describe the project goals and outcomes."
+              value={safeForm.summary}
+              onChange={(event) => onFieldChange("summary", event.target.value)}
+              className={getFieldClass("summary")}
+              data-demo-field="summary"
+            />
+          </label>
           <div className="data-modal-field data-modal-field--full">
             <div className="data-modal-upload-grid">
               {toArray(selectedExistingMedia).length === 0 ? (

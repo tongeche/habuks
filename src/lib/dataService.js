@@ -807,7 +807,7 @@ export async function getProjectsWithMembership(memberId, tenantId) {
 
         return {
           ...project,
-          module_key: resolveModuleKey(project?.module_key || project?.code) || null,
+          module_key: normalizeOptional(project?.module_key) || resolveModuleKey(project?.code) || null,
           budget_total:
             Number.isInteger(projectId) && budgetSummaryByProject.has(projectId)
               ? budgetSummaryByProject.get(projectId)?.budget_total ?? null
@@ -8205,6 +8205,22 @@ export async function getProjectMagicLinkInvites(projectId) {
 
   const { data, error } = await supabase.rpc("get_project_magic_link_invites", {
     p_project_id: parsedProjectId,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getMyProjectMagicLinkInvites(tenantId = null) {
+  if (!isSupabaseConfigured || !supabase) {
+    return [];
+  }
+
+  const { data, error } = await supabase.rpc("get_my_project_magic_link_invites", {
+    p_tenant_id: normalizeOptional(tenantId),
   });
 
   if (error) {

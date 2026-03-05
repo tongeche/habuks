@@ -6882,6 +6882,120 @@
   color: #b91c1c;
 }
 
+.projects-member-invites {
+  margin: -0.2rem 0 1rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid #dbe4f0;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.projects-member-invites-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.projects-member-invites-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #1f2937;
+}
+
+.projects-member-invites-manual-btn {
+  border: 1px solid #dbe4f0;
+  background: #fff;
+  color: #1e3a8a;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.38rem 0.65rem;
+  cursor: pointer;
+}
+
+.projects-member-invites-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.projects-member-invite-row {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+  padding: 0.62rem 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.projects-member-invite-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.projects-member-invite-projects {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.projects-member-invite-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  font-size: 0.74rem;
+  color: #64748b;
+}
+
+.projects-member-invite-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  flex-shrink: 0;
+}
+
+.projects-member-invite-accept-btn {
+  border: none;
+  border-radius: 9px;
+  padding: 0.38rem 0.66rem;
+  background: linear-gradient(135deg, #1d4ed8, #2563eb);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.projects-member-invite-accept-btn:disabled,
+.projects-member-invites-manual-btn:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.projects-member-invites-empty,
+.projects-member-invites-error {
+  margin: 0;
+  font-size: 0.83rem;
+}
+
+.projects-member-invites-empty {
+  color: #64748b;
+}
+
+.projects-member-invites-error {
+  color: #b91c1c;
+}
+
 .projects-selection-actions {
   margin: -0.2rem 0 1rem;
   padding: 0.55rem 0.65rem;
@@ -7900,6 +8014,21 @@
     margin-bottom: 1rem;
   }
 
+  .projects-member-invites {
+    margin-top: -0.1rem;
+    padding: 0.72rem 0.75rem;
+  }
+
+  .projects-member-invite-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .projects-member-invite-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .projects-toolbar-left,
   .projects-toolbar-right {
     width: 100%;
@@ -8089,6 +8218,18 @@
 
   .projects-toolbar-right {
     grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .projects-member-invites-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .projects-member-invites-manual-btn {
+    width: 100%;
+    justify-content: center;
+    display: inline-flex;
+    align-items: center;
   }
 
   .projects-view-toggle {
@@ -15497,6 +15638,12 @@
   background: #f8fafc;
 }
 
+.project-detail-layout--expenses {
+  grid-template-columns: 1fr;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
 .project-detail-left,
 .project-detail-center {
   display: flex;
@@ -16050,6 +16197,18 @@
   margin: 0;
 }
 
+.project-expense-section-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.project-expense-section-subtitle {
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 .project-detail-section-head-actions {
   display: inline-flex;
   align-items: center;
@@ -16061,6 +16220,70 @@
 .project-detail-expenses .project-detail-action {
   padding: 0.5rem 0.8rem;
   font-size: 0.82rem;
+}
+
+.project-expense-add-btn {
+  gap: 0.4rem;
+  align-items: center;
+  display: inline-flex;
+}
+
+.project-expense-summary-strip {
+  margin: 0 0 0.75rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.project-expense-summary-card {
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 0.54rem 0.62rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.project-expense-summary-card span {
+  color: #64748b;
+  font-size: 0.69rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.project-expense-summary-card strong {
+  color: #0f172a;
+  font-size: 0.96rem;
+  font-weight: 700;
+}
+
+.project-expense-desktop-bulk {
+  margin: 0 0 0.72rem;
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 0.56rem 0.64rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.project-expense-desktop-bulk strong {
+  color: #334155;
+  font-size: 0.8rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.project-expense-desktop-bulk-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  flex-wrap: wrap;
 }
 
 .project-mobile-finance-summary {
@@ -16481,19 +16704,28 @@
 }
 
 .project-expenses-table {
-  min-width: 760px;
+  min-width: 720px;
 }
 
 .project-expenses-table th {
-  padding: 0.6rem 0.72rem;
+  padding: 0.52rem 0.68rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
 }
 
 .project-expenses-table td {
-  padding: 0.56rem 0.72rem;
+  padding: 0.48rem 0.68rem;
+  font-size: 0.82rem;
+  color: #1f2937;
 }
 
 .project-expenses-table tbody tr.project-expense-row {
   cursor: default;
+  border-bottom: 1px solid #e6ebf5;
+}
+
+.project-expenses-table tbody tr.project-expense-row:hover {
+  background: #f8fafc;
 }
 
 .project-tasks-table {
@@ -19207,6 +19439,20 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .project-expense-summary-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-expense-desktop-bulk {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .project-expense-desktop-bulk-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .project-detail-filter--search,
   .project-detail-filter--actions {
     grid-column: 1 / -1;
@@ -19659,6 +19905,12 @@
 .data-modal-field textarea:focus {
   border-color: var(--green-primary);
   box-shadow: 0 0 0 3px rgba(31, 122, 140, 0.18);
+}
+
+.data-modal-field select option,
+.data-modal-field select optgroup {
+  background: #ffffff;
+  color: #0f172a;
 }
 
 .data-modal-field--full {
@@ -30494,6 +30746,44 @@
   color: #fecaca;
 }
 
+.dashboard-layout.is-dark .projects-member-invites {
+  border-color: rgba(67, 84, 112, 0.72);
+  background:
+    linear-gradient(180deg, rgba(10, 20, 36, 0.92) 0%, rgba(7, 14, 29, 0.94) 100%);
+}
+
+.dashboard-layout.is-dark .projects-member-invites-head h3 {
+  color: #eef4ff;
+}
+
+.dashboard-layout.is-dark .projects-member-invites-manual-btn {
+  border-color: rgba(96, 165, 250, 0.3);
+  background: rgba(30, 41, 59, 0.78);
+  color: #bfdbfe;
+}
+
+.dashboard-layout.is-dark .projects-member-invite-row {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(15, 23, 42, 0.76);
+}
+
+.dashboard-layout.is-dark .projects-member-invite-projects {
+  color: #e5edfb;
+}
+
+.dashboard-layout.is-dark .projects-member-invite-meta,
+.dashboard-layout.is-dark .projects-member-invites-empty {
+  color: #9fb4d3;
+}
+
+.dashboard-layout.is-dark .projects-member-invites-error {
+  color: #fca5a5;
+}
+
+.dashboard-layout.is-dark .projects-member-invite-accept-btn {
+  background: linear-gradient(135deg, #2563eb 0%, #0ea5e9 100%);
+}
+
 .dashboard-layout.is-dark .projects-selection-actions {
   border-color: rgba(67, 84, 112, 0.72);
   background:
@@ -30785,6 +31075,16 @@
 
 .dashboard-layout.is-dark .project-editor-modal .data-modal-field {
   color: #c7d6ea;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-field select {
+  color-scheme: dark;
+}
+
+.dashboard-layout.is-dark .project-editor-modal .data-modal-field select option,
+.dashboard-layout.is-dark .project-editor-modal .data-modal-field select optgroup {
+  background: #081120;
+  color: #eef4ff;
 }
 
 .dashboard-layout.is-dark .project-editor-modal .data-modal-member-add button,
@@ -31133,6 +31433,7 @@
 .dashboard-layout.is-dark .project-expense-insight-card h5,
 .dashboard-layout.is-dark .project-expense-insight-total,
 .dashboard-layout.is-dark .project-expense-legend-row strong,
+.dashboard-layout.is-dark .project-expense-summary-card strong,
 .dashboard-layout.is-dark .project-expense-leading-vendor-main strong,
 .dashboard-layout.is-dark .project-expense-amount,
 .dashboard-layout.is-dark .project-overview-head h4,
@@ -31159,6 +31460,8 @@
 .dashboard-layout.is-dark .project-expense-insight-empty,
 .dashboard-layout.is-dark .project-expenses-loading,
 .dashboard-layout.is-dark .project-expenses-selection-note,
+.dashboard-layout.is-dark .project-expense-section-subtitle,
+.dashboard-layout.is-dark .project-expense-summary-card span,
 .dashboard-layout.is-dark .project-expense-legend-label,
 .dashboard-layout.is-dark .project-expense-vendor-name,
 .dashboard-layout.is-dark .project-expense-date,
@@ -31183,6 +31486,12 @@
 .dashboard-layout.is-dark .project-expense-leading-vendor {
   border-color: rgba(67, 84, 112, 0.72);
   background: rgba(15, 23, 42, 0.72);
+}
+
+.dashboard-layout.is-dark .project-expense-summary-card,
+.dashboard-layout.is-dark .project-expense-desktop-bulk {
+  border-color: rgba(67, 84, 112, 0.72);
+  background: rgba(8, 20, 38, 0.9);
 }
 
 .dashboard-layout.is-dark .project-expense-leading-vendor-amount {

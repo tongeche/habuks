@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
+  applyMagicLinkInviteProjectAccess,
   archiveProjectExpenseCategory,
   createProjectMagicLinkInvite,
   createIgaBudgetEntries,
@@ -20,6 +21,7 @@ import {
   getProjectExpenseCategoryDefinitions,
   getProjectEditorData,
   getProjectExpenses,
+  getMyProjectMagicLinkInvites,
   getProjectMagicLinkInvites,
   getProjectNotes,
   getProjectTasks,
@@ -40,6 +42,8 @@ import {
   updateTenant,
   uploadProjectDocument,
   uploadProjectExpenseReceipt,
+  markMagicLinkInviteUsed,
+  verifyMagicLinkInvite,
 } from "../../lib/dataService.js";
 import { presentAppError } from "../../lib/appErrors.js";
 import { formatCurrencyAmount } from "../../lib/currency.js";
@@ -79,6 +83,31 @@ const PROJECT_VIEW_OPTIONS = [
   { key: "list", label: "List", icon: "newspaper" },
 ];
 
+const DEFAULT_PROJECT_CATEGORY_OPTIONS = [
+  "Community Development",
+  "Livelihoods",
+  "Agriculture",
+  "Food Security",
+  "Education",
+  "Health",
+  "WASH",
+  "Youth Empowerment",
+  "Women Empowerment",
+  "Child Protection",
+  "Disability Inclusion",
+  "Climate Resilience",
+  "Environment & Conservation",
+  "Skills & Vocational Training",
+  "Savings & Microfinance",
+  "Social Protection",
+  "Governance & Advocacy",
+  "Peacebuilding",
+  "Emergency Response",
+  "Community Infrastructure",
+];
+
+const DEFAULT_PROJECT_CATEGORY_LABEL = DEFAULT_PROJECT_CATEGORY_OPTIONS[0];
+
 const resolveModuleKey = (project) => {
   const raw = project?.module_key || project?.code || "";
   const lower = String(raw).trim().toLowerCase();
@@ -89,9 +118,48 @@ const resolveModuleKey = (project) => {
   return "";
 };
 
+const normalizeProjectCategoryKey = (value, fallback = "generic") => {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  const normalized = raw
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+  if (!normalized) return fallback;
+  if (!/^[a-z][a-z0-9_]*$/.test(normalized)) return fallback;
+  return normalized;
+};
+
+const formatProjectCategoryLabel = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return DEFAULT_PROJECT_CATEGORY_LABEL;
+
+  const source = raw.replace(/[_-]+/g, " ");
+  const words = source
+    .split(/\s+/)
+    .map((word) => word.trim())
+    .filter(Boolean);
+  if (!words.length) return DEFAULT_PROJECT_CATEGORY_LABEL;
+
+  return words
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+      if (lower === "cbo" || lower === "fbo" || lower === "ngo" || lower === "wash" || lower === "jpp" || lower === "jgf") {
+        return lower.toUpperCase();
+      }
+      if (index > 0 && ["and", "or", "of", "for", "to", "the", "in"].includes(lower)) {
+        return lower;
+      }
+      return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`;
+    })
+    .join(" ");
+};
+
 const createInitialProjectForm = () => ({
   name: "",
-  moduleKey: "generic",
+  moduleKey: DEFAULT_PROJECT_CATEGORY_LABEL,
   startDate: "",
   status: "active",
   summary: "",
@@ -144,6 +212,15 @@ const createInitialProjectInviteForm = () => ({
   role: "member",
   notes: "",
 });
+
+const createInitialAcceptProjectInviteForm = () => ({
+  inviteNumber: "",
+});
+
+const normalizeInviteNumberInput = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, "");
 
 const normalizeRoleKey = (value) =>
   String(value || "")
@@ -511,11 +588,7 @@ const parseMemberId = (value) => {
 };
 
 const normalizeModuleKeyForForm = (value) => {
-  const normalized = String(value || "").trim().toLowerCase();
-  if (normalized === "jpp" || normalized === "jgf" || normalized === "generic") {
-    return normalized;
-  }
-  return "generic";
+  return formatProjectCategoryLabel(value);
 };
 
 const normalizeProjectStatusForForm = (value) => {
@@ -1002,6 +1075,16 @@ export function ProjectsPage({
   const [projectInviteForm, setProjectInviteForm] = useState(() => createInitialProjectInviteForm());
   const [projectInviteFormError, setProjectInviteFormError] = useState("");
   const [submittingProjectInvite, setSubmittingProjectInvite] = useState(false);
+  const [showAcceptInviteModal, setShowAcceptInviteModal] = useState(false);
+  const [acceptProjectInviteForm, setAcceptProjectInviteForm] = useState(() =>
+    createInitialAcceptProjectInviteForm()
+  );
+  const [acceptProjectInviteError, setAcceptProjectInviteError] = useState("");
+  const [acceptingProjectInvite, setAcceptingProjectInvite] = useState(false);
+  const [memberPendingProjectInvites, setMemberPendingProjectInvites] = useState([]);
+  const [memberPendingProjectInvitesLoading, setMemberPendingProjectInvitesLoading] = useState(false);
+  const [memberPendingProjectInvitesError, setMemberPendingProjectInvitesError] = useState("");
+  const [acceptingPendingProjectInviteId, setAcceptingPendingProjectInviteId] = useState("");
   const [organizationPartners, setOrganizationPartners] = useState([]);
   const [organizationPartnersLoading, setOrganizationPartnersLoading] = useState(false);
   const role = String(tenantRole || user?.role || "member");
@@ -1013,6 +1096,7 @@ export function ProjectsPage({
     ["project_manager", "coordinator", "project_coordinator", "cordinator"].includes(roleKey);
   const canManageProjectContent = canCreateProject;
   const canSelfManageMembership = isAdmin;
+  const canAcceptProjectInvites = Boolean(user?.id);
   const parsedEditingProjectId = Number.parseInt(String(editingProjectId ?? ""), 10);
   const isEditingProject = Number.isInteger(parsedEditingProjectId) && parsedEditingProjectId > 0;
 
@@ -1126,7 +1210,7 @@ export function ProjectsPage({
     if (fromTemplate) {
       setCreateProjectForm((prev) => ({
         ...prev,
-        moduleKey: "jpp",
+        moduleKey: DEFAULT_PROJECT_CATEGORY_LABEL,
       }));
     }
     setProjectsNotice(null);
@@ -1324,6 +1408,23 @@ export function ProjectsPage({
     return Array.from(map.values()).sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
   }, [availableMembers, createProjectForm.memberDirectory]);
 
+  const projectCategoryOptions = useMemo(() => {
+    const labels = new Set(DEFAULT_PROJECT_CATEGORY_OPTIONS);
+
+    (Array.isArray(projects) ? projects : []).forEach((project) => {
+      const source = project?.module_key || project?.category || project?.code || "";
+      const label = formatProjectCategoryLabel(source);
+      if (label) labels.add(label);
+    });
+
+    const currentInput = String(createProjectForm.moduleKey || "").trim();
+    if (currentInput) {
+      labels.add(formatProjectCategoryLabel(currentInput));
+    }
+
+    return Array.from(labels).sort((a, b) => a.localeCompare(b));
+  }, [projects, createProjectForm.moduleKey]);
+
   const primaryContact = useMemo(() => {
     const selectedId = parseMemberId(createProjectForm.primaryContactId);
     if (!selectedId) return null;
@@ -1451,6 +1552,19 @@ export function ProjectsPage({
       return;
     }
 
+    const categoryInput = String(createProjectForm.moduleKey || "").trim();
+    if (!categoryInput) {
+      setActiveTab("info");
+      setCreateProjectError("Project category is required.");
+      return;
+    }
+    const moduleKey = normalizeProjectCategoryKey(categoryInput, "");
+    if (!moduleKey) {
+      setActiveTab("info");
+      setCreateProjectError("Project category must contain at least one letter.");
+      return;
+    }
+
     const totalBudget = parseOptionalMoney(createProjectForm.totalBudget);
     if (Number.isNaN(totalBudget)) {
       setActiveTab("budget");
@@ -1520,7 +1634,7 @@ export function ProjectsPage({
         const summary = String(createProjectForm.summary || "").trim();
         const updatePayload = {
           name,
-          module_key: createProjectForm.moduleKey,
+          module_key: moduleKey,
           start_date: createProjectForm.startDate || null,
           status: createProjectForm.status || "active",
           description: summary || null,
@@ -1616,7 +1730,7 @@ export function ProjectsPage({
         const createdProject = await createIgaProject(
           {
             name,
-            module_key: createProjectForm.moduleKey,
+            module_key: moduleKey,
             start_date: createProjectForm.startDate || null,
             status: createProjectForm.status || "active",
             description: createProjectForm.summary,
@@ -2174,26 +2288,95 @@ export function ProjectsPage({
     return `${trimmed.slice(0, 57)}...`;
   };
 
-  const getProjectProgress = (project) => {
-    const raw =
+  const getProjectProgress = (project, metrics = null) => {
+    const parseProgress = (value) => {
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed)) return null;
+      const normalized = parsed <= 1 ? parsed * 100 : parsed;
+      return Math.max(0, Math.min(100, normalized));
+    };
+
+    const directProgress = parseProgress(
       project?.progress ??
-      project?.completion ??
-      project?.completion_rate ??
-      project?.percent_complete;
-    if (typeof raw === "number" && !Number.isNaN(raw)) {
-      const normalized = raw <= 1 ? raw * 100 : raw;
-      return Math.max(0, Math.min(100, Math.round(normalized)));
+        project?.completion ??
+        project?.completion_rate ??
+        project?.percent_complete
+    );
+    if (directProgress !== null) {
+      return Math.round(directProgress);
     }
-    switch (project?.status?.toLowerCase()) {
-      case "completed":
-        return 100;
-      case "planning":
-        return 24;
-      case "active":
-        return 62;
-      default:
-        return 45;
+
+    const taskRows = Array.isArray(metrics?.tasks) ? metrics.tasks : [];
+    if (taskRows.length) {
+      let doneCount = 0;
+      let actionableCount = 0;
+      taskRows.forEach((task) => {
+        const status = String(task?.status || "open")
+          .trim()
+          .toLowerCase();
+        if (status === "cancelled") return;
+        actionableCount += 1;
+        if (status === "done") {
+          doneCount += 1;
+        }
+      });
+      const taskProgress = actionableCount > 0 ? (doneCount / actionableCount) * 100 : null;
+      const budgetAmount = Number(metrics?.budgetAmount);
+      const spentAmount = Number(metrics?.spentAmount);
+      const budgetProgress =
+        Number.isFinite(budgetAmount) && budgetAmount > 0 && Number.isFinite(spentAmount)
+          ? Math.max(0, Math.min(100, (spentAmount / budgetAmount) * 100))
+          : null;
+      if (taskProgress !== null && budgetProgress !== null) {
+        return Math.round(taskProgress * 0.7 + budgetProgress * 0.3);
+      }
+      if (taskProgress !== null) {
+        return Math.round(taskProgress);
+      }
+      if (budgetProgress !== null) {
+        return Math.round(budgetProgress);
+      }
     }
+
+    const statusKey = String(project?.status || "")
+      .trim()
+      .toLowerCase();
+    if (statusKey === "completed") {
+      return 100;
+    }
+
+    const startTimestamp = Date.parse(String(project?.start_date || ""));
+    const endTimestamp = Date.parse(
+      String(
+        project?.end_date ||
+          project?.target_end_date ||
+          project?.expected_end_date ||
+          project?.due_date ||
+          ""
+      )
+    );
+    const now = Date.now();
+
+    if (
+      Number.isFinite(startTimestamp) &&
+      Number.isFinite(endTimestamp) &&
+      endTimestamp > startTimestamp
+    ) {
+      const ratio = ((now - startTimestamp) / (endTimestamp - startTimestamp)) * 100;
+      return Math.round(Math.max(0, Math.min(100, ratio)));
+    }
+
+    if (Number.isFinite(startTimestamp)) {
+      const elapsedDays = Math.max(0, (now - startTimestamp) / (1000 * 60 * 60 * 24));
+      const baselineDays = statusKey === "planning" ? 120 : 180;
+      const ratio = (elapsedDays / baselineDays) * 100;
+      const floor = statusKey === "planning" ? 5 : 10;
+      return Math.round(Math.max(floor, Math.min(95, ratio)));
+    }
+
+    if (statusKey === "planning") return 15;
+    if (statusKey === "active") return 35;
+    return 25;
   };
 
   const getAvatarLetters = (project) => {
@@ -2478,6 +2661,33 @@ export function ProjectsPage({
     loadProjectInvites();
   }, [detailTab, loadProjectInvites]);
 
+  const loadPendingProjectInvites = useCallback(async () => {
+    const memberEmail = String(user?.email || "").trim().toLowerCase();
+    if (!canAcceptProjectInvites || !tenantId || !memberEmail) {
+      setMemberPendingProjectInvites([]);
+      setMemberPendingProjectInvitesError("");
+      setMemberPendingProjectInvitesLoading(false);
+      return;
+    }
+
+    setMemberPendingProjectInvitesLoading(true);
+    setMemberPendingProjectInvitesError("");
+    try {
+      const rows = await getMyProjectMagicLinkInvites(tenantId);
+      setMemberPendingProjectInvites(Array.isArray(rows) ? rows : []);
+    } catch (error) {
+      console.error("Error loading pending project invites for member:", error);
+      setMemberPendingProjectInvites([]);
+      setMemberPendingProjectInvitesError(error?.message || "Failed to load your pending project invites.");
+    } finally {
+      setMemberPendingProjectInvitesLoading(false);
+    }
+  }, [canAcceptProjectInvites, tenantId, user?.email]);
+
+  useEffect(() => {
+    loadPendingProjectInvites();
+  }, [loadPendingProjectInvites]);
+
   useEffect(() => {
     if (!selectedProject?.id) {
       return undefined;
@@ -2680,7 +2890,11 @@ export function ProjectsPage({
       safeBudgetAmount !== null ? Math.max(safeBudgetAmount - spentAmount, 0) : null;
     const budgetSpentPercent =
       safeBudgetAmount && safeBudgetAmount > 0 ? (spentAmount / safeBudgetAmount) * 100 : 0;
-    const progressPercent = getProjectProgress(selectedProject);
+    const progressPercent = getProjectProgress(selectedProject, {
+      tasks: projectTasks,
+      budgetAmount: safeBudgetAmount,
+      spentAmount,
+    });
     const memberCount = Number(selectedProject?.member_count || 0);
     const safeMemberCount = Number.isFinite(memberCount) && memberCount >= 0 ? memberCount : 0;
 
@@ -5219,7 +5433,11 @@ export function ProjectsPage({
       safeBudgetAmount !== null ? Math.max(safeBudgetAmount - spentAmount, 0) : null;
     const budgetUtilizationPercent =
       safeBudgetAmount && safeBudgetAmount > 0 ? (spentAmount / safeBudgetAmount) * 100 : null;
-    const progressPercent = getProjectProgress(selectedProject);
+    const progressPercent = getProjectProgress(selectedProject, {
+      tasks: projectTasks,
+      budgetAmount: safeBudgetAmount,
+      spentAmount,
+    });
 
     const expensesSorted = [...projectExpenses].sort((a, b) => {
       const aTime = Date.parse(String(a?.expense_date || a?.created_at || ""));
@@ -6706,6 +6924,161 @@ export function ProjectsPage({
     return "No project access";
   };
 
+  const formatMemberPendingInviteProjects = (invite) => {
+    const names = Array.isArray(invite?.project_names)
+      ? invite.project_names
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      : [];
+    if (!names.length) return formatInviteScopeLabel(invite);
+    if (names.length <= 2) return names.join(", ");
+    return `${names.slice(0, 2).join(", ")} +${names.length - 2} more`;
+  };
+
+  const applyProjectInviteToCurrentMember = async (invite) => {
+    const inviteId = String(invite?.id || "").trim();
+    if (!inviteId) {
+      throw new Error("Invite was not found or has expired.");
+    }
+
+    const memberId = Number.parseInt(String(user?.id || ""), 10);
+    if (!Number.isInteger(memberId) || memberId <= 0) {
+      throw new Error("Your member profile is not available. Refresh and try again.");
+    }
+
+    const inviteTenantId = String(invite?.tenant_id || "").trim().toLowerCase();
+    const currentTenantId = String(tenantId || "").trim().toLowerCase();
+    if (inviteTenantId && currentTenantId && inviteTenantId !== currentTenantId) {
+      throw new Error("This invite belongs to a different workspace.");
+    }
+
+    const inviteStatus = String(invite?.status || "pending").trim().toLowerCase();
+    if (inviteStatus === "used") {
+      throw new Error("This invite has already been used.");
+    }
+    if (inviteStatus === "revoked" || inviteStatus === "expired") {
+      throw new Error("This invite is no longer active.");
+    }
+
+    const expiresAtTimestamp = Date.parse(String(invite?.expires_at || ""));
+    if (Number.isFinite(expiresAtTimestamp) && expiresAtTimestamp <= Date.now()) {
+      throw new Error("This invite has expired.");
+    }
+
+    const inviteEmail = String(invite?.email || "").trim().toLowerCase();
+    const memberEmail = String(user?.email || "").trim().toLowerCase();
+    if (inviteEmail && memberEmail && inviteEmail !== memberEmail) {
+      throw new Error("This invite is linked to a different email address.");
+    }
+    if (inviteEmail && !memberEmail) {
+      throw new Error("Your account email is missing. Contact your admin to confirm this invite.");
+    }
+
+    const appliedProjectRows = await applyMagicLinkInviteProjectAccess(inviteId, memberId);
+    await markMagicLinkInviteUsed(inviteId, memberId);
+
+    await loadProjects();
+    if (detailTab === "invites" && canViewProjectInvites) {
+      await loadProjectInvites();
+    }
+    await loadPendingProjectInvites();
+
+    return Array.isArray(appliedProjectRows) ? appliedProjectRows.length : 0;
+  };
+
+  const resetAcceptProjectInviteForm = useCallback(() => {
+    setAcceptProjectInviteForm(createInitialAcceptProjectInviteForm());
+    setAcceptProjectInviteError("");
+  }, []);
+
+  const openAcceptInviteModal = useCallback(() => {
+    if (!canAcceptProjectInvites) return;
+    resetAcceptProjectInviteForm();
+    setShowAcceptInviteModal(true);
+  }, [canAcceptProjectInvites, resetAcceptProjectInviteForm]);
+
+  const closeAcceptInviteModal = useCallback(() => {
+    if (acceptingProjectInvite) return;
+    setShowAcceptInviteModal(false);
+    resetAcceptProjectInviteForm();
+  }, [acceptingProjectInvite, resetAcceptProjectInviteForm]);
+
+  const handleAcceptProjectInviteFieldChange = useCallback((field, value) => {
+    setAcceptProjectInviteForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
+    if (acceptProjectInviteError) {
+      setAcceptProjectInviteError("");
+    }
+  }, [acceptProjectInviteError]);
+
+  const handleAcceptProjectInviteSubmit = async (event) => {
+    event.preventDefault();
+    if (!canAcceptProjectInvites) return;
+
+    const inviteNumber = normalizeInviteNumberInput(acceptProjectInviteForm.inviteNumber);
+    if (!inviteNumber) {
+      setAcceptProjectInviteError("Invite number is required.");
+      return;
+    }
+
+    const memberId = Number.parseInt(String(user?.id || ""), 10);
+    if (!Number.isInteger(memberId) || memberId <= 0) {
+      setAcceptProjectInviteError("Your member profile is not available. Refresh and try again.");
+      return;
+    }
+
+    setAcceptingProjectInvite(true);
+    setAcceptProjectInviteError("");
+    setProjectsNotice(null);
+    try {
+      const invite = await verifyMagicLinkInvite(inviteNumber);
+      const appliedCount = await applyProjectInviteToCurrentMember(invite);
+
+      setShowAcceptInviteModal(false);
+      resetAcceptProjectInviteForm();
+      setProjectsNotice({
+        type: "success",
+        message:
+          appliedCount > 0
+            ? `Invite accepted. Added access to ${appliedCount} project${appliedCount === 1 ? "" : "s"}.`
+            : "Invite accepted. You already had access to the assigned project(s).",
+      });
+    } catch (error) {
+      console.error("Error accepting project invite:", error);
+      setAcceptProjectInviteError(error?.message || "Failed to accept invite.");
+    } finally {
+      setAcceptingProjectInvite(false);
+    }
+  };
+
+  const handleAcceptPendingProjectInvite = async (invite) => {
+    const inviteId = String(invite?.id || "").trim();
+    if (!canAcceptProjectInvites || !inviteId) return;
+
+    setAcceptingPendingProjectInviteId(inviteId);
+    setProjectsNotice(null);
+    try {
+      const appliedCount = await applyProjectInviteToCurrentMember(invite);
+      setProjectsNotice({
+        type: "success",
+        message:
+          appliedCount > 0
+            ? `Invite accepted. Added access to ${appliedCount} project${appliedCount === 1 ? "" : "s"}.`
+            : "Invite accepted. You already had access to the assigned project(s).",
+      });
+    } catch (error) {
+      console.error("Error accepting pending project invite:", error);
+      setProjectsNotice({
+        type: "error",
+        message: error?.message || "Failed to accept invite.",
+      });
+    } finally {
+      setAcceptingPendingProjectInviteId("");
+    }
+  };
+
   const resetProjectInviteForm = useCallback(() => {
     setProjectInviteForm(createInitialProjectInviteForm());
     setProjectInviteFormError("");
@@ -6827,6 +7200,12 @@ export function ProjectsPage({
   const allVisibleSelected =
     visibleProjectIds.length > 0 &&
     visibleProjectIds.every((projectId) => selectedProjectIds.includes(projectId));
+  const showMemberPendingInvitesPanel =
+    canAcceptProjectInvites &&
+    (memberPendingProjectInvitesLoading ||
+      Boolean(memberPendingProjectInvitesError) ||
+      memberPendingProjectInvites.length > 0);
+  const isDesktopExpenseTab = detailTab === "expenses" && !isMobileProjectViewport;
 
   const handleToggleSelectAllVisible = () => {
     if (allVisibleSelected) {
@@ -6967,6 +7346,12 @@ export function ProjectsPage({
             <span className="projects-filter-btn-label">Newest</span>
             <Icon name="chevron" size={16} />
           </button>
+          {canAcceptProjectInvites ? (
+            <button className="projects-filter-btn" type="button" onClick={openAcceptInviteModal}>
+              <Icon name="mail" size={14} />
+              <span className="projects-filter-btn-label">Accept invite</span>
+            </button>
+          ) : null}
           <button
             className="projects-new-btn"
             type="button"
@@ -6985,6 +7370,84 @@ export function ProjectsPage({
         <p className={`projects-notice projects-notice--${projectsNotice.type || "warning"}`}>
           {projectsNotice.message}
         </p>
+      ) : null}
+      {showMemberPendingInvitesPanel ? (
+        <section className="projects-member-invites" aria-label="Pending project invites">
+          <div className="projects-member-invites-head">
+            <h3>Pending project invites</h3>
+            <button
+              type="button"
+              className="projects-member-invites-manual-btn"
+              onClick={openAcceptInviteModal}
+              disabled={acceptingProjectInvite}
+            >
+              Use invite number
+            </button>
+          </div>
+          {memberPendingProjectInvitesError ? (
+            <p className="projects-member-invites-error">{memberPendingProjectInvitesError}</p>
+          ) : null}
+          {memberPendingProjectInvitesLoading ? (
+            <p className="projects-member-invites-empty">Loading your pending invites...</p>
+          ) : null}
+          {!memberPendingProjectInvitesLoading && !memberPendingProjectInvitesError ? (
+            memberPendingProjectInvites.length ? (
+              <div className="projects-member-invites-list">
+                {memberPendingProjectInvites.map((invite) => {
+                  const inviteId = String(invite?.id || invite?.invite_number || "");
+                  const safeStatus = String(invite?.status || "pending")
+                    .trim()
+                    .toLowerCase();
+                  const inviteNumber = String(invite?.invite_number || "").trim();
+                  const isAccepting = acceptingPendingProjectInviteId === inviteId;
+                  return (
+                    <article
+                      className="projects-member-invite-row"
+                      key={`${inviteId || inviteNumber || "invite"}-${String(invite?.created_at || "")}`}
+                    >
+                      <div className="projects-member-invite-main">
+                        <p className="projects-member-invite-projects">
+                          {formatMemberPendingInviteProjects(invite)}
+                        </p>
+                        <div className="projects-member-invite-meta">
+                          <span className={`project-invite-status is-${safeStatus}`}>
+                            {formatInviteStatusLabel(invite?.status)}
+                          </span>
+                          <span>{toReadableLabel(invite?.role || "member", "Member")}</span>
+                          <span>
+                            {invite?.expires_at ? `Expires ${formatDate(invite.expires_at)}` : "No expiry"}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="projects-member-invite-actions">
+                        {inviteNumber ? (
+                          <button
+                            type="button"
+                            className="project-invite-copy"
+                            onClick={() => handleCopyInviteNumber(inviteNumber)}
+                            title="Copy invite number"
+                          >
+                            {inviteNumber}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="projects-member-invite-accept-btn"
+                          onClick={() => handleAcceptPendingProjectInvite(invite)}
+                          disabled={isAccepting || acceptingProjectInvite}
+                        >
+                          {isAccepting ? "Accepting..." : "Accept"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="projects-member-invites-empty">No pending project invites.</p>
+            )
+          ) : null}
+        </section>
       ) : null}
       {projectView !== "grid" && selectedProjectIds.length > 0 ? (
         <div className="projects-selection-actions">
@@ -7359,6 +7822,7 @@ export function ProjectsPage({
           activeTab={activeTab}
           onTabChange={setActiveTab}
           form={createProjectForm}
+          categoryOptions={projectCategoryOptions}
           onFieldChange={updateCreateProjectField}
           createProjectError={createProjectError}
           onSubmit={handleCreateProjectSubmit}
@@ -7442,8 +7906,9 @@ export function ProjectsPage({
         hideHeader={isMobileProjectViewport}
       >
         {selectedProject && (
-          <div className="project-detail-layout">
-            <div className={`project-detail-left${detailTab === "expenses" ? " is-expenses" : ""}`}>
+          <div className={`project-detail-layout${isDesktopExpenseTab ? " project-detail-layout--expenses" : ""}`}>
+            {!isDesktopExpenseTab ? (
+              <div className={`project-detail-left${detailTab === "expenses" ? " is-expenses" : ""}`}>
               {detailTab === "expenses" ? (
                 <div className="project-expense-sidebar">
                   <article className="project-expense-insight-card project-expense-insight-card--hero">
@@ -7582,7 +8047,8 @@ export function ProjectsPage({
                   </div>
                 </>
               )}
-            </div>
+              </div>
+            ) : null}
             <div className="project-detail-center">
               {isMobileProjectViewport ? (
                 <div className="project-detail-mobile-header">
@@ -7605,40 +8071,42 @@ export function ProjectsPage({
                   </button>
                 </div>
               ) : null}
-              <div className="project-detail-identity">
-                <div className="project-detail-identity-top">
-                  <span
-                    className={`project-overview-status-badge is-${String(
-                      selectedProject?.status || "active"
-                    )
-                      .trim()
-                      .toLowerCase()
-                      .replace(/[^a-z0-9]+/g, "-")}`}
-                  >
-                    {String(selectedProject?.status || "active")
-                      .replace(/[_-]+/g, " ")
-                      .replace(/\b\w/g, (char) => char.toUpperCase())}
-                  </span>
-                  <div className="project-detail-identity-top-actions">
-                    <span className="project-detail-identity-progress-label">
-                      {formatPercentLabel(projectOverviewAnalytics.progressPercent)} progress
+              {!isDesktopExpenseTab ? (
+                <div className="project-detail-identity">
+                  <div className="project-detail-identity-top">
+                    <span
+                      className={`project-overview-status-badge is-${String(
+                        selectedProject?.status || "active"
+                      )
+                        .trim()
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, "-")}`}
+                    >
+                      {String(selectedProject?.status || "active")
+                        .replace(/[_-]+/g, " ")
+                        .replace(/\b\w/g, (char) => char.toUpperCase())}
+                    </span>
+                    <div className="project-detail-identity-top-actions">
+                      <span className="project-detail-identity-progress-label">
+                        {formatPercentLabel(projectOverviewAnalytics.progressPercent)} progress
+                      </span>
+                    </div>
+                  </div>
+                  <div className="project-detail-identity-meta">
+                    <span>
+                      <Icon name="calendar" size={14} />
+                      Started {formatDate(selectedProject.start_date)}
+                    </span>
+                    <span>
+                      <Icon name="member" size={14} />
+                      {selectedProject.member_count || 0} members
                     </span>
                   </div>
+                  <div className="project-detail-identity-progress" aria-hidden="true">
+                    <span style={{ width: `${clampPercent(projectOverviewAnalytics.progressPercent)}%` }} />
+                  </div>
                 </div>
-                <div className="project-detail-identity-meta">
-                  <span>
-                    <Icon name="calendar" size={14} />
-                    Started {formatDate(selectedProject.start_date)}
-                  </span>
-                  <span>
-                    <Icon name="member" size={14} />
-                    {selectedProject.member_count || 0} members
-                  </span>
-                </div>
-                <div className="project-detail-identity-progress" aria-hidden="true">
-                  <span style={{ width: `${clampPercent(projectOverviewAnalytics.progressPercent)}%` }} />
-                </div>
-              </div>
+              ) : null}
 
               {isMobileProjectViewport ? (
                 <div className="project-detail-mobile-pills" role="tablist" aria-label="Project actions">
@@ -7916,67 +8384,41 @@ export function ProjectsPage({
                 {detailTab === "expenses" && (
                   <div className="project-detail-section project-detail-expenses">
                     <div className="project-detail-section-head">
-                      <h4>Project Expenses</h4>
+                      <div className="project-expense-section-title">
+                        <h4>Project Expenses</h4>
+                        {!isMobileProjectViewport ? (
+                          <span className="project-expense-section-subtitle">
+                            {selectedProject?.name || "Project"} ·{" "}
+                            {formatPercentLabel(projectOverviewAnalytics.progressPercent)} progress ·{" "}
+                            {projectExpenseInsights.expenseCount} expense
+                            {projectExpenseInsights.expenseCount === 1 ? "" : "s"}
+                          </span>
+                        ) : null}
+                      </div>
                       {!isMobileProjectViewport ? (
                         <div className="project-detail-section-head-actions">
-                          {canManageProjectContent && selectedExpenseIds.length > 0 ? (
-                            <>
-                              <button
-                                type="button"
-                                className="project-detail-action ghost"
-                                onClick={openEditSelectedExpenseModal}
-                                disabled={
-                                  selectedExpenses.length !== 1 ||
-                                  savingExpense ||
-                                  deletingExpenses ||
-                                  uploadingExpenseReceipt
-                                }
-                              >
-                                Edit selected
-                              </button>
-                              <button
-                                type="button"
-                                className="project-detail-action ghost"
-                                onClick={triggerSelectedExpenseReceiptPicker}
-                                disabled={
-                                  selectedExpenses.length !== 1 ||
-                                  savingExpense ||
-                                  deletingExpenses ||
-                                  uploadingExpenseReceipt
-                                }
-                              >
-                                {uploadingExpenseReceipt ? "Uploading..." : "Upload receipt"}
-                              </button>
-                              <button
-                                type="button"
-                                className="project-detail-action ghost danger"
-                                onClick={requestDeleteSelectedExpenses}
-                                disabled={deletingExpenses || savingExpense || uploadingExpenseReceipt}
-                              >
-                                Delete selected
-                              </button>
-                            </>
+                          {canManageProjectContent ? (
+                            <button
+                              type="button"
+                              className="project-detail-action project-expense-add-btn"
+                              onClick={openExpenseModal}
+                              disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                            >
+                              <Icon name="plus" size={14} />
+                              Add expense
+                            </button>
                           ) : null}
                           <button
                             type="button"
-                            className="project-detail-action ghost icon-only"
+                            className="project-detail-action ghost"
                             onClick={handleExportVisibleExpensesCsv}
                             disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
                             title="Export shown expenses as CSV"
                             aria-label="Export shown expenses as CSV"
                           >
                             <Icon name="download" size={16} />
+                            Export CSV
                           </button>
-                          {canManageProjectContent ? (
-                            <button
-                              type="button"
-                              className="project-detail-action"
-                              onClick={openExpenseModal}
-                              disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
-                            >
-                              Add expense
-                            </button>
-                          ) : null}
                         </div>
                       ) : null}
                     </div>
@@ -7989,6 +8431,83 @@ export function ProjectsPage({
                         onChange={handleSelectedExpenseReceiptFileSelection}
                         disabled={uploadingExpenseReceipt || savingExpense || deletingExpenses}
                       />
+                    ) : null}
+                    {!isMobileProjectViewport ? (
+                      <div className="project-expense-summary-strip">
+                        <article className="project-expense-summary-card">
+                          <span>Budget</span>
+                          <strong>{formatCurrency(projectOverviewAnalytics.budgetAmount)}</strong>
+                        </article>
+                        <article className="project-expense-summary-card">
+                          <span>Spent</span>
+                          <strong>{formatCurrency(projectOverviewAnalytics.spentAmount)}</strong>
+                        </article>
+                        <article className="project-expense-summary-card">
+                          <span>Bal</span>
+                          <strong>{formatCurrency(projectOverviewAnalytics.remainingAmount)}</strong>
+                        </article>
+                        <article className="project-expense-summary-card">
+                          <span>Proof</span>
+                          <strong>{formatPercentLabel(projectOverviewAnalytics.expenseProofPercent)}</strong>
+                        </article>
+                      </div>
+                    ) : null}
+                    {!isMobileProjectViewport && canManageProjectContent && selectedExpenseIds.length > 0 ? (
+                      <div className="project-expense-desktop-bulk">
+                        <strong>{selectedExpenseIds.length} selected</strong>
+                        <div className="project-expense-desktop-bulk-actions">
+                          <button
+                            type="button"
+                            className="project-detail-action ghost"
+                            onClick={openEditSelectedExpenseModal}
+                            disabled={
+                              selectedExpenses.length !== 1 ||
+                              savingExpense ||
+                              deletingExpenses ||
+                              uploadingExpenseReceipt
+                            }
+                          >
+                            Edit selected
+                          </button>
+                          <button
+                            type="button"
+                            className="project-detail-action ghost"
+                            onClick={triggerSelectedExpenseReceiptPicker}
+                            disabled={
+                              selectedExpenses.length !== 1 ||
+                              savingExpense ||
+                              deletingExpenses ||
+                              uploadingExpenseReceipt
+                            }
+                          >
+                            {uploadingExpenseReceipt ? "Uploading..." : "Upload receipt"}
+                          </button>
+                          <button
+                            type="button"
+                            className="project-detail-action ghost"
+                            onClick={handleExportSelectedExpensesCsv}
+                            disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                          >
+                            Export selected
+                          </button>
+                          <button
+                            type="button"
+                            className="project-detail-action ghost danger"
+                            onClick={requestDeleteSelectedExpenses}
+                            disabled={deletingExpenses || savingExpense || uploadingExpenseReceipt}
+                          >
+                            Delete selected
+                          </button>
+                          <button
+                            type="button"
+                            className="project-detail-action ghost"
+                            onClick={handleClearExpenseSelection}
+                            disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
                     ) : null}
                     {isMobileProjectViewport ? (
                       <>
@@ -8143,11 +8662,6 @@ export function ProjectsPage({
                           </div>
                         ) : (
                           <>
-                            {canManageProjectContent ? (
-                              <div className="project-expenses-selection-note">
-                                {selectedExpenseIds.length} selected
-                              </div>
-                            ) : null}
                             {projectExpenses.length > recentProjectExpenses.length ? (
                               <div className="project-expenses-selection-note">
                                 Showing {recentProjectExpenses.length} most recent expenses.
@@ -8543,19 +9057,6 @@ export function ProjectsPage({
                                 ? "No generated reports yet."
                                 : "No files yet."}
                             </span>
-                            {canManageProjectContent ? (
-                              <button
-                                type="button"
-                                className="project-detail-action"
-                                onClick={
-                                  mobileProjectDocumentMode === "reports"
-                                    ? openDocumentTemplateActionSheet
-                                    : triggerProjectDocumentPicker
-                                }
-                              >
-                                {mobileProjectDocumentMode === "reports" ? "Generate report" : "Upload file"}
-                              </button>
-                            ) : null}
                           </div>
                         ) : (
                           <div className="project-documents-mobile-list" role="list">
@@ -8563,18 +9064,10 @@ export function ProjectsPage({
                               const documentId = String(document?.id ?? "");
                               const isSelected = selectedDocumentIds.includes(documentId);
                               const fileName = String(document?.name || "Untitled document").trim() || "Untitled document";
-                              const fileTypeLabel = getProjectDocumentTypeLabel(document);
                               const uploadedLabel = formatDate(document?.uploaded_at);
-                              const documentSize = formatFileSize(document?.file_size_bytes);
                               const isReport = isGeneratedProjectReportDocument(document);
                               const metaLabel =
-                                mobileProjectDocumentMode === "reports"
-                                  ? `Generated ${uploadedLabel}`
-                                  : `${fileTypeLabel} · ${uploadedLabel}`;
-                              const subLabel =
-                                mobileProjectDocumentMode === "reports"
-                                  ? `From: ${selectedProject?.name || "Project"}`
-                                  : documentSize;
+                                mobileProjectDocumentMode === "reports" ? `Generated ${uploadedLabel}` : uploadedLabel;
                               return (
                                 <article
                                   key={documentId || `${fileName}-${document?.uploaded_at || ""}`}
@@ -8604,7 +9097,6 @@ export function ProjectsPage({
                                   <span className="project-documents-mobile-main">
                                     <strong>{truncateProjectCellText(fileName, 86)}</strong>
                                     <span>{metaLabel}</span>
-                                    <small>{subLabel}</small>
                                   </span>
                                   <button
                                     type="button"
@@ -8680,98 +9172,102 @@ export function ProjectsPage({
                     ) : (
                       <p className="project-documents-hint">You can view and download documents in this project.</p>
                     )}
-                    {projectDocumentsError ? (
-                      <p className="project-detail-expense-error">{projectDocumentsError}</p>
-                    ) : null}
-                    {projectDocumentsLoading ? (
-                      <div className="project-expenses-loading">
-                        <div className="loading-spinner"></div>
-                        <span>Loading documents...</span>
-                      </div>
-                    ) : projectDocuments.length === 0 ? (
-                      <div className="project-detail-empty">
-                        <Icon name="folder" size={24} />
-                        <span>No documents yet.</span>
-                      </div>
-                    ) : (
+                    {!isMobileProjectViewport ? (
                       <>
-                        {canManageProjectContent ? (
-                          <div className="project-expenses-selection-note">
-                            {selectedDocumentIds.length} selected
-                          </div>
+                        {projectDocumentsError ? (
+                          <p className="project-detail-expense-error">{projectDocumentsError}</p>
                         ) : null}
-                        <div className="projects-table-wrap project-expenses-table-wrap">
-                          <table className="projects-table-view project-expenses-table project-documents-table">
-                            <thead>
-                              <tr>
-                                {canManageProjectContent ? (
-                                  <th className="projects-table-check">
-                                    <input
-                                      type="checkbox"
-                                      checked={allDocumentsSelected}
-                                      onChange={handleToggleSelectAllDocuments}
-                                      aria-label="Select all project documents"
-                                    />
-                                  </th>
-                                ) : null}
-                                <th className="project-document-col-document">Document</th>
-                                <th className="project-document-col-type">Type</th>
-                                <th className="project-document-col-size">Size</th>
-                                <th className="project-document-col-uploaded">Uploaded</th>
-                                <th className="project-document-col-by">By</th>
-                                <th className="project-document-col-action">Action</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {sortedProjectDocuments.map((document) => {
-                                const documentId = String(document?.id ?? "");
-                                const isChecked = selectedDocumentIds.includes(documentId);
-                                const fileName = String(document?.name || "Untitled document").trim();
-                                const downloadUrl = String(document?.download_url || document?.file_url || "").trim();
-                                return (
-                                  <tr key={documentId || fileName}>
+                        {projectDocumentsLoading ? (
+                          <div className="project-expenses-loading">
+                            <div className="loading-spinner"></div>
+                            <span>Loading documents...</span>
+                          </div>
+                        ) : projectDocuments.length === 0 ? (
+                          <div className="project-detail-empty">
+                            <Icon name="folder" size={24} />
+                            <span>No documents yet.</span>
+                          </div>
+                        ) : (
+                          <>
+                            {canManageProjectContent ? (
+                              <div className="project-expenses-selection-note">
+                                {selectedDocumentIds.length} selected
+                              </div>
+                            ) : null}
+                            <div className="projects-table-wrap project-expenses-table-wrap">
+                              <table className="projects-table-view project-expenses-table project-documents-table">
+                                <thead>
+                                  <tr>
                                     {canManageProjectContent ? (
-                                      <td className="projects-table-check">
+                                      <th className="projects-table-check">
                                         <input
                                           type="checkbox"
-                                          checked={isChecked}
-                                          onChange={() => handleToggleDocumentSelection(documentId)}
-                                          aria-label={`Select document ${fileName}`}
+                                          checked={allDocumentsSelected}
+                                          onChange={handleToggleSelectAllDocuments}
+                                          aria-label="Select all project documents"
                                         />
-                                      </td>
+                                      </th>
                                     ) : null}
-                                    <td className="project-document-col-document">
-                                      <div className="project-expense-detail project-document-detail">
-                                        <strong className="project-row-title">{fileName}</strong>
-                                        <p>{String(document?.file_path || "").split("/").pop() || "Stored document"}</p>
-                                      </div>
-                                    </td>
-                                    <td className="project-document-col-type">{getProjectDocumentTypeLabel(document)}</td>
-                                    <td className="project-document-col-size">{formatFileSize(document?.file_size_bytes)}</td>
-                                    <td className="project-document-col-uploaded">{formatDate(document?.uploaded_at)}</td>
-                                    <td className="project-document-col-by">{document?.uploader_name || "—"}</td>
-                                    <td className="project-document-col-action">
-                                      {downloadUrl ? (
-                                        <a
-                                          href={downloadUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="project-documents-link"
-                                        >
-                                          Open
-                                        </a>
-                                      ) : (
-                                        <span className="project-documents-link is-disabled">Unavailable</span>
-                                      )}
-                                    </td>
+                                    <th className="project-document-col-document">Document</th>
+                                    <th className="project-document-col-type">Type</th>
+                                    <th className="project-document-col-size">Size</th>
+                                    <th className="project-document-col-uploaded">Uploaded</th>
+                                    <th className="project-document-col-by">By</th>
+                                    <th className="project-document-col-action">Action</th>
                                   </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
+                                </thead>
+                                <tbody>
+                                  {sortedProjectDocuments.map((document) => {
+                                    const documentId = String(document?.id ?? "");
+                                    const isChecked = selectedDocumentIds.includes(documentId);
+                                    const fileName = String(document?.name || "Untitled document").trim();
+                                    const downloadUrl = String(document?.download_url || document?.file_url || "").trim();
+                                    return (
+                                      <tr key={documentId || fileName}>
+                                        {canManageProjectContent ? (
+                                          <td className="projects-table-check">
+                                            <input
+                                              type="checkbox"
+                                              checked={isChecked}
+                                              onChange={() => handleToggleDocumentSelection(documentId)}
+                                              aria-label={`Select document ${fileName}`}
+                                            />
+                                          </td>
+                                        ) : null}
+                                        <td className="project-document-col-document">
+                                          <div className="project-expense-detail project-document-detail">
+                                            <strong className="project-row-title">{fileName}</strong>
+                                            <p>{String(document?.file_path || "").split("/").pop() || "Stored document"}</p>
+                                          </div>
+                                        </td>
+                                        <td className="project-document-col-type">{getProjectDocumentTypeLabel(document)}</td>
+                                        <td className="project-document-col-size">{formatFileSize(document?.file_size_bytes)}</td>
+                                        <td className="project-document-col-uploaded">{formatDate(document?.uploaded_at)}</td>
+                                        <td className="project-document-col-by">{document?.uploader_name || "—"}</td>
+                                        <td className="project-document-col-action">
+                                          {downloadUrl ? (
+                                            <a
+                                              href={downloadUrl}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="project-documents-link"
+                                            >
+                                              Open
+                                            </a>
+                                          ) : (
+                                            <span className="project-documents-link is-disabled">Unavailable</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
+                        )}
                       </>
-                    )}
+                    ) : null}
                   </div>
                 )}
                 {detailTab === "tasks" && (
@@ -9975,6 +10471,52 @@ export function ProjectsPage({
           </div>
         </div>
       ) : null}
+
+      <DataModal
+        open={showAcceptInviteModal}
+        onClose={closeAcceptInviteModal}
+        title="Accept project invite"
+        subtitle="Enter the invite number shared with you to confirm project access."
+        icon="mail"
+        className="project-submodal"
+      >
+        <form className="data-modal-form" onSubmit={handleAcceptProjectInviteSubmit}>
+          {acceptProjectInviteError ? (
+            <p className="data-modal-feedback data-modal-feedback--error">{acceptProjectInviteError}</p>
+          ) : null}
+          <div className="data-modal-grid">
+            <div className="data-modal-field data-modal-field--full">
+              <label>Invite number</label>
+              <input
+                type="text"
+                value={acceptProjectInviteForm.inviteNumber}
+                onChange={(event) => handleAcceptProjectInviteFieldChange("inviteNumber", event.target.value)}
+                placeholder="e.g. 8374629"
+                autoComplete="off"
+                disabled={acceptingProjectInvite}
+                required
+              />
+            </div>
+          </div>
+          <div className="data-modal-actions">
+            <button
+              type="button"
+              className="data-modal-btn"
+              onClick={closeAcceptInviteModal}
+              disabled={acceptingProjectInvite}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="data-modal-btn data-modal-btn--primary"
+              disabled={acceptingProjectInvite}
+            >
+              {acceptingProjectInvite ? "Confirming..." : "Confirm invite"}
+            </button>
+          </div>
+        </form>
+      </DataModal>
 
       <DataModal
         open={Boolean(selectedProject) && showProjectInviteModal}
