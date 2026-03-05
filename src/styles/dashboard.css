@@ -33043,4 +33043,58 @@
   .dashboard-layout.is-dark .dashboard-mobile-nav-btn:disabled {
     color: rgba(142, 163, 194, 0.42);
   }
+
+  .dashboard-layout.is-mobile-nav-only,
+  .dashboard-layout.is-mobile-nav-only .dashboard-main,
+  .dashboard-layout.is-mobile-nav-only .dashboard-content,
+  .dashboard-layout.is-mobile-nav-only .projects-page-modern {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .dashboard-layout.is-mobile-nav-only .projects-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+
+  .dashboard-layout.is-mobile-nav-only .projects-toolbar-search,
+  .dashboard-layout.is-mobile-nav-only .projects-toolbar-right {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .dashboard-layout.is-mobile-nav-only .projects-toolbar-right {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.5rem;
+  }
+
+  .dashboard-layout.is-mobile-nav-only .projects-view-toggle,
+  .dashboard-layout.is-mobile-nav-only .projects-filter-btn,
+  .dashboard-layout.is-mobile-nav-only .projects-filter-btn--select {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .dashboard-layout.is-mobile-nav-only .projects-filter-btn--select select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .dashboard-layout.is-mobile-nav-only .projects-list-modern {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    overflow-x: visible;
+    padding-inline: 0;
+  }
+
+  .dashboard-layout.is-mobile-nav-only .project-card-modern {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+  }
 }
