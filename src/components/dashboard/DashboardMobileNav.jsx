@@ -4,7 +4,7 @@ import { Icon } from "../icons.jsx";
 const DASHBOARD_MOBILE_NAV_ITEMS = [
   { key: "overview", label: "Home", icon: "home" },
   { key: "projects", label: "Projects", icon: "briefcase" },
-  { key: "finance", label: "Finance", icon: "wallet" },
+  { key: "finance", label: "Records", icon: "wallet" },
   { key: "members", label: "People", icon: "users" },
   { key: "more", label: "More", icon: "menu" },
 ];

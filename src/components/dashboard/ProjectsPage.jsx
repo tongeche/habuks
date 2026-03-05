@@ -845,6 +845,8 @@ export function ProjectsPage({
   const expenseFormReceiptInputRef = useRef(null);
   const projectLongPressTimerRef = useRef(null);
   const suppressProjectOpenRef = useRef(false);
+  const expenseLongPressTimerRef = useRef(null);
+  const suppressExpenseOpenRef = useRef(false);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [joiningId, setJoiningId] = useState(null);
@@ -905,6 +907,7 @@ export function ProjectsPage({
   const [savingExpenseCategory, setSavingExpenseCategory] = useState(false);
   const [archivingExpenseCategoryId, setArchivingExpenseCategoryId] = useState("");
   const [selectedExpenseIds, setSelectedExpenseIds] = useState([]);
+  const [selectedExpenseDetailId, setSelectedExpenseDetailId] = useState("");
   const [detailTab, setDetailTab] = useState("overview");
   const [overviewRange, setOverviewRange] = useState(DEFAULT_PROJECT_OVERVIEW_RANGE);
   const [showBudgetSummaryReportModal, setShowBudgetSummaryReportModal] = useState(false);
@@ -2032,6 +2035,14 @@ export function ProjectsPage({
     });
   };
 
+  const formatShortDate = (dateStr) => {
+    if (!dateStr) return "N/A";
+    return new Date(dateStr).toLocaleDateString("en-KE", {
+      month: "short",
+      day: "numeric",
+    });
+  };
+
   const formatCurrency = (value) => {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount < 0) return "—";
@@ -2533,7 +2544,7 @@ export function ProjectsPage({
     };
   }, [selectedProject?.id, tenantId]);
 
-  const recentProjectExpenses = useMemo(() => {
+  const sortedProjectExpenses = useMemo(() => {
     return [...projectExpenses]
       .sort((a, b) => {
         const aTime = Date.parse(String(a?.expense_date || a?.created_at || ""));
@@ -2541,9 +2552,13 @@ export function ProjectsPage({
         const safeA = Number.isFinite(aTime) ? aTime : 0;
         const safeB = Number.isFinite(bTime) ? bTime : 0;
         return safeB - safeA;
-      })
-      .slice(0, 10);
+      });
   }, [projectExpenses]);
+
+  const recentProjectExpenses = useMemo(
+    () => sortedProjectExpenses.slice(0, 10),
+    [sortedProjectExpenses]
+  );
 
   const totalProjectExpensesAmount = useMemo(
     () =>
@@ -3530,18 +3545,42 @@ export function ProjectsPage({
     return String(partner?.logo_url || "").trim();
   }, [expensePartnerByName, leadingExpenseVendorName]);
 
+  const visibleProjectExpenses = useMemo(
+    () => (isMobileProjectViewport ? sortedProjectExpenses : recentProjectExpenses),
+    [isMobileProjectViewport, sortedProjectExpenses, recentProjectExpenses]
+  );
+
   const expenseRowIds = useMemo(
     () =>
-      recentProjectExpenses
+      visibleProjectExpenses
         .map((expense) => String(expense?.id ?? ""))
         .filter(Boolean),
-    [recentProjectExpenses]
+    [visibleProjectExpenses]
   );
 
   useEffect(() => {
     const visibleExpenseSet = new Set(expenseRowIds);
     setSelectedExpenseIds((prev) => prev.filter((expenseId) => visibleExpenseSet.has(expenseId)));
   }, [expenseRowIds]);
+
+  useEffect(() => {
+    if (!selectedExpenseDetailId) return;
+    const exists = projectExpenses.some(
+      (expense) => String(expense?.id ?? "") === String(selectedExpenseDetailId)
+    );
+    if (!exists) {
+      setSelectedExpenseDetailId("");
+    }
+  }, [projectExpenses, selectedExpenseDetailId]);
+
+  useEffect(() => {
+    return () => {
+      if (expenseLongPressTimerRef.current) {
+        window.clearTimeout(expenseLongPressTimerRef.current);
+        expenseLongPressTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const allExpensesSelected =
     expenseRowIds.length > 0 &&
@@ -3571,6 +3610,14 @@ export function ProjectsPage({
     return projectExpenses.filter((expense) => selectedSet.has(String(expense?.id ?? "")));
   }, [projectExpenses, selectedExpenseIds]);
 
+  const selectedExpenseDetail = useMemo(() => {
+    const normalizedId = String(selectedExpenseDetailId || "").trim();
+    if (!normalizedId) return null;
+    return (
+      sortedProjectExpenses.find((expense) => String(expense?.id ?? "") === normalizedId) || null
+    );
+  }, [sortedProjectExpenses, selectedExpenseDetailId]);
+
   const expenseCategoryUsage = useMemo(() => {
     const usage = new Map();
     projectExpenses.forEach((expense) => {
@@ -3594,10 +3641,8 @@ export function ProjectsPage({
     return Array.from(categorySet).sort((a, b) => a.localeCompare(b));
   }, [projectExpenses, expenseCategoryRows]);
 
-  const openEditSelectedExpenseModal = () => {
-    if (!canManageProjectContent) return;
-    if (selectedExpenses.length !== 1) return;
-    const expense = selectedExpenses[0];
+  const openEditExpenseModal = (expense) => {
+    if (!canManageProjectContent || !expense) return;
     const parsed = parseExpenseDescriptionForForm(expense?.description, expense?.category);
     setEditingExpenseId(String(expense?.id ?? ""));
     setExpenseForm({
@@ -3621,6 +3666,58 @@ export function ProjectsPage({
     setExpenseReceiptDragActive(false);
     setExpenseFormError("");
     setShowExpenseModal(true);
+  };
+
+  const openEditSelectedExpenseModal = () => {
+    if (!canManageProjectContent) return;
+    if (selectedExpenses.length !== 1) return;
+    openEditExpenseModal(selectedExpenses[0]);
+  };
+
+  const openExpenseDetailModal = (expense) => {
+    const expenseId = String(expense?.id ?? "").trim();
+    if (!expenseId) return;
+    setSelectedExpenseDetailId(expenseId);
+  };
+
+  const closeExpenseDetailModal = () => {
+    setSelectedExpenseDetailId("");
+  };
+
+  const clearExpenseLongPressTimer = () => {
+    if (expenseLongPressTimerRef.current) {
+      window.clearTimeout(expenseLongPressTimerRef.current);
+      expenseLongPressTimerRef.current = null;
+    }
+  };
+
+  const handleExpensePressStart = (expenseId) => {
+    if (!isMobileProjectViewport || !canManageProjectContent) return;
+    const normalizedId = String(expenseId ?? "");
+    if (!normalizedId) return;
+    clearExpenseLongPressTimer();
+    expenseLongPressTimerRef.current = window.setTimeout(() => {
+      setSelectedExpenseIds((prev) => (prev.includes(normalizedId) ? prev : [...prev, normalizedId]));
+      suppressExpenseOpenRef.current = true;
+    }, 420);
+  };
+
+  const handleExpensePressEnd = () => {
+    clearExpenseLongPressTimer();
+  };
+
+  const handleExpenseRowActivate = (expense) => {
+    const normalizedId = String(expense?.id ?? "");
+    if (!normalizedId) return;
+    if (suppressExpenseOpenRef.current) {
+      suppressExpenseOpenRef.current = false;
+      return;
+    }
+    if (isMobileProjectViewport && canManageProjectContent && selectedExpenseIds.length > 0) {
+      handleToggleExpenseSelection(normalizedId);
+      return;
+    }
+    openExpenseDetailModal(expense);
   };
 
   const requestDeleteSelectedExpenses = () => {
@@ -3710,6 +3807,7 @@ export function ProjectsPage({
     setDocumentRenameError("");
     setProjectExpenses([]);
     setSelectedExpenseIds([]);
+    setSelectedExpenseDetailId("");
     setProjectExpensesError("");
     setProjectExpensesLoading(false);
     setExpenseCategoryRows([]);
@@ -3761,6 +3859,7 @@ export function ProjectsPage({
 
   const openExpenseModal = () => {
     if (!canManageProjectContent) return;
+    setSelectedExpenseDetailId("");
     setEditingExpenseId(null);
     setExpenseForm(createInitialExpenseForm());
     setExpenseReceiptDragActive(false);
@@ -3918,8 +4017,8 @@ export function ProjectsPage({
     }
   };
 
-  const handleExportVisibleExpensesCsv = () => {
-    if (!recentProjectExpenses.length) {
+  const exportExpenseRowsToCsv = (rows, filenameSuffix = "expenses") => {
+    if (!Array.isArray(rows) || rows.length === 0) {
       setProjectsNotice({
         type: "warning",
         message: "No expense rows available to export.",
@@ -3936,8 +4035,9 @@ export function ProjectsPage({
       "Description",
       "Payment Reference",
       "Receipt",
+      "Approved",
     ];
-    const csvRows = recentProjectExpenses.map((expense) => [
+    const csvRows = rows.map((expense) => [
       selectedProject?.name || "",
       expense?.expense_date || "",
       expense?.category || "",
@@ -3946,6 +4046,7 @@ export function ProjectsPage({
       expense?.description || "",
       expense?.payment_reference || "",
       expense?.receipt ? "Yes" : "No",
+      expense?.approved_by ? "Yes" : "No",
     ]);
 
     const csvContent = [
@@ -3961,7 +4062,7 @@ export function ProjectsPage({
     const slug = toFilenameSlug(selectedProject?.name || "project");
     const dateStamp = new Date().toISOString().slice(0, 10);
     link.href = url;
-    link.download = `${slug}-expenses-${dateStamp}.csv`;
+    link.download = `${slug}-${filenameSuffix}-${dateStamp}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -3969,8 +4070,82 @@ export function ProjectsPage({
 
     setProjectsNotice({
       type: "success",
-      message: `Exported ${recentProjectExpenses.length} expense row(s) to CSV.`,
+      message: `Exported ${rows.length} expense row(s) to CSV.`,
     });
+  };
+
+  const handleExportVisibleExpensesCsv = () => {
+    exportExpenseRowsToCsv(visibleProjectExpenses, "expenses");
+  };
+
+  const handleExportSelectedExpensesCsv = () => {
+    exportExpenseRowsToCsv(selectedExpenses, "selected-expenses");
+  };
+
+  const handleClearExpenseSelection = () => {
+    setSelectedExpenseIds([]);
+  };
+
+  const handleApproveSelectedExpenses = async () => {
+    if (!canManageProjectContent) return;
+    if (!selectedExpenses.length) return;
+    if (!user?.id) {
+      setProjectsNotice({
+        type: "warning",
+        message: "Approval requires a signed-in member profile.",
+      });
+      return;
+    }
+
+    setSavingExpense(true);
+    setProjectExpensesError("");
+    let successCount = 0;
+    let failureCount = 0;
+    const approvedAt = new Date().toISOString();
+
+    try {
+      for (const expense of selectedExpenses) {
+        try {
+          await updateProjectExpense(expense.id, { approved_by: user.id }, tenantId);
+          successCount += 1;
+        } catch (error) {
+          failureCount += 1;
+          console.error("Error approving selected expense:", error);
+        }
+      }
+
+      if (successCount > 0) {
+        const selectedIdSet = new Set(selectedExpenses.map((expense) => String(expense?.id ?? "")));
+        setProjectExpenses((prev) =>
+          prev.map((expense) =>
+            selectedIdSet.has(String(expense?.id ?? ""))
+              ? {
+                  ...expense,
+                  approved_by: user.id,
+                  approved_at: expense?.approved_at || approvedAt,
+                }
+              : expense
+          )
+        );
+      }
+
+      if (failureCount === 0) {
+        setProjectsNotice({
+          type: "success",
+          message:
+            successCount === 1
+              ? "Expense approved."
+              : `${successCount} expenses approved.`,
+        });
+      } else {
+        setProjectsNotice({
+          type: "warning",
+          message: `Approved ${successCount} expense(s). ${failureCount} expense(s) failed.`,
+        });
+      }
+    } finally {
+      setSavingExpense(false);
+    }
   };
 
   const handleExpenseFormFieldChange = (field, value) => {

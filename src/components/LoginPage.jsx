@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { supabase, isSupabaseConfigured } from "../lib/supabase.js";
 import {
   getCurrentMember,
@@ -8,6 +8,14 @@ import {
   recoverMagicLinkTenantMembership,
   resetSupabaseFallback,
 } from "../lib/dataService.js";
+
+const getStoredDashboardPath = () => {
+  if (typeof window === "undefined") return "/dashboard";
+  const slug = String(window.localStorage.getItem("lastTenantSlug") || "")
+    .trim()
+    .toLowerCase();
+  return slug ? `/tenant/${slug}/dashboard` : "/dashboard";
+};
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -27,6 +35,22 @@ export default function LoginPage() {
     localStorage.setItem("lastTenantSlug", workspace);
     localStorage.setItem("pendingInviteTenantSlug", workspace);
   }, [location.search]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      return;
+    }
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      if (data?.session?.user) {
+        navigate(getStoredDashboardPath(), { replace: true });
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
 
   const redirectToTenantDashboard = (slug) => {
     const cleanSlug = String(slug || "").trim().toLowerCase();
@@ -74,7 +98,7 @@ export default function LoginPage() {
       try {
         const member = await getCurrentMember();
         if (!member) {
-          navigate("/get-started");
+          navigate("/signup");
           return;
         }
 
@@ -166,12 +190,12 @@ export default function LoginPage() {
               }
             }
           } catch (_) {
-            // ignore — fall through to /get-started
+            // ignore — fall through to /signup
           }
         }
 
         // No workspace found — send to workspace creation
-        navigate("/get-started");
+        navigate("/signup");
         return;
       } catch (resolveErr) {
         console.warn("Login: could not resolve tenant, falling back:", resolveErr);
@@ -186,63 +210,55 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="auth-page auth-page--single">
-      <div className="auth-form-col">
-        <div className="auth-form-inner">
-          <a href="/" className="auth-logo">
-            <img src="/assets/logo.png" alt="Habuks" />
-          </a>
-          <h1>Sign in to Habuks</h1>
-          <p className="auth-note">
-            Use your workspace credentials to access your tenant dashboard.
-          </p>
-          <div className="auth-paths">
-            <a className="auth-path-card" href="/get-started">
-              <strong>Start free trial</strong>
-              <span>Create a new workspace as admin.</span>
-            </a>
-            <a className="auth-path-card" href="/register">
-              <strong>Join with invite</strong>
-              <span>Use invite number/code from your workspace admin.</span>
-            </a>
-          </div>
-          <form onSubmit={handleSubmit} className="auth-form">
-            <div className="auth-field">
-              <label htmlFor="email">E-mail</label>
-              <input
-                id="email"
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                required
-                autoComplete="email"
-              />
-            </div>
-            <div className="auth-field">
-              <label htmlFor="password">Password</label>
-              <input
-                id="password"
-                type="password"
-                name="password"
-                value={formData.password}
-                onChange={handleChange}
-                required
-                autoComplete="current-password"
-              />
-            </div>
-            {error && <p className="auth-error">{error}</p>}
-            {message && <p className="auth-message">{message}</p>}
-            <button type="submit" className="auth-btn auth-btn-centered" disabled={loading}>
-              {loading ? "Please wait..." : "Sign In"}
-            </button>
-          </form>
-          <p className="register-login-link">
-            Have a workspace invite? <a href="/register">Create account with invite</a>
-          </p>
-          <a href="/" className="auth-back">← Back to Habuks</a>
-        </div>
-      </div>
+    <div className="mobile-auth-shell">
+      <main className="mobile-auth-card" aria-labelledby="login-title">
+        <h1 id="login-title" className="mobile-auth-title">
+          Sign In
+        </h1>
+        <form onSubmit={handleSubmit} className="mobile-auth-form">
+          <label className="mobile-auth-field">
+            <span>Email</span>
+            <input
+              id="email"
+              type="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+              required
+              autoComplete="email"
+            />
+          </label>
+          <label className="mobile-auth-field">
+            <span>Password</span>
+            <input
+              id="password"
+              type="password"
+              name="password"
+              value={formData.password}
+              onChange={handleChange}
+              required
+              autoComplete="current-password"
+            />
+          </label>
+          {error ? <p className="mobile-auth-error">{error}</p> : null}
+          {message ? <p className="mobile-auth-message">{message}</p> : null}
+          <button type="submit" className="mobile-auth-btn mobile-auth-btn--primary" disabled={loading}>
+            {loading ? "Please wait..." : "Sign In"}
+          </button>
+        </form>
+        <p className="mobile-auth-meta">
+          <Link to="/reset-password">Forgot password</Link>
+        </p>
+        <p className="mobile-auth-meta">
+          <Link to="/signup">Create organization</Link>
+        </p>
+        <p className="mobile-auth-meta">
+          <Link to="/invite">Join with invite</Link>
+        </p>
+        <p className="mobile-auth-meta">
+          <Link to="/welcome">← Back</Link>
+        </p>
+      </main>
     </div>
   );
 }

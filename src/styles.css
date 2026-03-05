@@ -1,5 +1,6 @@
 @import "./styles/base.css";
 @import "./styles/landing.css";
+@import "./styles/mobile-auth.css";
 @import "./styles/dashboard.css";
 @import "./styles/activities.css";
 @import "./styles/about.css";

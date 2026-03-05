@@ -370,7 +370,7 @@ function DashboardLayout({
     .filter(Boolean);
 
   const groupLabels = {
-    finance: "Finance & Records",
+    finance: "Records",
     people: "People",
     reporting: "Reporting",
     management: "Management",
@@ -390,7 +390,7 @@ function DashboardLayout({
   const financePages = new Set(["contributions", "expenses", "welfare", "documents"]);
   const pageTitle =
     (financePages.has(activePage)
-      ? "Finance & Records"
+      ? "Records"
       : activePage === "notifications"
         ? "Notifications"
       : flatMenuItems.find((m) => m.key === activePage)?.label) ||
@@ -921,7 +921,7 @@ function DashboardLayout({
     allowedPages.has("expenses") || allowedPages.has("documents") || allowedPages.has("contributions")
       ? {
           key: "finance",
-          label: "Finance",
+          label: "Records",
           icon: "wallet",
           tone: "emerald",
           onClick: () => {

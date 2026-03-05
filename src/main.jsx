@@ -1,13 +1,15 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "./styles.css";
 import App from "./App.jsx";
 import LandingPage from "./components/LandingPage.jsx";
+import WelcomePage from "./components/WelcomePage.jsx";
 import LoginPage from "./components/LoginPage.jsx";
-import RegisterPage from "./components/RegisterPage.jsx";
+import SignupPage from "./components/SignupPage.jsx";
+import InvitePage from "./components/InvitePage.jsx";
+import ResetPasswordPage from "./components/ResetPasswordPage.jsx";
 import AboutPage from "./components/AboutPage.jsx";
-import TenantSignupPage from "./components/TenantSignupPage.jsx";
 import TenantSelectPage from "./components/TenantSelectPage.jsx";
 import DemoPage from "./components/DemoPage.jsx";
 import DemoLandingPage from "./components/DemoLandingPage.jsx";
@@ -49,6 +51,7 @@ if (rootElement) {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<LandingPage />} />
+          <Route path="/welcome" element={<WelcomePage />} />
           <Route path="/tenant" element={<App />} />
           <Route path="/tenant/:slug" element={<App />} />
           <Route path="/tenant/:slug/dashboard/*" element={<Dashboard />} />
@@ -58,9 +61,14 @@ if (rootElement) {
           <Route path="/resources" element={<ResourcesListPage />} />
           <Route path="/resources/:slug" element={<ResourcePage />} />
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
-          <Route path="/join" element={<RegisterPage />} />
-          <Route path="/get-started" element={<TenantSignupPage />} />
+          <Route path="/signup" element={<SignupPage />} />
+          <Route path="/invite" element={<InvitePage />} />
+          <Route path="/invite/:token" element={<InvitePage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
+          <Route path="/register" element={<Navigate to="/invite" replace />} />
+          <Route path="/join" element={<Navigate to="/invite" replace />} />
+          <Route path="/get-started" element={<Navigate to="/signup" replace />} />
           <Route path="/request-demo" element={<RequestDemoPage />} />
           <Route path="/demo" element={<DemoPage />} />
           <Route path="/demo/landing" element={<DemoLandingPage />} />
