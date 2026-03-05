@@ -60,10 +60,18 @@ const PROJECT_DETAIL_TAB_META = {
   overview: { label: "Overview", icon: "home" },
   expenses: { label: "Expenses", icon: "wallet" },
   documents: { label: "Documents", icon: "folder" },
+  files: { label: "Files", icon: "folder" },
   tasks: { label: "Tasks", icon: "check" },
   notes: { label: "Notes", icon: "newspaper" },
   invites: { label: "Invites", icon: "mail" },
 };
+
+const PROJECT_MOBILE_PILLS = [
+  { key: "tasks", label: "Tasks" },
+  { key: "expenses", label: "Finance" },
+  { key: "files", label: "Files" },
+  { key: "more", label: "More ▾" },
+];
 
 const PROJECT_VIEW_OPTIONS = [
   { key: "grid", label: "Grid", icon: "layers" },
@@ -861,6 +869,11 @@ export function ProjectsPage({
   const [projectActionInFlightId, setProjectActionInFlightId] = useState(null);
   const [projectActionConfirm, setProjectActionConfirm] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
+  const [showProjectActionSheet, setShowProjectActionSheet] = useState(false);
+  const [mobileDeleteArmed, setMobileDeleteArmed] = useState(false);
+  const [isMobileProjectViewport, setIsMobileProjectViewport] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 768px)").matches : false
+  );
   const [projectAssignableMembers, setProjectAssignableMembers] = useState([]);
   const [projectAssignableMembersLoading, setProjectAssignableMembersLoading] = useState(false);
   const [projectDocuments, setProjectDocuments] = useState([]);
@@ -1111,6 +1124,23 @@ export function ProjectsPage({
     window.addEventListener("click", handleWindowClick);
     return () => window.removeEventListener("click", handleWindowClick);
   }, [openProjectMenuId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia("(max-width: 768px)");
+    const applyMediaState = () => {
+      setIsMobileProjectViewport(mediaQuery.matches);
+    };
+    applyMediaState();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", applyMediaState);
+      return () => mediaQuery.removeEventListener("change", applyMediaState);
+    }
+    mediaQuery.addListener(applyMediaState);
+    return () => mediaQuery.removeListener(applyMediaState);
+  }, []);
 
   const updateCreateProjectField = (field, value) => {
     setCreateProjectForm((prev) => {
@@ -1721,6 +1751,121 @@ export function ProjectsPage({
     setOpenProjectMenuId(null);
   };
 
+  const closeProjectActionSheet = () => {
+    if (projectActionInFlightId) return;
+    setShowProjectActionSheet(false);
+    setMobileDeleteArmed(false);
+  };
+
+  const openProjectActionSheet = () => {
+    setMobileDeleteArmed(false);
+    setShowProjectActionSheet(true);
+  };
+
+  const handleMobileProjectPillClick = (pillKey) => {
+    if (pillKey === "more") {
+      openProjectActionSheet();
+      return;
+    }
+    if (pillKey === "files") {
+      setDetailTab("files");
+      return;
+    }
+    setDetailTab(pillKey);
+  };
+
+  const handleDuplicateSelectedProject = async () => {
+    if (!canCreateProject || !selectedProject?.id) return;
+    const sourceProject = selectedProject;
+    const sourceName = String(sourceProject?.name || "Project").trim() || "Project";
+    const duplicateName = `${sourceName} (Copy)`;
+
+    setProjectActionInFlightId(String(sourceProject.id));
+    setProjectsNotice(null);
+    try {
+      await createIgaProject(
+        {
+          name: duplicateName,
+          module_key: sourceProject?.module_key || sourceProject?.code || "generic",
+          start_date: sourceProject?.start_date || null,
+          status: sourceProject?.status || "active",
+          description: sourceProject?.description || sourceProject?.short_description || "",
+          short_description: sourceProject?.short_description || sourceProject?.description || "",
+          project_leader: sourceProject?.project_leader || user?.id || null,
+        },
+        tenantId
+      );
+      await loadProjects();
+      setProjectsNotice({
+        type: "success",
+        message: `Created duplicate project "${duplicateName}".`,
+      });
+      setShowProjectActionSheet(false);
+      setMobileDeleteArmed(false);
+    } catch (error) {
+      showFriendlyProjectError(error, {
+        actionLabel: "duplicate this project",
+        fallbackTitle: "Couldn't duplicate project",
+        context: {
+          area: "projects",
+          action: "duplicate_project",
+          tenantId,
+          projectId: sourceProject.id,
+        },
+      });
+    } finally {
+      setProjectActionInFlightId(null);
+    }
+  };
+
+  const handleArchiveSelectedProject = async () => {
+    if (!canCreateProject || !selectedProject?.id) return;
+    const projectName = String(selectedProject?.name || "this project").trim();
+    if (!window.confirm(`Archive ${projectName}?`)) {
+      return;
+    }
+
+    setProjectActionInFlightId(String(selectedProject.id));
+    setProjectsNotice(null);
+    try {
+      await updateIgaProject(selectedProject.id, { status: "archived" }, tenantId);
+      await loadProjects();
+      setSelectedProject((prev) =>
+        prev?.id === selectedProject.id ? { ...prev, status: "archived" } : prev
+      );
+      setProjectsNotice({
+        type: "success",
+        message: `${projectName} archived.`,
+      });
+      setShowProjectActionSheet(false);
+      setMobileDeleteArmed(false);
+    } catch (error) {
+      showFriendlyProjectError(error, {
+        actionLabel: "archive this project",
+        fallbackTitle: "Couldn't archive project",
+        context: {
+          area: "projects",
+          action: "archive_project",
+          tenantId,
+          projectId: selectedProject.id,
+        },
+      });
+    } finally {
+      setProjectActionInFlightId(null);
+    }
+  };
+
+  const handleMobileDeleteProject = () => {
+    if (!selectedProject?.id || !canCreateProject) return;
+    if (!mobileDeleteArmed) {
+      setMobileDeleteArmed(true);
+      return;
+    }
+    setShowProjectActionSheet(false);
+    setMobileDeleteArmed(false);
+    requestDeleteProject(selectedProject);
+  };
+
   const closeProjectActionConfirm = () => {
     if (projectActionInFlightId) return;
     setProjectActionConfirm(null);
@@ -2092,9 +2237,18 @@ export function ProjectsPage({
     return tabs;
   }, [canViewProjectInvites]);
 
+  const activeProjectMobilePill = useMemo(() => {
+    if (detailTab === "tasks") return "tasks";
+    if (detailTab === "expenses") return "expenses";
+    if (detailTab === "files" || detailTab === "documents" || detailTab === "notes") return "files";
+    return "";
+  }, [detailTab]);
+
   const openProjectDetails = (project) => {
     setSelectedProject(project);
     setDetailTab("overview");
+    setShowProjectActionSheet(false);
+    setMobileDeleteArmed(false);
     setOverviewRange(DEFAULT_PROJECT_OVERVIEW_RANGE);
     setShowBudgetSummaryReportModal(false);
     setExportingDonorBrief(false);
@@ -2111,11 +2265,26 @@ export function ProjectsPage({
   }, [detailTab, canViewProjectInvites]);
 
   useEffect(() => {
+    if (!isMobileProjectViewport && detailTab === "files") {
+      setDetailTab("documents");
+    }
+  }, [detailTab, isMobileProjectViewport]);
+
+  useEffect(() => {
+    if (!isMobileProjectViewport && showProjectActionSheet) {
+      setShowProjectActionSheet(false);
+      setMobileDeleteArmed(false);
+    }
+  }, [isMobileProjectViewport, showProjectActionSheet]);
+
+  useEffect(() => {
     if (!selectedProject) {
       setShowBudgetSummaryReportModal(false);
       setExportingDonorBrief(false);
       setShowProjectInviteModal(false);
       setProjectInviteFormError("");
+      setShowProjectActionSheet(false);
+      setMobileDeleteArmed(false);
     }
   }, [selectedProject]);
 
@@ -5429,6 +5598,39 @@ export function ProjectsPage({
     return lanes;
   }, [filteredProjectNotes]);
 
+  const mobileProjectFiles = useMemo(() => {
+    const documentRows = sortedProjectDocuments.map((document) => {
+      const timestamp = Date.parse(String(document?.uploaded_at || document?.created_at || ""));
+      return {
+        id: `document-${String(document?.id || "")}`,
+        type: "document",
+        title: String(document?.name || "Untitled document").trim() || "Untitled document",
+        subtitle: getProjectDocumentTypeLabel(document),
+        secondary: formatDate(document?.uploaded_at || document?.created_at),
+        timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+        downloadUrl: String(document?.download_url || document?.file_url || "").trim(),
+      };
+    });
+
+    const noteRows = sortedProjectNotes.map((note) => {
+      const timestamp = Date.parse(String(note?.updated_at || note?.created_at || ""));
+      const safeVisibility = String(note?.visibility || "project_team")
+        .trim()
+        .toLowerCase();
+      return {
+        id: `note-${String(note?.id || "")}`,
+        type: "note",
+        title: String(note?.title || "Untitled note").trim() || "Untitled note",
+        subtitle: NOTE_VISIBILITY_LABELS[safeVisibility] || toReadableLabel(safeVisibility, "Project team"),
+        secondary: formatDate(note?.updated_at || note?.created_at),
+        timestamp: Number.isFinite(timestamp) ? timestamp : 0,
+        notePreview: truncateProjectCellText(String(note?.body || "").trim(), 140),
+      };
+    });
+
+    return [...documentRows, ...noteRows].sort((left, right) => right.timestamp - left.timestamp);
+  }, [sortedProjectDocuments, sortedProjectNotes]);
+
   const noteRowIds = useMemo(
     () =>
       filteredProjectNotes
@@ -6491,6 +6693,68 @@ export function ProjectsPage({
               )}
             </div>
             <div className="project-detail-center">
+              <div className="project-detail-identity">
+                <div className="project-detail-identity-top">
+                  <span
+                    className={`project-overview-status-badge is-${String(
+                      selectedProject?.status || "active"
+                    )
+                      .trim()
+                      .toLowerCase()
+                      .replace(/[^a-z0-9]+/g, "-")}`}
+                  >
+                    {String(selectedProject?.status || "active")
+                      .replace(/[_-]+/g, " ")
+                      .replace(/\b\w/g, (char) => char.toUpperCase())}
+                  </span>
+                  <div className="project-detail-identity-top-actions">
+                    <span className="project-detail-identity-progress-label">
+                      {formatPercentLabel(projectOverviewAnalytics.progressPercent)} progress
+                    </span>
+                    {isMobileProjectViewport ? (
+                      <button
+                        type="button"
+                        className="project-detail-mobile-more-btn"
+                        onClick={openProjectActionSheet}
+                        aria-label="Project actions"
+                      >
+                        <Icon name="more-horizontal" size={16} />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="project-detail-identity-meta">
+                  <span>
+                    <Icon name="calendar" size={14} />
+                    Started {formatDate(selectedProject.start_date)}
+                  </span>
+                  <span>
+                    <Icon name="member" size={14} />
+                    {selectedProject.member_count || 0} members
+                  </span>
+                </div>
+                <div className="project-detail-identity-progress" aria-hidden="true">
+                  <span style={{ width: `${clampPercent(projectOverviewAnalytics.progressPercent)}%` }} />
+                </div>
+              </div>
+
+              {isMobileProjectViewport ? (
+                <div className="project-detail-mobile-pills" role="tablist" aria-label="Project actions">
+                  {PROJECT_MOBILE_PILLS.map((pill) => (
+                    <button
+                      key={`mobile-pill-${pill.key}`}
+                      type="button"
+                      className={`project-detail-mobile-pill${
+                        activeProjectMobilePill === pill.key ? " active" : ""
+                      }`}
+                      onClick={() => handleMobileProjectPillClick(pill.key)}
+                    >
+                      {pill.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
               <div className="project-detail-tabs" role="tablist">
                 {projectDetailTabs.map((tab) => (
                   <button
@@ -6822,6 +7086,22 @@ export function ProjectsPage({
                         ) : null}
                       </div>
                     </div>
+                    {isMobileProjectViewport ? (
+                      <div className="project-mobile-finance-summary">
+                        <article>
+                          <span>Budget allocated</span>
+                          <strong>{formatCurrency(projectOverviewAnalytics.budgetAmount)}</strong>
+                        </article>
+                        <article>
+                          <span>Amount spent</span>
+                          <strong>{formatCurrency(projectOverviewAnalytics.spentAmount)}</strong>
+                        </article>
+                        <article>
+                          <span>Remaining</span>
+                          <strong>{formatCurrency(projectOverviewAnalytics.remainingAmount)}</strong>
+                        </article>
+                      </div>
+                    ) : null}
                     {projectExpensesError ? (
                       <p className="project-detail-expense-error">{projectExpensesError}</p>
                     ) : null}
@@ -6958,6 +7238,89 @@ export function ProjectsPage({
                           </table>
                         </div>
                       </>
+                    )}
+                  </div>
+                )}
+                {detailTab === "files" && (
+                  <div className="project-detail-section project-detail-files">
+                    <div className="project-detail-section-head">
+                      <h4>Files</h4>
+                      <div className="project-detail-section-head-actions">
+                        {canManageProjectContent ? (
+                          <>
+                            <input
+                              ref={projectDocumentInputRef}
+                              type="file"
+                              className="project-documents-file-input"
+                              onChange={handleProjectDocumentFileSelection}
+                              disabled={uploadingProjectDocument || deletingDocuments || renamingDocument}
+                            />
+                            <button
+                              type="button"
+                              className="project-detail-action"
+                              onClick={triggerProjectDocumentPicker}
+                              disabled={uploadingProjectDocument || deletingDocuments || renamingDocument}
+                            >
+                              {uploadingProjectDocument ? "Uploading..." : "Upload"}
+                            </button>
+                            <button
+                              type="button"
+                              className="project-detail-action ghost"
+                              onClick={openNoteModal}
+                              disabled={savingNote || deletingNotes}
+                            >
+                              Add note
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                    {projectDocumentsError || projectNotesError ? (
+                      <p className="project-detail-expense-error">{projectDocumentsError || projectNotesError}</p>
+                    ) : null}
+                    {projectDocumentsLoading || projectNotesLoading ? (
+                      <div className="project-expenses-loading">
+                        <div className="loading-spinner"></div>
+                        <span>Loading files...</span>
+                      </div>
+                    ) : mobileProjectFiles.length === 0 ? (
+                      <div className="project-detail-empty">
+                        <Icon name="folder" size={24} />
+                        <span>No files yet.</span>
+                      </div>
+                    ) : (
+                      <div className="project-files-merged-list">
+                        {mobileProjectFiles.map((item) => (
+                          <article className="project-files-merged-item" key={item.id}>
+                            <div className="project-files-merged-copy">
+                              <strong>{item.title}</strong>
+                              <span>
+                                {item.type === "document" ? "Document" : "Note"} · {item.subtitle} · {item.secondary}
+                              </span>
+                              {item.notePreview ? <p>{item.notePreview}</p> : null}
+                            </div>
+                            <div className="project-files-merged-action">
+                              {item.type === "document" ? (
+                                item.downloadUrl ? (
+                                  <a href={item.downloadUrl} target="_blank" rel="noreferrer" className="project-documents-link">
+                                    Open
+                                  </a>
+                                ) : (
+                                  <span className="project-documents-link is-disabled">Unavailable</span>
+                                )
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="project-documents-link"
+                                  onClick={() => setDetailTab("notes")}
+                                >
+                                  Open
+                                </button>
+                              )}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
                     )}
                   </div>
                 )}
@@ -7901,28 +8264,107 @@ export function ProjectsPage({
                   </div>
                 )}
               </div>
-              <div className="project-detail-mobile-nav" role="tablist" aria-label="Project sections">
-                {projectDetailTabs.map((tab) => {
-                  const tabMeta = PROJECT_DETAIL_TAB_META[tab] || { label: tab, icon: "briefcase" };
-                  return (
-                    <button
-                      key={`mobile-${tab}`}
-                      type="button"
-                      className={`project-detail-mobile-nav-btn${detailTab === tab ? " active" : ""}`}
-                      onClick={() => setDetailTab(tab)}
-                      role="tab"
-                      aria-selected={detailTab === tab}
-                    >
-                      <Icon name={tabMeta.icon} size={16} />
-                      <span>{tabMeta.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              {isMobileProjectViewport && canManageProjectContent && detailTab === "tasks" ? (
+                <button
+                  type="button"
+                  className="project-detail-fab project-detail-fab--note"
+                  onClick={openTaskModal}
+                  disabled={savingTask || deletingTasks}
+                  aria-label="Add task"
+                >
+                  <Icon name="plus" size={20} />
+                </button>
+              ) : null}
+              {isMobileProjectViewport && canManageProjectContent && detailTab === "expenses" ? (
+                <button
+                  type="button"
+                  className="project-detail-fab project-detail-fab--note"
+                  onClick={openExpenseModal}
+                  disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                  aria-label="Record expense"
+                >
+                  <Icon name="plus" size={20} />
+                </button>
+              ) : null}
+              {isMobileProjectViewport && canManageProjectContent && detailTab === "files" ? (
+                <button
+                  type="button"
+                  className="project-detail-fab project-detail-fab--note"
+                  onClick={triggerProjectDocumentPicker}
+                  disabled={uploadingProjectDocument || deletingDocuments || renamingDocument}
+                  aria-label="Upload file"
+                >
+                  <Icon name="plus" size={20} />
+                </button>
+              ) : null}
             </div>
           </div>
         )}
       </DataModal>
+
+      {Boolean(selectedProject) && showProjectActionSheet ? (
+        <div className="project-action-sheet-overlay" onClick={closeProjectActionSheet} role="presentation">
+          <div
+            className="project-action-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Project actions"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="project-action-sheet-handle" aria-hidden="true" />
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => {
+                const projectToEdit = selectedProject;
+                closeProjectActionSheet();
+                setSelectedProject(null);
+                openEditProjectModal(projectToEdit);
+              }}
+              disabled={Boolean(projectActionInFlightId)}
+            >
+              Edit project
+            </button>
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={handleDuplicateSelectedProject}
+              disabled={Boolean(projectActionInFlightId)}
+            >
+              Duplicate project
+            </button>
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={handleArchiveSelectedProject}
+              disabled={Boolean(projectActionInFlightId)}
+            >
+              Archive project
+            </button>
+            <hr />
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => {
+                closeProjectActionSheet();
+                openBudgetSummaryReportModal();
+              }}
+              disabled={Boolean(projectActionInFlightId)}
+            >
+              Export project report
+            </button>
+            <hr />
+            <button
+              type="button"
+              className={`project-action-sheet-btn is-danger${mobileDeleteArmed ? " is-armed" : ""}`}
+              onClick={handleMobileDeleteProject}
+              disabled={Boolean(projectActionInFlightId)}
+            >
+              {mobileDeleteArmed ? "Tap again to delete project" : "Delete project"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <DataModal
         open={Boolean(selectedProject) && showProjectInviteModal}

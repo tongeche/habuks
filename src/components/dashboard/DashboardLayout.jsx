@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "../icons.jsx";
 import { signOut, createMagicLinkInvite, getProjects } from "../../lib/dataService.js";
@@ -212,12 +212,63 @@ export default function DashboardLayout({
     code: null,
   });
   const [submittingInvite, setSubmittingInvite] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 768px)").matches : false
+  );
+  const [showMobileSearchDrawer, setShowMobileSearchDrawer] = useState(false);
+  const [mobileSearchQuery, setMobileSearchQuery] = useState("");
+  const [mobileSearchDrawerOffsetY, setMobileSearchDrawerOffsetY] = useState(0);
+  const mobileSearchInputRef = useRef(null);
+  const mobileSearchTouchStartRef = useRef(null);
   const navigate = useNavigate();
 
   // Persist sidebar state to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem("dashboard-sidebar-collapsed", JSON.stringify(isCollapsed));
   }, [isCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia("(max-width: 768px)");
+    const applyMediaState = () => {
+      setIsMobileViewport(mediaQuery.matches);
+    };
+    applyMediaState();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", applyMediaState);
+      return () => mediaQuery.removeEventListener("change", applyMediaState);
+    }
+    mediaQuery.addListener(applyMediaState);
+    return () => mediaQuery.removeListener(applyMediaState);
+  }, []);
+
+  useEffect(() => {
+    if (isMobileViewport && sidebarOpen) {
+      setSidebarOpen(false);
+    }
+  }, [isMobileViewport, sidebarOpen]);
+
+  useEffect(() => {
+    if (isMobileViewport) return;
+    if (!showMobileSearchDrawer) return;
+    setShowMobileSearchDrawer(false);
+    setMobileSearchQuery("");
+    setMobileSearchDrawerOffsetY(0);
+  }, [isMobileViewport, showMobileSearchDrawer]);
+
+  useEffect(() => {
+    if (!showMobileSearchDrawer) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.requestAnimationFrame(() => {
+      mobileSearchInputRef.current?.focus();
+    });
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [showMobileSearchDrawer]);
 
   useEffect(() => {
     window.localStorage.setItem(DASHBOARD_THEME_STORAGE_KEY, dashboardThemeMode);
@@ -492,6 +543,122 @@ export default function DashboardLayout({
     normalizedTenantRole === "superadmin" ||
     normalizedTenantRole === "project_manager" ||
     normalizedTenantRole === "supervisor";
+  const openMobileSearchDrawer = () => {
+    if (!isMobileViewport) return;
+    setShowMobileSearchDrawer(true);
+  };
+  const closeMobileSearchDrawer = () => {
+    setShowMobileSearchDrawer(false);
+    setMobileSearchDrawerOffsetY(0);
+    mobileSearchTouchStartRef.current = null;
+  };
+  const handleMobileSearchTouchStart = (event) => {
+    if (!event.touches?.length) return;
+    mobileSearchTouchStartRef.current = event.touches[0].clientY;
+  };
+  const handleMobileSearchTouchMove = (event) => {
+    if (!event.touches?.length || mobileSearchTouchStartRef.current === null) return;
+    const deltaY = event.touches[0].clientY - mobileSearchTouchStartRef.current;
+    if (deltaY <= 0) {
+      setMobileSearchDrawerOffsetY(0);
+      return;
+    }
+    setMobileSearchDrawerOffsetY(Math.min(deltaY, 180));
+  };
+  const handleMobileSearchTouchEnd = () => {
+    const shouldClose = mobileSearchDrawerOffsetY > 84;
+    mobileSearchTouchStartRef.current = null;
+    setMobileSearchDrawerOffsetY(0);
+    if (shouldClose) {
+      closeMobileSearchDrawer();
+    }
+  };
+  const normalizedMobileSearchQuery = String(mobileSearchQuery || "").trim().toLowerCase();
+  const mobileSearchSections = [
+    {
+      key: "projects",
+      title: "Projects",
+      items: allowedPages.has("projects")
+        ? [
+            {
+              id: "search-projects",
+              label: "All projects",
+              description: "Open project workspace",
+              tokens: "projects project workspace",
+              onClick: () => setActivePage("projects"),
+            },
+          ]
+        : [],
+    },
+    {
+      key: "tasks",
+      title: "Tasks",
+      items: allowedPages.has("projects")
+        ? [
+            {
+              id: "search-project-tasks",
+              label: "Project tasks",
+              description: "Open tasks inside projects",
+              tokens: "tasks task tracker",
+              onClick: () => setActivePage("projects"),
+            },
+          ]
+        : [],
+    },
+    {
+      key: "members",
+      title: "Members",
+      items: allowedPages.has("members")
+        ? [
+            {
+              id: "search-members",
+              label: "Member directory",
+              description: "Open people workspace",
+              tokens: "members member people directory",
+              onClick: () => setActivePage("members"),
+            },
+          ]
+        : [],
+    },
+    {
+      key: "documents",
+      title: "Documents",
+      items: [
+        allowedPages.has("documents")
+          ? {
+              id: "search-finance-records",
+              label: "Finance records",
+              description: "Open record transactions",
+              tokens: "documents document records finance transactions",
+              onClick: () => setActivePage("documents"),
+            }
+          : null,
+        canManageWorkspace
+          ? {
+              id: "search-org-records",
+              label: "Organization records",
+              description: "Open organization settings records",
+              tokens: "documents document records organization settings",
+              onClick: () => openSettingsTab("organization-settings"),
+            }
+          : null,
+      ].filter(Boolean),
+    },
+  ];
+  const filteredMobileSearchSections = mobileSearchSections.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => {
+      if (!normalizedMobileSearchQuery) return true;
+      const haystack = `${item.label} ${item.description} ${item.tokens}`.toLowerCase();
+      return haystack.includes(normalizedMobileSearchQuery);
+    }),
+  }));
+  const mobileSearchHasResults = filteredMobileSearchSections.some((section) => section.items.length > 0);
+  const handleMobileSearchResultSelect = (item) => {
+    item?.onClick?.();
+    closeMobileSearchDrawer();
+    setMobileSearchQuery("");
+  };
   const canOpenAdminConsole = allowedPages.has("admin");
   const canInviteMembers = canManageWorkspace;
   const workspaceAppItems = [
@@ -583,7 +750,7 @@ export default function DashboardLayout({
 
   return (
     <div
-      className={`dashboard-layout${isDarkMode ? " is-dark" : ""}`}
+      className={`dashboard-layout${isDarkMode ? " is-dark" : ""}${isMobileViewport ? " is-mobile-nav-only" : ""}`}
       style={{ ...tenantTheme, "--dashboard-sidebar-width": sidebarWidth }}
     >
       {/* Sidebar */}
@@ -737,76 +904,194 @@ export default function DashboardLayout({
 
       {/* Main content */}
       <main className={`dashboard-main${isCollapsed ? " is-collapsed" : ""}`}>
-        <header className="dashboard-header">
-          <div className="dashboard-header-left">
-            <button
-              className="dashboard-menu-toggle"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              aria-label="Toggle menu"
-            >
-              <Icon name="menu" size={22} />
-            </button>
-            <div className="dashboard-header-title-block">
-              <span className="dashboard-header-kicker">{tenant?.name || "Workspace"}</span>
-              <h1>{pageTitle}</h1>
-            </div>
-          </div>
-          <div className="dashboard-header-search">
-            <Icon name="search" size={18} />
-            <input type="search" placeholder="Search for something" aria-label="Search dashboard" />
-          </div>
-          <div className="dashboard-header-actions">
-            <div className="dashboard-header-action-dock">
-              <button
-                className={`dashboard-icon-btn dashboard-theme-toggle${isDarkMode ? " is-dark" : ""}`}
-                type="button"
-                aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
-                aria-pressed={isDarkMode}
-                title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
-                onClick={() =>
-                  setDashboardThemeMode((prev) => (prev === "dark" ? "light" : "dark"))
-                }
-              >
-                <Icon name={isDarkMode ? "sun" : "moon"} size={18} />
-              </button>
-              <button
-                className={`dashboard-icon-btn${activePage === "settings" ? " active" : ""}`}
-                type="button"
-                aria-label="Settings"
-                onClick={() => openSettingsTab("my-settings")}
-              >
-                <Icon name="settings" size={18} />
-              </button>
-              <NotificationBell
-                tenantId={activeTenantId}
-                user={user}
-                setActivePage={setActivePage}
-                quietModeUntil={quietModeUntil}
-              />
-            </div>
-            <UserDropdown
-              user={user}
-              tenant={tenant}
-              tenantRole={normalizedTenantRole}
-              canInviteMembers={canInviteMembers}
-              canManageWorkspace={canManageWorkspace}
-              canOpenAdminConsole={canOpenAdminConsole}
-              themeMode={dashboardThemeMode}
-              onThemeModeChange={setDashboardThemeMode}
-              quietModeUntil={quietModeUntil}
-              onQuietModeUntilChange={setQuietModeUntil}
-              onOpenInviteModal={() => setShowInviteModal(true)}
-              onOpenProfileSettings={() => openSettingsTab("my-settings")}
-              onOpenWorkspaceSettings={() => openSettingsTab("organization-settings")}
-              onOpenAdminConsole={() => setActivePage("admin")}
-              onOpenNotifications={() => setActivePage("notifications")}
-              onSwitchWorkspace={() => navigate("/select-tenant")}
-              workspaceAppItems={workspaceAppItems}
-            />
-          </div>
+        <header className={`dashboard-header${isMobileViewport ? " is-mobile" : ""}`}>
+          {isMobileViewport ? (
+            <>
+              <div className="dashboard-mobile-header-row">
+                <UserDropdown
+                  user={user}
+                  tenant={tenant}
+                  tenantRole={normalizedTenantRole}
+                  canInviteMembers={canInviteMembers}
+                  canManageWorkspace={canManageWorkspace}
+                  canOpenAdminConsole={canOpenAdminConsole}
+                  themeMode={dashboardThemeMode}
+                  onThemeModeChange={setDashboardThemeMode}
+                  quietModeUntil={quietModeUntil}
+                  onQuietModeUntilChange={setQuietModeUntil}
+                  onOpenInviteModal={() => setShowInviteModal(true)}
+                  onOpenProfileSettings={() => openSettingsTab("my-settings")}
+                  onOpenWorkspaceSettings={() => openSettingsTab("organization-settings")}
+                  onOpenAdminConsole={() => setActivePage("admin")}
+                  onOpenNotifications={() => setActivePage("notifications")}
+                  onSwitchWorkspace={() => navigate("/select-tenant")}
+                  onOpenHelp={() => navigate("/resources")}
+                  workspaceAppItems={workspaceAppItems}
+                  isMobile={true}
+                />
+                <button
+                  type="button"
+                  className="dashboard-mobile-search-trigger"
+                  onClick={openMobileSearchDrawer}
+                  aria-label="Open global search"
+                >
+                  <Icon name="search" size={18} />
+                  <span>Search projects, members, documents</span>
+                </button>
+                <NotificationBell
+                  tenantId={activeTenantId}
+                  user={user}
+                  setActivePage={setActivePage}
+                  quietModeUntil={quietModeUntil}
+                  isMobile={true}
+                />
+              </div>
+              <div className="dashboard-mobile-title-row">{pageTitle}</div>
+            </>
+          ) : (
+            <>
+              <div className="dashboard-header-left">
+                <button
+                  className="dashboard-menu-toggle"
+                  onClick={() => {
+                    if (isMobileViewport) return;
+                    setSidebarOpen(!sidebarOpen);
+                  }}
+                  aria-label="Toggle menu"
+                  aria-hidden={isMobileViewport}
+                >
+                  <Icon name="menu" size={22} />
+                </button>
+                <div className="dashboard-header-title-block">
+                  <span className="dashboard-header-kicker">{tenant?.name || "Workspace"}</span>
+                  <h1>{pageTitle}</h1>
+                </div>
+              </div>
+              <div className="dashboard-header-search">
+                <Icon name="search" size={18} />
+                <input type="search" placeholder="Search for something" aria-label="Search dashboard" />
+              </div>
+              <div className="dashboard-header-actions">
+                <div className="dashboard-header-action-dock">
+                  <button
+                    className={`dashboard-icon-btn dashboard-theme-toggle${isDarkMode ? " is-dark" : ""}`}
+                    type="button"
+                    aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+                    aria-pressed={isDarkMode}
+                    title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+                    onClick={() =>
+                      setDashboardThemeMode((prev) => (prev === "dark" ? "light" : "dark"))
+                    }
+                  >
+                    <Icon name={isDarkMode ? "sun" : "moon"} size={18} />
+                  </button>
+                  <button
+                    className={`dashboard-icon-btn${activePage === "settings" ? " active" : ""}`}
+                    type="button"
+                    aria-label="Settings"
+                    onClick={() => openSettingsTab("my-settings")}
+                  >
+                    <Icon name="settings" size={18} />
+                  </button>
+                  <NotificationBell
+                    tenantId={activeTenantId}
+                    user={user}
+                    setActivePage={setActivePage}
+                    quietModeUntil={quietModeUntil}
+                    isMobile={false}
+                  />
+                </div>
+                <UserDropdown
+                  user={user}
+                  tenant={tenant}
+                  tenantRole={normalizedTenantRole}
+                  canInviteMembers={canInviteMembers}
+                  canManageWorkspace={canManageWorkspace}
+                  canOpenAdminConsole={canOpenAdminConsole}
+                  themeMode={dashboardThemeMode}
+                  onThemeModeChange={setDashboardThemeMode}
+                  quietModeUntil={quietModeUntil}
+                  onQuietModeUntilChange={setQuietModeUntil}
+                  onOpenInviteModal={() => setShowInviteModal(true)}
+                  onOpenProfileSettings={() => openSettingsTab("my-settings")}
+                  onOpenWorkspaceSettings={() => openSettingsTab("organization-settings")}
+                  onOpenAdminConsole={() => setActivePage("admin")}
+                  onOpenNotifications={() => setActivePage("notifications")}
+                  onSwitchWorkspace={() => navigate("/select-tenant")}
+                  onOpenHelp={() => navigate("/resources")}
+                  workspaceAppItems={workspaceAppItems}
+                  isMobile={false}
+                />
+              </div>
+            </>
+          )}
         </header>
         <section className="dashboard-content">{children}</section>
       </main>
+
+      {showMobileSearchDrawer && isMobileViewport ? (
+        <>
+          <button
+            type="button"
+            className="dashboard-mobile-drawer-backdrop"
+            aria-label="Close search"
+            onClick={closeMobileSearchDrawer}
+          />
+          <div
+            className="dashboard-mobile-search-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Global search"
+            style={{ transform: `translateY(${mobileSearchDrawerOffsetY}px)` }}
+            onTouchStart={handleMobileSearchTouchStart}
+            onTouchMove={handleMobileSearchTouchMove}
+            onTouchEnd={handleMobileSearchTouchEnd}
+          >
+            <div className="dashboard-mobile-search-handle" aria-hidden="true" />
+            <div className="dashboard-mobile-search-head">
+              <strong>Search</strong>
+              <button type="button" className="dashboard-mobile-search-close" onClick={closeMobileSearchDrawer}>
+                Close
+              </button>
+            </div>
+            <label className="dashboard-mobile-search-input">
+              <Icon name="search" size={18} />
+              <input
+                ref={mobileSearchInputRef}
+                type="search"
+                placeholder="Search projects, members, documents"
+                value={mobileSearchQuery}
+                onChange={(event) => setMobileSearchQuery(event.target.value)}
+              />
+            </label>
+            <div className="dashboard-mobile-search-results">
+              {filteredMobileSearchSections.map((section) => (
+                <section key={section.key} className="dashboard-mobile-search-group">
+                  <h3>{section.title}</h3>
+                  {section.items.length ? (
+                    section.items.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="dashboard-mobile-search-result"
+                        onClick={() => handleMobileSearchResultSelect(item)}
+                      >
+                        <strong>{item.label}</strong>
+                        <span>{item.description}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="dashboard-mobile-search-empty">No matches.</p>
+                  )}
+                </section>
+              ))}
+              {!mobileSearchHasResults ? (
+                <div className="dashboard-mobile-search-none">No results found for this query.</div>
+              ) : null}
+            </div>
+          </div>
+        </>
+      ) : null}
 
       {/* Invite Modal */}
       <DataModal
@@ -958,7 +1243,7 @@ export default function DashboardLayout({
       />
 
       {/* Overlay for mobile */}
-      {sidebarOpen && (
+      {sidebarOpen && !isMobileViewport && (
         <div className="dashboard-overlay" onClick={() => setSidebarOpen(false)} />
       )}
     </div>

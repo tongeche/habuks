@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "../icons.jsx";
@@ -120,10 +120,14 @@ function UserDropdown({
   onOpenAdminConsole,
   onOpenNotifications,
   onSwitchWorkspace,
+  onOpenHelp,
   workspaceAppItems = [],
+  isMobile = false,
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [portalReady, setPortalReady] = useState(false);
+  const [mobileDrawerOffsetY, setMobileDrawerOffsetY] = useState(0);
+  const mobileDrawerTouchStartRef = useRef(null);
   const navigate = useNavigate();
   const initials = useMemo(() => getInitials(user), [user]);
   const roleLabel = useMemo(() => formatRoleLabel(tenantRole || user?.role), [tenantRole, user?.role]);
@@ -141,6 +145,8 @@ function UserDropdown({
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
         setIsOpen(false);
+        setMobileDrawerOffsetY(0);
+        mobileDrawerTouchStartRef.current = null;
       }
     };
 
@@ -163,9 +169,39 @@ function UserDropdown({
     }
   };
 
-  const runAction = (callback) => {
+  const closeDrawer = () => {
     setIsOpen(false);
+    setMobileDrawerOffsetY(0);
+    mobileDrawerTouchStartRef.current = null;
+  };
+
+  const runAction = (callback) => {
+    closeDrawer();
     callback?.();
+  };
+
+  const handleMobileDrawerTouchStart = (event) => {
+    if (!event.touches?.length) return;
+    mobileDrawerTouchStartRef.current = event.touches[0].clientY;
+  };
+
+  const handleMobileDrawerTouchMove = (event) => {
+    if (!event.touches?.length || mobileDrawerTouchStartRef.current === null) return;
+    const deltaY = event.touches[0].clientY - mobileDrawerTouchStartRef.current;
+    if (deltaY <= 0) {
+      setMobileDrawerOffsetY(0);
+      return;
+    }
+    setMobileDrawerOffsetY(Math.min(deltaY, 180));
+  };
+
+  const handleMobileDrawerTouchEnd = () => {
+    const shouldClose = mobileDrawerOffsetY > 84;
+    mobileDrawerTouchStartRef.current = null;
+    setMobileDrawerOffsetY(0);
+    if (shouldClose) {
+      closeDrawer();
+    }
   };
 
   const quickActions = [
@@ -219,11 +255,46 @@ function UserDropdown({
     },
   ].filter(Boolean);
 
+  const mobileAccountActions = [
+    {
+      key: "profile",
+      label: "Profile",
+      onClick: () => runAction(onOpenProfileSettings),
+    },
+    {
+      key: "switch",
+      label: "Switch organization",
+      onClick: () => runAction(onSwitchWorkspace),
+    },
+    {
+      key: "settings",
+      label: "App settings",
+      onClick: () => runAction(onOpenWorkspaceSettings || onOpenProfileSettings),
+    },
+    {
+      key: "help",
+      label: "Help",
+      onClick: () => runAction(onOpenHelp),
+    },
+    {
+      key: "logout",
+      label: "Logout",
+      danger: true,
+      onClick: () => runAction(handleLogout),
+    },
+  ];
+
   return (
     <div className="user-dropdown">
       <button
         className={`user-dropdown-trigger${isOpen ? " is-open" : ""}${isDarkMode ? " is-dark" : ""}`}
-        onClick={() => setIsOpen((prev) => !prev)}
+        onClick={() => {
+          if (isOpen) {
+            closeDrawer();
+            return;
+          }
+          setIsOpen(true);
+        }}
         aria-label="Open account drawer"
         aria-expanded={isOpen}
         type="button"
@@ -238,158 +309,198 @@ function UserDropdown({
                 type="button"
                 className={`user-dropdown-backdrop${isDarkMode ? " is-dark" : ""}`}
                 aria-label="Close account drawer"
-                onClick={() => setIsOpen(false)}
+                onClick={closeDrawer}
               />
               <aside
-                className={`user-drawer${isDarkMode ? " is-dark" : ""}`}
-                style={drawerThemeVars}
+                className={`user-drawer${isDarkMode ? " is-dark" : ""}${isMobile ? " is-mobile" : ""}`}
+                style={{
+                  ...drawerThemeVars,
+                  ...(isMobile ? { transform: `translateY(${mobileDrawerOffsetY}px)` } : {}),
+                }}
                 role="dialog"
                 aria-modal="true"
                 aria-label="Account drawer"
+                onTouchStart={isMobile ? handleMobileDrawerTouchStart : undefined}
+                onTouchMove={isMobile ? handleMobileDrawerTouchMove : undefined}
+                onTouchEnd={isMobile ? handleMobileDrawerTouchEnd : undefined}
               >
-                <div className="user-drawer-header">
-                  <button
-                    type="button"
-                    className="user-drawer-close"
-                    onClick={() => setIsOpen(false)}
-                    aria-label="Close account drawer"
-                  >
-                    ×
-                  </button>
-                  <div className="user-drawer-profile">
-                    <div className="user-drawer-avatar-wrap">
-                      <div className="user-drawer-avatar">{initials}</div>
-                      <span className="user-drawer-presence" aria-hidden="true" />
+                {isMobile ? (
+                  <>
+                    <div className="user-drawer-header user-drawer-header--mobile">
+                      <div className="dashboard-mobile-search-handle" aria-hidden="true" />
+                      <button
+                        type="button"
+                        className="user-drawer-close"
+                        onClick={closeDrawer}
+                        aria-label="Close account drawer"
+                      >
+                        ×
+                      </button>
+                      <div className="user-drawer-title-block">
+                        <strong>Account</strong>
+                        <span>{user?.email || user?.name || "Workspace member"}</span>
+                      </div>
                     </div>
-                    <strong>{user?.name || "Member"}</strong>
-                    <span>{user?.email || ""}</span>
-                    <div className="user-drawer-badges">
-                      <span>{roleLabel}</span>
-                      <span>{tenant?.name || "Current workspace"}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="user-drawer-body">
-                  <section className="user-drawer-section">
-                    <div className="user-drawer-section-head">
-                      <small>Quick Actions</small>
-                      <span>Shortcuts you will actually use.</span>
-                    </div>
-                    <div className="user-drawer-action-grid">
-                      {quickActions.map((action) => (
+                    <div className="user-drawer-mobile-actions">
+                      {mobileAccountActions.map((action) => (
                         <button
-                          type="button"
                           key={action.key}
-                          className="user-drawer-action-card"
+                          type="button"
+                          className={`user-drawer-mobile-option${action.danger ? " is-danger" : ""}`}
                           onClick={action.onClick}
                         >
-                          <span className="user-drawer-action-icon">
-                            <Icon name={action.icon} size={18} />
-                          </span>
-                          <span className="user-drawer-action-copy">
-                            <strong>{action.title}</strong>
-                            <small>{action.description}</small>
-                          </span>
+                          {action.label}
                         </button>
                       ))}
                     </div>
-                  </section>
-
-                  <section className="user-drawer-section">
-                    <div className="user-drawer-section-head">
-                      <small>Workspace Mode</small>
-                      <span>Control the way this dashboard feels.</span>
-                    </div>
-                    <div className="user-drawer-theme-toggle">
+                  </>
+                ) : (
+                  <>
+                    <div className="user-drawer-header">
                       <button
                         type="button"
-                        className={`user-drawer-theme-chip${themeMode === "light" ? " is-active" : ""}`}
-                        onClick={() => onThemeModeChange?.("light")}
+                        className="user-drawer-close"
+                        onClick={closeDrawer}
+                        aria-label="Close account drawer"
                       >
-                        <Icon name="sun" size={16} />
-                        <span>Light</span>
+                        ×
                       </button>
-                      <button
-                        type="button"
-                        className={`user-drawer-theme-chip${themeMode === "dark" ? " is-active" : ""}`}
-                        onClick={() => onThemeModeChange?.("dark")}
-                      >
-                        <Icon name="moon" size={16} />
-                        <span>Dark</span>
-                      </button>
-                    </div>
-                    <label className="user-drawer-field">
-                      <span>Pause notifications</span>
-                      <select
-                        value={quietModeValue}
-                        onChange={(event) =>
-                          onQuietModeUntilChange?.(resolveQuietModeUntil(event.target.value))
-                        }
-                      >
-                        {QUIET_MODE_OPTIONS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <p className="user-drawer-help">{formatQuietModeHint(quietModeUntil)}</p>
-                  </section>
-
-                  <section className="user-drawer-section">
-                    <div className="user-drawer-section-head">
-                      <small>Current Workspace</small>
-                      <span>Keep the important context visible.</span>
-                    </div>
-                    <div className="user-drawer-workspace-card">
-                      <strong>{tenant?.name || "Workspace"}</strong>
-                      <p>
-                        {tenant?.tagline ||
-                          "Manage your team, meetings, documents, and reporting from one place."}
-                      </p>
-                      <div className="user-drawer-workspace-meta">
-                        <span>{roleLabel}</span>
-                        <span>{themeMode === "dark" ? "Dark mode" : "Light mode"}</span>
+                      <div className="user-drawer-profile">
+                        <div className="user-drawer-avatar-wrap">
+                          <div className="user-drawer-avatar">{initials}</div>
+                          <span className="user-drawer-presence" aria-hidden="true" />
+                        </div>
+                        <strong>{user?.name || "Member"}</strong>
+                        <span>{user?.email || ""}</span>
+                        <div className="user-drawer-badges">
+                          <span>{roleLabel}</span>
+                          <span>{tenant?.name || "Current workspace"}</span>
+                        </div>
                       </div>
                     </div>
-                  </section>
 
-                  {workspaceAppItems.length ? (
-                    <section className="user-drawer-section">
-                      <div className="user-drawer-section-head">
-                        <small>Workspace Apps</small>
-                        <span>Jump into the core tools in this organization.</span>
-                      </div>
-                      <div className="user-drawer-app-grid">
-                        {workspaceAppItems.map((item) => (
+                    <div className="user-drawer-body">
+                      <section className="user-drawer-section">
+                        <div className="user-drawer-section-head">
+                          <small>Quick Actions</small>
+                          <span>Shortcuts you will actually use.</span>
+                        </div>
+                        <div className="user-drawer-action-grid">
+                          {quickActions.map((action) => (
+                            <button
+                              type="button"
+                              key={action.key}
+                              className="user-drawer-action-card"
+                              onClick={action.onClick}
+                            >
+                              <span className="user-drawer-action-icon">
+                                <Icon name={action.icon} size={18} />
+                              </span>
+                              <span className="user-drawer-action-copy">
+                                <strong>{action.title}</strong>
+                                <small>{action.description}</small>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </section>
+
+                      <section className="user-drawer-section">
+                        <div className="user-drawer-section-head">
+                          <small>Workspace Mode</small>
+                          <span>Control the way this dashboard feels.</span>
+                        </div>
+                        <div className="user-drawer-theme-toggle">
                           <button
-                            key={item.key}
                             type="button"
-                            className={`user-drawer-app-card tone-${item.tone || "blue"}`}
-                            onClick={() => runAction(item.onClick)}
+                            className={`user-drawer-theme-chip${themeMode === "light" ? " is-active" : ""}`}
+                            onClick={() => onThemeModeChange?.("light")}
                           >
-                            <span className={`user-drawer-app-icon tone-${item.tone || "blue"}`}>
-                              <Icon name={item.icon} size={20} />
-                            </span>
-                            <span className="user-drawer-app-label">{item.label}</span>
+                            <Icon name="sun" size={16} />
+                            <span>Light</span>
                           </button>
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-                </div>
+                          <button
+                            type="button"
+                            className={`user-drawer-theme-chip${themeMode === "dark" ? " is-active" : ""}`}
+                            onClick={() => onThemeModeChange?.("dark")}
+                          >
+                            <Icon name="moon" size={16} />
+                            <span>Dark</span>
+                          </button>
+                        </div>
+                        <label className="user-drawer-field">
+                          <span>Pause notifications</span>
+                          <select
+                            value={quietModeValue}
+                            onChange={(event) =>
+                              onQuietModeUntilChange?.(resolveQuietModeUntil(event.target.value))
+                            }
+                          >
+                            {QUIET_MODE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <p className="user-drawer-help">{formatQuietModeHint(quietModeUntil)}</p>
+                      </section>
 
-                <div className="user-drawer-footer">
-                  <button
-                    type="button"
-                    className="user-drawer-logout"
-                    onClick={() => runAction(handleLogout)}
-                  >
-                    <Icon name="logout" size={16} />
-                    <span>Sign out</span>
-                  </button>
-                </div>
+                      <section className="user-drawer-section">
+                        <div className="user-drawer-section-head">
+                          <small>Current Workspace</small>
+                          <span>Keep the important context visible.</span>
+                        </div>
+                        <div className="user-drawer-workspace-card">
+                          <strong>{tenant?.name || "Workspace"}</strong>
+                          <p>
+                            {tenant?.tagline ||
+                              "Manage your team, meetings, documents, and reporting from one place."}
+                          </p>
+                          <div className="user-drawer-workspace-meta">
+                            <span>{roleLabel}</span>
+                            <span>{themeMode === "dark" ? "Dark mode" : "Light mode"}</span>
+                          </div>
+                        </div>
+                      </section>
+
+                      {workspaceAppItems.length ? (
+                        <section className="user-drawer-section">
+                          <div className="user-drawer-section-head">
+                            <small>Workspace Apps</small>
+                            <span>Jump into the core tools in this organization.</span>
+                          </div>
+                          <div className="user-drawer-app-grid">
+                            {workspaceAppItems.map((item) => (
+                              <button
+                                key={item.key}
+                                type="button"
+                                className={`user-drawer-app-card tone-${item.tone || "blue"}`}
+                                onClick={() => runAction(item.onClick)}
+                              >
+                                <span className={`user-drawer-app-icon tone-${item.tone || "blue"}`}>
+                                  <Icon name={item.icon} size={20} />
+                                </span>
+                                <span className="user-drawer-app-label">{item.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null}
+                    </div>
+
+                    <div className="user-drawer-footer">
+                      <button
+                        type="button"
+                        className="user-drawer-logout"
+                        onClick={() => runAction(handleLogout)}
+                      >
+                        <Icon name="logout" size={16} />
+                        <span>Sign out</span>
+                      </button>
+                    </div>
+                  </>
+                )}
               </aside>
             </>,
             document.body

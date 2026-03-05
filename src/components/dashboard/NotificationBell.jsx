@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../icons.jsx";
 import {
   getMemberNotifications,
@@ -17,15 +18,28 @@ import {
   REMINDER_REFRESH_INTERVAL_MS,
 } from "./notificationMeta.js";
 
-export default function NotificationBell({ tenantId, user, setActivePage, quietModeUntil = null }) {
+export default function NotificationBell({
+  tenantId,
+  user,
+  setActivePage,
+  quietModeUntil = null,
+  isMobile = false,
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
   const [markingAll, setMarkingAll] = useState(false);
+  const [portalReady, setPortalReady] = useState(false);
+  const [mobileDrawerOffsetY, setMobileDrawerOffsetY] = useState(0);
   const panelRef = useRef(null);
+  const mobileDrawerTouchStartRef = useRef(null);
   const quietModeActive = Number.isFinite(Number(quietModeUntil)) && Number(quietModeUntil) > Date.now();
+
+  useEffect(() => {
+    setPortalReady(true);
+  }, []);
 
   const loadNotifications = useCallback(async () => {
     if (!tenantId || !user?.id) {
@@ -101,10 +115,19 @@ export default function NotificationBell({ tenantId, user, setActivePage, quietM
       }
     };
 
-    if (!isOpen) return undefined;
+    if (!isOpen || isMobile) return undefined;
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isOpen]);
+  }, [isMobile, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !isMobile) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobile, isOpen]);
 
   const unreadCount = useMemo(
     () => notifications.filter((item) => String(item?.status || "unread").toLowerCase() === "unread").length,
@@ -115,6 +138,32 @@ export default function NotificationBell({ tenantId, user, setActivePage, quietM
     () => groupNotificationsByDay(notifications),
     [notifications]
   );
+  const closePanel = () => {
+    setIsOpen(false);
+    setMobileDrawerOffsetY(0);
+    mobileDrawerTouchStartRef.current = null;
+  };
+  const handleMobileDrawerTouchStart = (event) => {
+    if (!event.touches?.length) return;
+    mobileDrawerTouchStartRef.current = event.touches[0].clientY;
+  };
+  const handleMobileDrawerTouchMove = (event) => {
+    if (!event.touches?.length || mobileDrawerTouchStartRef.current === null) return;
+    const deltaY = event.touches[0].clientY - mobileDrawerTouchStartRef.current;
+    if (deltaY <= 0) {
+      setMobileDrawerOffsetY(0);
+      return;
+    }
+    setMobileDrawerOffsetY(Math.min(deltaY, 180));
+  };
+  const handleMobileDrawerTouchEnd = () => {
+    const shouldClose = mobileDrawerOffsetY > 84;
+    mobileDrawerTouchStartRef.current = null;
+    setMobileDrawerOffsetY(0);
+    if (shouldClose) {
+      closePanel();
+    }
+  };
 
   const handleToggle = async () => {
     const nextOpen = !isOpen;
@@ -152,7 +201,7 @@ export default function NotificationBell({ tenantId, user, setActivePage, quietM
     if (targetPage) {
       setActivePage(targetPage);
     }
-    setIsOpen(false);
+    closePanel();
   };
 
   const handleMarkAllRead = async () => {
@@ -178,8 +227,101 @@ export default function NotificationBell({ tenantId, user, setActivePage, quietM
 
   const handleViewAll = () => {
     setActivePage("notifications");
-    setIsOpen(false);
+    closePanel();
   };
+
+  const panelContent = (
+    <>
+      <div className="dashboard-notification-panel-header">
+        <div className="dashboard-notification-panel-heading">
+          <strong>Notifications</strong>
+          <span>Tasks, meetings, and workspace updates</span>
+        </div>
+        <div className="dashboard-notification-panel-actions">
+          <span className="dashboard-notification-panel-count">
+            {quietModeActive
+              ? "Quiet mode active"
+              : unreadCount
+                ? `${unreadCount} unread`
+                : "All caught up"}
+          </span>
+          <button
+            type="button"
+            className="dashboard-notification-mark-all"
+            onClick={handleMarkAllRead}
+            disabled={!unreadCount || markingAll}
+          >
+            {markingAll ? "Working..." : "Mark all read"}
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="dashboard-notification-empty">Loading notifications...</div>
+      ) : error ? (
+        <div className="dashboard-notification-empty">{error}</div>
+      ) : notifications.length ? (
+        <div className="dashboard-notification-list">
+          {notificationSections.map((section) => (
+            <section className="dashboard-notification-section" key={section.key}>
+              <div className="dashboard-notification-section-label">{section.label}</div>
+              <div className="dashboard-notification-section-items">
+                {section.items.map((notification) => {
+                  const notificationId = String(notification?.id || "");
+                  const notificationType = getNotificationTypeKey(notification);
+                  const notificationGroup = getNotificationGroupKey(notification);
+                  const isUnread =
+                    String(notification?.status || "unread").trim().toLowerCase() === "unread";
+                  const iconName = NOTIFICATION_ICON_BY_TYPE[notificationType] || "bell";
+                  return (
+                    <button
+                      type="button"
+                      key={notificationId || `${notificationType}-${notification?.created_at || ""}`}
+                      className={`dashboard-notification-item${isUnread ? " is-unread" : ""}`}
+                      onClick={() => handleNotificationClick(notification)}
+                      disabled={busyId === notificationId}
+                    >
+                      <span className="dashboard-notification-item-rail" aria-hidden="true">
+                        <span className={`dashboard-notification-item-dot is-${notificationGroup}`} />
+                        <span className={`dashboard-notification-item-icon is-${notificationGroup}`}>
+                          <Icon name={iconName} size={16} />
+                        </span>
+                      </span>
+                      <span className="dashboard-notification-item-copy">
+                        <span className="dashboard-notification-item-head">
+                          <span className="dashboard-notification-item-tags">
+                            <em className={`dashboard-notification-item-kind is-${notificationGroup}`}>
+                              {getNotificationGroupLabel(notification)}
+                            </em>
+                            <small>{formatRelativeNotificationTime(notification?.created_at)}</small>
+                          </span>
+                          {isUnread ? <i className="dashboard-notification-item-unread" /> : null}
+                        </span>
+                        <strong>{notification?.title || "Notification"}</strong>
+                        {notification?.body ? <span>{notification.body}</span> : null}
+                        <span className="dashboard-notification-item-meta">
+                          {notification?.action_label || "Open"}
+                          {isUnread ? <em>New</em> : null}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <div className="dashboard-notification-empty">No reminders yet.</div>
+      )}
+
+      <div className="dashboard-notification-panel-footer">
+        <button type="button" className="dashboard-notification-view-all" onClick={handleViewAll}>
+          Open full inbox
+        </button>
+      </div>
+    </>
+  );
 
   return (
     <div className="dashboard-notification-bell" ref={panelRef}>
@@ -198,98 +340,34 @@ export default function NotificationBell({ tenantId, user, setActivePage, quietM
         ) : null}
       </button>
 
-      {isOpen ? (
-        <div className="dashboard-notification-panel">
-          <div className="dashboard-notification-panel-header">
-            <div className="dashboard-notification-panel-heading">
-              <strong>Notifications</strong>
-              <span>Tasks, meetings, and workspace updates</span>
-            </div>
-            <div className="dashboard-notification-panel-actions">
-              <span className="dashboard-notification-panel-count">
-                {quietModeActive
-                  ? "Quiet mode active"
-                  : unreadCount
-                    ? `${unreadCount} unread`
-                    : "All caught up"}
-              </span>
-              <button
-                type="button"
-                className="dashboard-notification-mark-all"
-                onClick={handleMarkAllRead}
-                disabled={!unreadCount || markingAll}
-              >
-                {markingAll ? "Working..." : "Mark all read"}
-              </button>
-            </div>
-          </div>
-
-          {loading ? (
-            <div className="dashboard-notification-empty">Loading notifications...</div>
-          ) : error ? (
-            <div className="dashboard-notification-empty">{error}</div>
-          ) : notifications.length ? (
-            <div className="dashboard-notification-list">
-              {notificationSections.map((section) => (
-                <section className="dashboard-notification-section" key={section.key}>
-                  <div className="dashboard-notification-section-label">{section.label}</div>
-                  <div className="dashboard-notification-section-items">
-                    {section.items.map((notification) => {
-                      const notificationId = String(notification?.id || "");
-                      const notificationType = getNotificationTypeKey(notification);
-                      const notificationGroup = getNotificationGroupKey(notification);
-                      const isUnread =
-                        String(notification?.status || "unread").trim().toLowerCase() === "unread";
-                      const iconName = NOTIFICATION_ICON_BY_TYPE[notificationType] || "bell";
-                      return (
-                        <button
-                          type="button"
-                          key={notificationId || `${notificationType}-${notification?.created_at || ""}`}
-                          className={`dashboard-notification-item${isUnread ? " is-unread" : ""}`}
-                          onClick={() => handleNotificationClick(notification)}
-                          disabled={busyId === notificationId}
-                        >
-                          <span className="dashboard-notification-item-rail" aria-hidden="true">
-                            <span className={`dashboard-notification-item-dot is-${notificationGroup}`} />
-                            <span className={`dashboard-notification-item-icon is-${notificationGroup}`}>
-                              <Icon name={iconName} size={16} />
-                            </span>
-                          </span>
-                          <span className="dashboard-notification-item-copy">
-                            <span className="dashboard-notification-item-head">
-                              <span className="dashboard-notification-item-tags">
-                                <em className={`dashboard-notification-item-kind is-${notificationGroup}`}>
-                                  {getNotificationGroupLabel(notification)}
-                                </em>
-                                <small>{formatRelativeNotificationTime(notification?.created_at)}</small>
-                              </span>
-                              {isUnread ? <i className="dashboard-notification-item-unread" /> : null}
-                            </span>
-                            <strong>{notification?.title || "Notification"}</strong>
-                            {notification?.body ? <span>{notification.body}</span> : null}
-                            <span className="dashboard-notification-item-meta">
-                              {notification?.action_label || "Open"}
-                              {isUnread ? <em>New</em> : null}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
-            </div>
-          ) : (
-            <div className="dashboard-notification-empty">No reminders yet.</div>
-          )}
-
-          <div className="dashboard-notification-panel-footer">
-            <button type="button" className="dashboard-notification-view-all" onClick={handleViewAll}>
-              Open full inbox
-            </button>
-          </div>
-        </div>
-      ) : null}
+      {isOpen
+        ? isMobile && portalReady
+          ? createPortal(
+              <>
+                <button
+                  type="button"
+                  className="dashboard-mobile-drawer-backdrop"
+                  aria-label="Close notifications"
+                  onClick={closePanel}
+                />
+                <div
+                  className="dashboard-notification-sheet-wrap"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Notifications"
+                  style={{ transform: `translateY(${mobileDrawerOffsetY}px)` }}
+                  onTouchStart={handleMobileDrawerTouchStart}
+                  onTouchMove={handleMobileDrawerTouchMove}
+                  onTouchEnd={handleMobileDrawerTouchEnd}
+                >
+                  <div className="dashboard-mobile-search-handle" aria-hidden="true" />
+                  <div className="dashboard-notification-sheet">{panelContent}</div>
+                </div>
+              </>,
+              document.body
+            )
+          : <div className="dashboard-notification-panel">{panelContent}</div>
+        : null}
     </div>
   );
 }

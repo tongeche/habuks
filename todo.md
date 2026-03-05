@@ -1,53 +1,416 @@
-# Todo
+# HABUKS – Mobile Navigation System
 
-## Pages To Hide
-- `/volunteer` (legacy community recruitment flow)
-- `/projects/:projectCode` (legacy public project detail view)
+## Objective
 
-## Dev Notes
-```sql
-delete from tenant_members
-where member_id = (select id from members where lower(email)=lower('tongeche@gmail.com'));
-```
+Define a consistent navigation system for the mobile application.
 
-- TODO: Implement newsletter unsubscribe flow for the footer signup link.
+Goals:
+- Eliminate desktop-style navigation patterns
+- Provide predictable movement between modules
+- Reduce cognitive load
+- Support contextual project workspaces
+- Maintain one primary action per screen
 
-- TODO: Build a proper document generator pipeline for emitted project docs.
-  Current PDF engine is lightweight and single-page style; long sections are truncated to fit.
-  Upgrade later to multi-page branded PDFs (or DOCX/PDF server-side via Supabase Edge Function).
-- TODO: Add a custom date-range mode (start/end) in project Overview charts for donor/reporting use cases.
-- Implemented 2026-02-28: Uploaded phase 1 global organization templates with
-  `npm run templates:upload`, and verified the batch updated `public.organization_templates.file_path`
-  for `activity-work-plan-template`, `budget-expense-tracker-template`, `cbo-constitution-template`,
-  `meeting-minutes-template`, `monthly-financial-report-template`, `procurement-request-template`,
-  and `project-presentation-template`.
-- TODO: Remove temporary template uploader/staging artifacts after full rollout:
-  `scripts/upload-organization-templates.mjs` and local staging files under
-  `template-uploads/organization-templates/`.
-  
-- Implemented full dashboard Notifications page on 2026-02-28 so users can browse
-  older inbox items beyond the bell dropdown.
-- Implemented phase 3 admin watchlist notifications on 2026-02-28 for pending invites,
-  overdue tenant tasks, and meetings waiting for finalized minutes.
-- Applied `supabase/migration_035_tenant_admin_policy.sql` via pooler on 2026-02-19.
-- Added `supabase/migration_038_tenant_site_templates.sql` for shared tenant website templates.
+The navigation system consists of:
 
-Fixed 2026-02-28: Organization Settings now uses the tenant-scoped role in the dashboard, so tenant admins/supervisors see the org settings tab correctly on desktop and mobile. The settings shell also waits for tenant context before mounting the organization workspace, which avoids the false "Tenant context is missing" load error while the dashboard is still resolving the active workspace.
+1. Global Header
+2. Bottom Navigation
+3. Floating Action Button (FAB)
+4. Bottom Drawers for secondary actions
+5. Context Scoping (Project vs Organization)
 
-Fixed 2026-02-28: The dashboard bell now receives the real tenant id again, so unread counts and the notification panel load correctly instead of always showing "All caught up."
+---
 
-TODO: Prepare the next organization template batch by adding
-  `partner-donor-register-template.xlsx` and `member-attendance-register-template.xlsx` to
-  `template-uploads/organization-templates/`, then decide whether the deferred
-  `monthly-financial-report-template.xlsx` needs its own template key before upload.
+# 1. Global Navigation Layers
 
+Mobile navigation is structured in 3 layers.
 
-//TODO #5
-Description: Mobile People page with a darkened overlay. The floating “+” button at the bottom right is highlighted with a soft glow. A centered rounded modal appears with a short title (“Invite new members”), a brief explanation, a primary “Got it” button, a step indicator (1 / 2 with dots), and a “Skip” option. Background content is blurred and inactive.
-// Implement first-time user tour on People page.
-// - After 2 seconds on initial page load, show onboarding modal.
-// - Dim and blur background.
-// - Highlight floating "+" button with spotlight effect.
-// - Modal should include: title, short description, primary action button, step indicator, and skip option.
-// - Persist completion state per user (do not show again after completed or dismissed).
-// - Only trigger for admins.
+Layer 1 – Global navigation  
+Layer 2 – Section navigation  
+Layer 3 – Context actions
+
+---
+
+## Layer 1 – Global Navigation
+
+Controlled by **Bottom Navigation**.
+
+Accessible from anywhere.
+
+Modules:
+
+Home  
+Projects  
+Finance  
+People  
+More
+
+These represent the primary areas of the app.
+
+---
+
+## Layer 2 – Section Navigation
+
+Occurs within modules.
+
+Examples:
+
+Projects → Project list → Project detail  
+Finance → Contributions / Expenses / Transactions  
+Settings → Members / Templates / Records
+
+Section navigation always uses:
+
+- full screen transitions
+- back arrow navigation
+
+Never nested tabs inside mobile settings.
+
+---
+
+## Layer 3 – Context Actions
+
+Actions related to the current screen.
+
+Examples:
+
+Add project  
+Upload document  
+Generate document  
+Add member
+
+These are triggered through:
+
+Floating Action Button (FAB)
+
+or
+
+Bottom drawer actions.
+
+---
+
+# 2. Bottom Navigation
+
+Located at the bottom of the screen.
+
+-------------------------------------------------
+Home | Projects | Finance | People | More
+-------------------------------------------------
+
+Maximum 5 items.
+
+Icons + labels.
+
+---
+
+## 2.1 Home
+
+Purpose:
+Workspace overview.
+
+Displays:
+
+Hero project  
+Upcoming activities  
+Recent activity  
+
+No FAB.
+
+---
+
+## 2.2 Projects
+
+Purpose:
+Project management.
+
+Displays:
+
+Project list.
+
+Tap project → Project detail.
+
+FAB action:
+
++ New Project
+
+---
+
+## 2.3 Finance
+
+Purpose:
+Financial tracking.
+
+Includes:
+
+Contributions  
+Expenses  
+Transactions  
+
+FAB action:
+
++ Record
+
+---
+
+## 2.4 People
+
+Purpose:
+Member management.
+
+Displays:
+
+Members list.
+
+FAB action:
+
++ Add Member
+
+---
+
+## 2.5 More
+
+Purpose:
+Access less frequently used modules.
+
+Contains:
+
+Organization settings  
+Templates  
+Records  
+Partners  
+Help  
+App settings
+
+---
+
+# 3. Floating Action Button (FAB)
+
+Each section has **one primary action**.
+
+Rules:
+
+- Only one FAB visible at a time
+- Always bottom-right
+- Circular button
+- Primary color
+
+---
+
+## Section FAB Map
+
+Home → none
+
+Projects → + New Project
+
+Finance → + Record Transaction
+
+People → + Add Member
+
+Documents → + Add Document
+
+Templates → + Create Template
+
+Partners → + Add Partner
+
+---
+
+## FAB Interaction
+
+Tap FAB → bottom drawer.
+
+Example:
+
+Add Document:
+
+Upload file  
+Generate from template
+
+Example:
+
+Add Member:
+
+Add manually  
+Invite by email  
+Import CSV
+
+---
+
+# 4. Bottom Drawer Pattern
+
+Bottom drawers are used for:
+
+- Action selection
+- Quick configuration
+- Secondary menus
+
+Used instead of modals or navigation pushes.
+
+---
+
+## Drawer Behavior
+
+Slides from bottom.
+
+Max height:
+60–70% screen.
+
+Dismiss:
+
+Swipe down  
+Tap outside
+
+---
+
+## Drawer Examples
+
+Account drawer (avatar tap)
+
+Search drawer
+
+Notification drawer
+
+FAB action drawers
+
+Project action drawer
+
+---
+
+# 5. Context Scoping
+
+The system supports **context switching**.
+
+Two scopes exist:
+
+Organization scope  
+Project scope
+
+---
+
+## Organization Scope
+
+Used for:
+
+Members  
+Records  
+Templates  
+Partners  
+Organization defaults
+
+These apply globally.
+
+---
+
+## Project Scope
+
+Activated when user enters a project.
+
+Project navigation contains:
+
+Overview  
+Expenses  
+Documents  
+Tasks  
+Notes
+
+All data automatically filtered by project.
+
+---
+
+# 6. Navigation Principles
+
+The mobile navigation system follows strict rules.
+
+---
+
+## Rule 1
+
+Maximum **one primary action per screen**.
+
+---
+
+## Rule 2
+
+Avoid multiple navigation systems.
+
+No:
+
+Sidebar + bottom navigation.
+
+---
+
+## Rule 3
+
+Avoid dashboard analytics in configuration screens.
+
+Settings should not look like dashboards.
+
+---
+
+## Rule 4
+
+Actions must be discoverable.
+
+If action frequency > weekly → FAB.
+
+If action frequency < monthly → inside settings.
+
+---
+
+## Rule 5
+
+Do not mix tabs and pills.
+
+Use:
+
+Full screen navigation  
+OR segmented tabs
+
+Never both.
+
+---
+
+# 7. Navigation Hierarchy Example
+
+Example flow:
+
+Home  
+→ Projects  
+→ Project Detail  
+→ Documents  
+→ Generate Document
+
+Back navigation returns step-by-step.
+
+No deep modal stacks.
+
+---
+
+# 8. Mobile Design Constraints
+
+Touch targets ≥ 44px.
+
+Icons 24px.
+
+Bottom navigation height 56px.
+
+FAB offset from bottom nav:
+
+16px.
+
+---
+
+# 9. Accessibility
+
+Ensure:
+
+Keyboard accessible search.
+
+Large tap targets.
+
+Readable contrast.
+
+Drawer dismiss gesture available.
+
+---
+
+# End Spec

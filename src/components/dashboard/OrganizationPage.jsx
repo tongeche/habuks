@@ -45,7 +45,7 @@ import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
 const ORG_TABS = [
   { key: "overview", label: "Overview" },
   { key: "members", label: "Members" },
-  { key: "documents", label: "Documents" },
+  { key: "documents", label: "Records" },
   { key: "activities", label: "Activities" },
   { key: "partners", label: "Partners" },
   { key: "templates", label: "Templates" },
@@ -57,6 +57,7 @@ const ORG_EDITOR_STEPS = [
   { key: "web", label: "Web", note: "Programs and visibility. Other sections auto-sync." },
   { key: "media", label: "Media", note: "Website images from projects or uploads." },
 ];
+const ORGANIZATION_MOBILE_MEDIA_QUERY = "(max-width: 768px)";
 
 const PARTNER_KIND_OPTIONS = [
   "Partner",
@@ -905,7 +906,7 @@ const getDocumentName = (document) => {
     String(document?.name || "").trim() ||
     String(document?.title || "").trim() ||
     String(document?.file_name || "").trim() ||
-    "Untitled document"
+    "Untitled record"
   );
 };
 
@@ -1021,6 +1022,10 @@ const toDisplayLabel = (value, fallback = "Unknown") => {
 function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePage }) {
   const { currencyCode } = useTenantCurrency();
   const [activeTab, setActiveTab] = useState("overview");
+  const [isMobileOrganizationViewport, setIsMobileOrganizationViewport] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia(ORGANIZATION_MOBILE_MEDIA_QUERY).matches : false
+  );
+  const [showRecordsActionSheet, setShowRecordsActionSheet] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -1168,6 +1173,29 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     if (!tenant) return;
     setTenantRecord(tenant);
   }, [tenant]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const mediaQuery = window.matchMedia(ORGANIZATION_MOBILE_MEDIA_QUERY);
+    const applyMediaState = () => {
+      setIsMobileOrganizationViewport(mediaQuery.matches);
+    };
+    applyMediaState();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", applyMediaState);
+      return () => mediaQuery.removeEventListener("change", applyMediaState);
+    }
+    mediaQuery.addListener(applyMediaState);
+    return () => mediaQuery.removeListener(applyMediaState);
+  }, []);
+
+  useEffect(() => {
+    if (!showRecordsActionSheet) return;
+    if (isMobileOrganizationViewport && activeTab === "documents") return;
+    setShowRecordsActionSheet(false);
+  }, [activeTab, isMobileOrganizationViewport, showRecordsActionSheet]);
 
   const loadWorkspace = useCallback(
     async ({ silent = false } = {}) => {
@@ -2095,7 +2123,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     const files = Array.from(input?.files || []);
     if (!files.length) return;
     if (!tenantId) {
-      setOrganizationDocumentsError("Tenant context is missing. Cannot upload documents.");
+      setOrganizationDocumentsError("Tenant context is missing. Cannot upload records.");
       if (input) input.value = "";
       return;
     }
@@ -2153,13 +2181,13 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       if (failureCount > 0) {
         setNotice({
           type: "warning",
-          message: `Uploaded ${successCount} document(s). ${failureCount} document(s) failed.`,
+          message: `Uploaded ${successCount} record(s). ${failureCount} record(s) failed.`,
         });
         setOrganizationDocumentsError(uploadErrors.join(" "));
       } else {
         setNotice({
           type: "success",
-          message: `${successCount} document(s) uploaded successfully.`,
+          message: `${successCount} record(s) uploaded successfully.`,
         });
       }
     } finally {
@@ -2187,18 +2215,18 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const handleConfirmRenameOrganizationDocument = async (event) => {
     event.preventDefault();
     if (selectedDocumentIds.length !== 1) {
-      setOrganizationDocumentRenameError("Select one document to rename.");
+      setOrganizationDocumentRenameError("Select one record to rename.");
       return;
     }
 
     const documentId = String(selectedDocumentIds[0] || "").trim();
     const nextName = String(organizationDocumentRenameValue || "").trim();
     if (!documentId) {
-      setOrganizationDocumentRenameError("Document id is missing.");
+      setOrganizationDocumentRenameError("Record id is missing.");
       return;
     }
     if (!nextName) {
-      setOrganizationDocumentRenameError("Document name is required.");
+      setOrganizationDocumentRenameError("Record name is required.");
       return;
     }
 
@@ -2215,13 +2243,13 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         )
       );
       setSelectedDocumentIds([normalizedDocumentId]);
-      setNotice({ type: "success", message: "Document renamed successfully." });
+      setNotice({ type: "success", message: "Record renamed successfully." });
       setShowRenameDocumentModal(false);
       setOrganizationDocumentRenameValue("");
       setOrganizationDocumentRenameError("");
     } catch (error) {
       console.error("Error renaming organization document:", error);
-      setOrganizationDocumentRenameError(error?.message || "Failed to rename document.");
+      setOrganizationDocumentRenameError(error?.message || "Failed to rename record.");
     } finally {
       setRenamingOrganizationDocument(false);
     }
@@ -2455,7 +2483,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       return;
     }
     if (!tenantId) {
-      setOrganizationDocumentsError("Tenant context is missing. Cannot emit documents.");
+      setOrganizationDocumentsError("Tenant context is missing. Cannot emit records.");
       return;
     }
 
@@ -2526,13 +2554,13 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
           type: "success",
           message:
             successCount === 1
-              ? "Document deleted successfully."
-              : `${successCount} documents deleted successfully.`,
+              ? "Record deleted successfully."
+              : `${successCount} records deleted successfully.`,
         });
       } else {
         setNotice({
           type: "warning",
-          message: `Deleted ${successCount} document(s). ${failureCount} document(s) failed.`,
+          message: `Deleted ${successCount} record(s). ${failureCount} record(s) failed.`,
         });
       }
       setShowDeleteDocumentsModal(false);
@@ -3839,6 +3867,27 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     triggerOrganizationDocumentPicker();
   }, [triggerOrganizationDocumentPicker]);
 
+  const openRecordsActionSheet = useCallback(() => {
+    setShowRecordsActionSheet(true);
+  }, []);
+
+  const closeRecordsActionSheet = useCallback(() => {
+    setShowRecordsActionSheet(false);
+  }, []);
+
+  const handleUploadOrganizationRecordFromSheet = useCallback(() => {
+    setShowRecordsActionSheet(false);
+    handleQuickAddOrganizationDocument();
+  }, [handleQuickAddOrganizationDocument]);
+
+  const handleScanOrganizationRecord = useCallback(() => {
+    setShowRecordsActionSheet(false);
+    setNotice({
+      type: "info",
+      message: "Scan record support is planned for a future update.",
+    });
+  }, []);
+
   const handleTemplateAddHint = useCallback(() => {
     setNotice({
       type: "warning",
@@ -3888,8 +3937,8 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       },
       {
         key: "documents",
-        label: "Documents",
-        note: "Upload and emit docs",
+        label: "Records",
+        note: "Manage organization records",
         icon: "folder",
         onClick: () => setActiveTab("documents"),
       },
@@ -3945,7 +3994,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
               <span className="project-overview-kpi-label">Governance records</span>
               <strong>{orgStats.totalDocuments + orgStats.totalMeetings}</strong>
               <small>
-                {orgStats.totalDocuments} docs and {orgStats.totalMeetings} activities
+                {orgStats.totalDocuments} records and {orgStats.totalMeetings} activities
               </small>
             </article>
             <article className="project-overview-kpi-card">
@@ -4045,7 +4094,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
                     <strong>{orgStats.upcomingMeetings}</strong>
                   </div>
                   <div className="project-overview-stat-item">
-                    <span>Documents</span>
+                    <span>Records</span>
                     <strong>{orgStats.totalDocuments}</strong>
                   </div>
                 </div>
@@ -4104,7 +4153,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
               <div className="organization-overview-trend-breakdown">
                 <span>{organizationOverviewAnalytics.rangeMemberJoinCount} member joins</span>
                 <span>{organizationOverviewAnalytics.rangeMeetingCount} activities logged</span>
-                <span>{organizationOverviewAnalytics.rangeDocumentCount} docs uploaded</span>
+                <span>{organizationOverviewAnalytics.rangeDocumentCount} records uploaded</span>
               </div>
             </article>
 
@@ -4303,11 +4352,172 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     );
   };
 
+  const renderRecordsMobileTab = () => (
+    <>
+      <article className="org-shell-panel org-shell-panel--table org-file-manager-card">
+        <div className="project-detail-section-head org-file-manager-head">
+          <div className="org-file-manager-heading">
+            <h4>Organization Records</h4>
+            <span className="org-file-manager-count">{documentRows.length} visible</span>
+          </div>
+        </div>
+
+        <p className="project-documents-hint">
+          Allowed file types: <strong>.docx, .pdf</strong>, and image files.
+        </p>
+
+        {organizationDocumentsError ? (
+          <p className="project-detail-expense-error">{organizationDocumentsError}</p>
+        ) : null}
+
+        <div className="org-shell-toolbar org-file-manager-toolbar">
+          <label className="org-shell-search">
+            <Icon name="search" size={15} />
+            <input
+              ref={documentSearchInputRef}
+              type="text"
+              placeholder="Search records by name or type"
+              value={documentSearch}
+              onChange={(event) => setDocumentSearch(event.target.value)}
+            />
+          </label>
+          <div className="org-shell-toolbar-actions">
+            <button
+              type="button"
+              className="org-file-manager-head-btn is-filter"
+              onClick={cycleDocumentPermissionFilter}
+              title={`Filter: ${FILE_PERMISSION_FILTER_LABELS[documentPermissionFilter] || "All files"}`}
+              aria-label="Cycle record filter"
+            >
+              <Icon name="filter" size={14} />
+              <span>Filter</span>
+              <small>{FILE_PERMISSION_FILTER_LABELS[documentPermissionFilter] || "All files"}</small>
+            </button>
+          </div>
+        </div>
+
+        {documentRows.length ? (
+          <div className="project-files-merged-list">
+            {documentRows.map((document) => {
+              const documentId = String(document?.id || "");
+              const documentUrl = getDocumentDownloadUrl(document);
+              const fileName = getDocumentName(document);
+              const fileExtensionFromName = getFileExtension(fileName);
+              const rawFileExtension =
+                fileExtensionFromName !== "file"
+                  ? fileExtensionFromName
+                  : getFileExtension(document?.file_path || document?.file_url || document?.file_ext || "");
+              const fileExtension =
+                rawFileExtension === "file" && String(document?.mime_type || "").includes("/")
+                  ? String(document?.mime_type || "").split("/")[1]
+                  : rawFileExtension;
+              const fileTone = getFileTone(fileExtension);
+              const recordType = toDisplayLabel(getDocumentType(document), "File");
+              const recordDate = formatDate(document?.uploaded_at || document?.created_at);
+              const fileSize = formatFileSize(document?.file_size_bytes);
+              return (
+                <article key={documentId || fileName} className="project-files-merged-item">
+                  <div className="org-file-manager-file-cell">
+                    <span className={`org-file-manager-icon is-${fileTone}`}>
+                      {String(fileExtension).slice(0, 3)}
+                    </span>
+                    <div className="project-files-merged-copy">
+                      <strong>{fileName}</strong>
+                      <span>{`${recordType} • ${recordDate}`}</span>
+                      {fileSize ? <p>{fileSize}</p> : null}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="project-detail-mobile-more-btn"
+                    aria-label={`More actions for ${fileName}`}
+                    onClick={() => {
+                      if (documentUrl) {
+                        window.open(documentUrl, "_blank", "noopener,noreferrer");
+                        return;
+                      }
+                      setNotice({
+                        type: "warning",
+                        message: `${fileName} is not available for download yet.`,
+                      });
+                    }}
+                  >
+                    <Icon name="more-horizontal" size={16} />
+                  </button>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="org-shell-empty">No records found for this query.</div>
+        )}
+
+        <input
+          ref={organizationDocumentInputRef}
+          type="file"
+          className="project-documents-file-input"
+          accept={ORGANIZATION_DOCUMENT_ACCEPT}
+          onChange={handleUploadOrganizationDocuments}
+          multiple
+          disabled={
+            uploadingOrganizationDocument ||
+            deletingOrganizationDocuments ||
+            emittingOrganizationDocument ||
+            renamingOrganizationDocument
+          }
+        />
+      </article>
+
+      <button
+        type="button"
+        className="project-detail-fab project-detail-fab--note"
+        onClick={openRecordsActionSheet}
+        disabled={
+          uploadingOrganizationDocument ||
+          deletingOrganizationDocuments ||
+          emittingOrganizationDocument ||
+          renamingOrganizationDocument
+        }
+        aria-label="Upload record"
+      >
+        <Icon name="plus" size={20} />
+      </button>
+
+      {showRecordsActionSheet ? (
+        <div className="project-action-sheet-overlay" onClick={closeRecordsActionSheet} role="presentation">
+          <div
+            className="project-action-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Record actions"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="project-action-sheet-handle" aria-hidden="true" />
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={handleUploadOrganizationRecordFromSheet}
+            >
+              Upload file
+            </button>
+            <button type="button" className="project-action-sheet-btn" onClick={handleScanOrganizationRecord}>
+              Scan document
+            </button>
+            <hr />
+            <button type="button" className="project-action-sheet-btn" onClick={closeRecordsActionSheet}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+
   const renderDocumentsTab = () => (
     <article className="org-shell-panel org-shell-panel--table org-file-manager-card">
       <div className="project-detail-section-head org-file-manager-head">
         <div className="org-file-manager-heading">
-          <h4>Organization Documents</h4>
+          <h4>Organization Records</h4>
           <span className="org-file-manager-count">{documents.length} total</span>
         </div>
         <div className="project-detail-section-head-actions">
@@ -4316,8 +4526,8 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
               type="button"
               className="org-file-manager-head-btn is-icon"
               onClick={handleQuickAddOrganizationDocument}
-              title="Upload document"
-              aria-label="Upload document"
+              title="Upload record"
+              aria-label="Upload record"
               disabled={
                 uploadingOrganizationDocument ||
                 deletingOrganizationDocuments ||
@@ -4339,7 +4549,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
               <small>{FILE_PERMISSION_FILTER_LABELS[documentPermissionFilter] || "All files"}</small>
             </button>
           </div>
-          <div className="project-documents-mode" role="tablist" aria-label="Organization document mode">
+          <div className="project-documents-mode" role="tablist" aria-label="Organization record mode">
             <button
               type="button"
               className={`project-documents-mode-btn${documentMode === "upload" ? " active" : ""}`}
@@ -4422,7 +4632,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
                   renamingOrganizationDocument
                 }
               >
-                {uploadingOrganizationDocument ? "Uploading..." : "Upload document"}
+                {uploadingOrganizationDocument ? "Uploading..." : "Upload record"}
               </button>
               <input
                 ref={organizationDocumentInputRef}
@@ -4451,7 +4661,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
                 renamingOrganizationDocument
               }
             >
-              {emittingOrganizationDocument ? "Emitting..." : "Emit document"}
+              {emittingOrganizationDocument ? "Emitting..." : "Emit record"}
             </button>
           )}
         </div>
@@ -4502,7 +4712,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
       <div className="project-expenses-selection-note">{selectedDocumentIds.length} selected</div>
       <div className="project-expenses-selection-note">
-        Showing {documentRows.length} of {documents.length} documents.
+        Showing {documentRows.length} of {documents.length} records.
       </div>
 
       <div className="projects-table-wrap project-expenses-table-wrap">
@@ -4609,7 +4819,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
             ) : (
               <tr>
                 <td colSpan={7}>
-                  <div className="org-shell-empty">No documents found for this query.</div>
+                  <div className="org-shell-empty">No records found for this query.</div>
                 </td>
               </tr>
             )}
@@ -5192,7 +5402,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
           <div>
             <h2>Organization Profile</h2>
             <p>
-              Manage the whole organization workspace: profile, members, documents, activities, and
+              Manage the whole organization workspace: profile, members, records, activities, and
               partner relationships.
             </p>
           </div>
@@ -5241,7 +5451,11 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
           <>
             {activeTab === "overview" ? renderOverviewTab() : null}
             {activeTab === "members" ? renderMembersTab() : null}
-            {activeTab === "documents" ? renderDocumentsTab() : null}
+            {activeTab === "documents"
+              ? isMobileOrganizationViewport
+                ? renderRecordsMobileTab()
+                : renderDocumentsTab()
+              : null}
             {activeTab === "activities" ? renderActivitiesTab() : null}
             {activeTab === "partners" ? renderPartnersTab() : null}
             {activeTab === "templates" ? renderTemplatesTab() : null}
@@ -6568,8 +6782,8 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       <DataModal
         open={showRenameDocumentModal}
         onClose={closeRenameOrganizationDocumentModal}
-        title="Rename Document"
-        subtitle="Update the selected organization document name."
+        title="Rename Record"
+        subtitle="Update the selected organization record name."
         icon="folder"
       >
         <form className="data-modal-form" onSubmit={handleConfirmRenameOrganizationDocument}>
@@ -6580,7 +6794,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
           ) : null}
           <div className="data-modal-grid">
             <label className="data-modal-field data-modal-field--full">
-              Document name
+              Record name
               <input
                 type="text"
                 value={organizationDocumentRenameValue}
@@ -6616,12 +6830,12 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       <DataModal
         open={showDeleteDocumentsModal}
         onClose={closeDeleteDocumentsModal}
-        title={`Delete ${selectedDocuments.length} document${selectedDocuments.length === 1 ? "" : "s"}?`}
+        title={`Delete ${selectedDocuments.length} record${selectedDocuments.length === 1 ? "" : "s"}?`}
         subtitle="This action cannot be undone."
         icon="alert"
       >
         <div className="projects-confirm-modal">
-          <p>Selected organization documents will be removed from this workspace.</p>
+          <p>Selected organization records will be removed from this workspace.</p>
           <div className="data-modal-actions">
             <button
               type="button"

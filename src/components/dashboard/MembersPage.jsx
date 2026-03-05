@@ -927,7 +927,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
 
   const handlePeopleTourPrimaryAction = useCallback(() => {
     setPeopleTourStep((prev) => {
-      if (prev < MEMBERS_MOBILE_TOUR_STEPS.length) {
+      if (prev <= MEMBERS_MOBILE_TOUR_STEPS.length) {
         return prev + 1;
       }
       return prev;
