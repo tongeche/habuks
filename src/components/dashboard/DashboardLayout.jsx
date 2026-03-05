@@ -49,6 +49,15 @@ const baseMenuItems = [
     group: "management",
     accent: "#0f766e",
     accentBg: "#e6fffb",
+    settingsRequest: "my-settings",
+  },
+  {
+    key: "templates",
+    label: "Templates",
+    icon: "notes",
+    group: "management",
+    accent: "#0ea5a4",
+    accentBg: "#e6fffb",
   },
   {
     key: "news",
@@ -181,6 +190,7 @@ function DashboardLayout({
   const mobileSearchInputRef = useRef(null);
   const mobileSearchTouchStartRef = useRef(null);
   const mobileMoreTouchStartRef = useRef(null);
+  const mobileMoreOpenedAtRef = useRef(0);
   const installDrawerTouchStartRef = useRef(null);
   const wasInstalledRef = useRef(false);
   const navigate = useNavigate();
@@ -261,14 +271,14 @@ function DashboardLayout({
     setShowMobileMoreDrawer(false);
     setMobileMoreDrawerOffsetY(0);
     mobileMoreTouchStartRef.current = null;
-  }, [activePage, showMobileMoreDrawer]);
+  }, [activePage]);
 
   useEffect(() => {
     if (!showInstallInstructionsDrawer) return;
     setShowInstallInstructionsDrawer(false);
     setInstallInstructionsDrawerOffsetY(0);
     installDrawerTouchStartRef.current = null;
-  }, [activePage, showInstallInstructionsDrawer]);
+  }, [activePage]);
 
   useEffect(() => {
     window.localStorage.setItem(DASHBOARD_THEME_STORAGE_KEY, dashboardThemeMode);
@@ -310,16 +320,27 @@ function DashboardLayout({
   const homeHref = tenant?.slug ? `/tenant/${tenant.slug}` : "/";
   const activeTenantId = tenant?.id || user?.tenant_id || null;
   const allowedPages = access?.allowedPages || new Set();
+  const normalizedTenantRole = String(tenantRole || user?.role || "member").trim().toLowerCase();
+  const canManageWorkspace =
+    normalizedTenantRole === "admin" ||
+    normalizedTenantRole === "superadmin" ||
+    normalizedTenantRole === "project_manager" ||
+    normalizedTenantRole === "supervisor";
   const menuItems = baseMenuItems
     .map((item) => {
+      if (item.requiresWorkspaceManager && !canManageWorkspace) {
+        return null;
+      }
       if (item.subItems?.length) {
-        const filteredSub = item.subItems.filter((sub) => allowedPages.has(sub.key));
-        if (!allowedPages.has(item.key) && filteredSub.length === 0) {
+        const filteredSub = item.subItems.filter((sub) =>
+          allowedPages.has(sub.requiredPage || sub.key)
+        );
+        if (!allowedPages.has(item.requiredPage || item.key) && filteredSub.length === 0) {
           return null;
         }
         return { ...item, subItems: filteredSub };
       }
-      return allowedPages.has(item.key) ? item : null;
+      return allowedPages.has(item.requiredPage || item.key) ? item : null;
     })
     .filter(Boolean);
 
@@ -542,12 +563,6 @@ function DashboardLayout({
     onRequestSettingsTab?.(tabKey);
     setActivePage("settings");
   };
-  const normalizedTenantRole = String(tenantRole || user?.role || "member").trim().toLowerCase();
-  const canManageWorkspace =
-    normalizedTenantRole === "admin" ||
-    normalizedTenantRole === "superadmin" ||
-    normalizedTenantRole === "project_manager" ||
-    normalizedTenantRole === "supervisor";
   const showInstallEntry = canInstall;
   const installActionDescription = canPromptInstall
     ? "Install for faster access and offline use."
@@ -639,12 +654,20 @@ function DashboardLayout({
     setMobileSearchDrawerOffsetY(0);
     mobileSearchTouchStartRef.current = null;
     closeInstallInstructionsDrawer();
+    mobileMoreOpenedAtRef.current = Date.now();
     setShowMobileMoreDrawer(true);
   };
   const closeMobileMoreDrawer = () => {
     setShowMobileMoreDrawer(false);
     setMobileMoreDrawerOffsetY(0);
     mobileMoreTouchStartRef.current = null;
+    mobileMoreOpenedAtRef.current = 0;
+  };
+  const handleMobileMoreBackdropClick = () => {
+    if (Date.now() - mobileMoreOpenedAtRef.current < 180) {
+      return;
+    }
+    closeMobileMoreDrawer();
   };
   const handleMobileMoreTouchStart = (event) => {
     if (!event.touches?.length) return;
@@ -736,6 +759,15 @@ function DashboardLayout({
               onClick: () => openSettingsTab("organization-settings"),
             }
           : null,
+        canManageWorkspace && allowedPages.has("templates")
+          ? {
+              id: "search-templates",
+              label: "Template library",
+              description: "Open organization templates",
+              tokens: "templates template library",
+              onClick: () => setActivePage("templates"),
+            }
+          : null,
       ].filter(Boolean),
     },
   ];
@@ -764,13 +796,13 @@ function DashboardLayout({
           onClick: () => openSettingsTab("organization-settings"),
         }
       : null,
-    canManageWorkspace
+    canManageWorkspace && allowedPages.has("templates")
       ? {
           key: "more-templates",
           label: "Templates",
           description: "Manage shared organization templates",
           icon: "notes",
-          onClick: () => openSettingsTab("organization-settings"),
+          onClick: () => setActivePage("templates"),
         }
       : null,
     canManageWorkspace
@@ -989,6 +1021,8 @@ function DashboardLayout({
                                 if (allowedPages.has(item.key)) {
                                   setActivePage(item.key);
                                 }
+                              } else if (item.settingsRequest) {
+                                openSettingsTab(item.settingsRequest);
                               } else {
                                 setActivePage(item.key);
                               }
@@ -1295,7 +1329,7 @@ function DashboardLayout({
             type="button"
             className="dashboard-mobile-drawer-backdrop"
             aria-label="Close more menu"
-            onClick={closeMobileMoreDrawer}
+            onClick={handleMobileMoreBackdropClick}
           />
           <div
             className="dashboard-mobile-more-drawer"

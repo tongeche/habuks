@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import DashboardLayout from "./DashboardLayout.jsx";
+import { DashboardLayout } from "./DashboardLayout.jsx";
 import DashboardOverview from "./DashboardOverview.jsx";
 import ProjectsPage from "./ProjectsPage.jsx";
 import JppProjectPage from "./JppProjectPage.jsx";
@@ -11,6 +11,7 @@ import { MeetingsPage } from "./MeetingsPage.jsx";
 import MembersPage from "./MembersPage.jsx";
 import { FinanceRecordsPage } from "./FinanceRecordsPage.jsx";
 import SettingsPage from "./SettingsPage.jsx";
+import TemplatesPage from "./TemplatesPage.jsx";
 import { TenantCurrencyProvider } from "./TenantCurrencyContext.jsx";
 import { getCurrentMember, getProjectsWithMembership, getTenantMembershipForSlug } from "../../lib/dataService.js";
 import { buildTenantBrand, buildTenantFeatures, buildTenantThemeVars } from "../../lib/tenantBranding.js";
@@ -316,6 +317,16 @@ export default function Dashboard() {
             tenant={tenantInfo}
             tenantRole={tenantRole}
             requestedTab={settingsTabRequest}
+            onTenantUpdated={setTenantInfo}
+            setActivePage={setActivePage}
+          />
+        );
+      case "templates":
+        return (
+          <TemplatesPage
+            user={user}
+            tenantId={activeTenantId}
+            tenant={tenantInfo}
             onTenantUpdated={setTenantInfo}
             setActivePage={setActivePage}
           />

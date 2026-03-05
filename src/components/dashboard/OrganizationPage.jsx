@@ -50,6 +50,7 @@ const ORG_TABS = [
   { key: "partners", label: "Partners" },
   { key: "templates", label: "Templates" },
 ];
+const ORG_TAB_KEYS = new Set(ORG_TABS.map((tab) => tab.key));
 const ORG_EDITOR_STEPS = [
   { key: "basic", label: "Basic info", note: "Identity and public profile visibility." },
   { key: "contacts", label: "Contacts", note: "Operational contacts and address." },
@@ -1064,7 +1065,15 @@ const toDisplayLabel = (value, fallback = "Unknown") => {
   return normalized.replace(/\b\w/g, (char) => char.toUpperCase());
 };
 
-function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePage }) {
+function OrganizationPage({
+  user,
+  tenantId,
+  tenant,
+  requestedTab = "overview",
+  standaloneTab = "",
+  onTenantUpdated,
+  setActivePage
+}) {
   const { currencyCode } = useTenantCurrency();
   const [activeTab, setActiveTab] = useState("overview");
   const [isMobileOrganizationViewport, setIsMobileOrganizationViewport] = useState(() =>
@@ -1158,6 +1167,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
     code: null,
   });
   const [submittingInvite, setSubmittingInvite] = useState(false);
+  const isTemplatesOnlyView = String(standaloneTab || "").trim().toLowerCase() === "templates";
 
   const [showMeetingModal, setShowMeetingModal] = useState(false);
   const [showMeetingEditorModal, setShowMeetingEditorModal] = useState(false);
@@ -1223,6 +1233,13 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   }, [tenant]);
 
   useEffect(() => {
+    const normalizedRequestedTab = String(requestedTab || "overview")
+      .trim()
+      .toLowerCase();
+    setActiveTab(ORG_TAB_KEYS.has(normalizedRequestedTab) ? normalizedRequestedTab : "overview");
+  }, [requestedTab]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
     }
@@ -1270,6 +1287,48 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setOrganizationDocumentsError("");
       setTemplatesError("");
 
+      if (isTemplatesOnlyView) {
+        const [tenantResult, templatesResult] = await Promise.allSettled([
+          getTenantById(tenantId),
+          getOrganizationTemplates(tenantId),
+        ]);
+        const errors = [];
+
+        if (tenantResult.status === "fulfilled") {
+          if (tenantResult.value) {
+            setTenantRecord(tenantResult.value);
+            setOrgForm(createOrganizationForm(tenantResult.value));
+          }
+        } else {
+          errors.push("Failed to load organization profile.");
+          console.error("Organization profile load error:", tenantResult.reason);
+        }
+
+        if (templatesResult.status === "fulfilled") {
+          setOrganizationTemplates(Array.isArray(templatesResult.value) ? templatesResult.value : []);
+        } else {
+          setOrganizationTemplates([]);
+          errors.push("Failed to load templates.");
+          const message = templatesResult.reason?.message || "Failed to load templates.";
+          setTemplatesError(message);
+          console.error("Organization templates load error:", templatesResult.reason);
+        }
+
+        setMembers([]);
+        setProjects([]);
+        setProjectMediaLibrary([]);
+        setDocuments([]);
+        setMeetings([]);
+        setLoadError(errors.join(" "));
+
+        if (silent) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
+        return;
+      }
+
       const [
         tenantResult,
         membersResult,
@@ -1278,16 +1337,15 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         documentsResult,
         meetingsResult,
         templatesResult,
-      ] =
-        await Promise.allSettled([
-          getTenantById(tenantId),
-          getMembersAdmin(tenantId),
-          getProjectsWithMembership(user?.id, tenantId),
-          getTenantProjectMediaLibrary(tenantId, { perProjectLimit: 12 }),
-          getDocuments(tenantId),
-          getMeetings(tenantId),
-          getOrganizationTemplates(tenantId),
-        ]);
+      ] = await Promise.allSettled([
+        getTenantById(tenantId),
+        getMembersAdmin(tenantId),
+        getProjectsWithMembership(user?.id, tenantId),
+        getTenantProjectMediaLibrary(tenantId, { perProjectLimit: 12 }),
+        getDocuments(tenantId),
+        getMeetings(tenantId),
+        getOrganizationTemplates(tenantId),
+      ]);
 
       const errors = [];
 
@@ -1358,7 +1416,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         setLoading(false);
       }
     },
-    [tenantId, user?.id]
+    [isTemplatesOnlyView, tenantId, user?.id]
   );
 
   useEffect(() => {
@@ -5676,6 +5734,48 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
 
   const activeOrgEditorStep =
     ORG_EDITOR_STEPS.find((step) => step.key === orgFormStep) || ORG_EDITOR_STEPS[0];
+
+  if (isTemplatesOnlyView) {
+    return (
+      <div className="org-shell org-shell--templates-only">
+        <section className="org-shell-card org-shell-card--workspace org-shell-card--templates-only">
+          <header className="org-shell-header">
+            <div>
+              <h2>Templates</h2>
+              <p>Quick access to your approved organization template library.</p>
+            </div>
+            <div className="org-shell-header-actions">
+              <button
+                type="button"
+                className="project-detail-action ghost"
+                onClick={() => loadWorkspace({ silent: true })}
+                disabled={refreshing || loading}
+              >
+                {refreshing ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
+          </header>
+
+          {notice ? (
+            <div className={`projects-notice projects-notice--${notice.type || "success"}`}>
+              {notice.message}
+            </div>
+          ) : null}
+
+          {loadError ? <div className="projects-notice projects-notice--error">{loadError}</div> : null}
+
+          {loading ? (
+            <div className="project-expenses-loading org-shell-loading">
+              <div className="loading-spinner" />
+              <span>Loading template library...</span>
+            </div>
+          ) : (
+            renderTemplatesTab()
+          )}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="org-shell">

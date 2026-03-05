@@ -4,6 +4,14 @@ import ProfilePage from "./ProfilePage.jsx";
 import * as OrganizationPageModule from "./OrganizationPage.jsx";
 
 const ADMIN_ROLES = ["admin", "superadmin", "project_manager", "supervisor"];
+const ORGANIZATION_SETTINGS_TABS = new Set([
+  "overview",
+  "members",
+  "documents",
+  "activities",
+  "partners",
+  "templates",
+]);
 const OrganizationPage =
   OrganizationPageModule.OrganizationPage || OrganizationPageModule.default;
 
@@ -19,13 +27,26 @@ export default function SettingsPage({
 }) {
   const effectiveRole = String(tenantRole || user?.role || "member").toLowerCase();
   const canAccessOrgSettings = ADMIN_ROLES.includes(effectiveRole);
-  const resolveSettingsTab = (tabKey) => {
+  const resolveRequestedSettings = (tabKey) => {
     const normalizedTab = String(tabKey || "my-settings").trim().toLowerCase();
-    if (normalizedTab === "organization-settings" && canAccessOrgSettings) {
-      return "organization-settings";
+    if (normalizedTab.startsWith("organization-settings")) {
+      if (!canAccessOrgSettings) {
+        return { settingsTab: "my-settings", organizationTab: "overview" };
+      }
+      const [, requestedOrganizationTab = "overview"] = normalizedTab.split(":");
+      return {
+        settingsTab: "organization-settings",
+        organizationTab: ORGANIZATION_SETTINGS_TABS.has(requestedOrganizationTab)
+          ? requestedOrganizationTab
+          : "overview",
+      };
     }
-    return "my-settings";
+    return { settingsTab: "my-settings", organizationTab: "overview" };
   };
+  const resolveSettingsTab = (tabKey) => {
+    return resolveRequestedSettings(tabKey).settingsTab;
+  };
+  const requestedOrganizationTab = resolveRequestedSettings(requestedTab).organizationTab;
 
   // Initialize to "my-settings" if user can't access org settings, otherwise "my-settings" by default
   const [activeSettingsTab, setActiveSettingsTab] = useState(() => resolveSettingsTab(requestedTab));
@@ -72,6 +93,7 @@ export default function SettingsPage({
               user={user}
               tenantId={tenantId}
               tenant={tenant}
+              requestedTab={requestedOrganizationTab}
               onTenantUpdated={onTenantUpdated}
               setActivePage={setActivePage}
             />

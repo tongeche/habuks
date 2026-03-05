@@ -1,17 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DataModal from "./DataModal.jsx";
 import ResponseModal from "./ResponseModal.jsx";
 import { Icon } from "../icons.jsx";
 import {
-  cancelMagicLinkInvite,
+  createMemberAdmin,
   createMagicLinkInvite,
+  createTenantMembership,
   deleteTenantMembershipAdmin,
   getMembersAdmin,
   getProjectMemberAssignmentsSummary,
   getProjects,
   getTenantMemberAuditLog,
   getTenantMagicLinkInvites,
-  resendMagicLinkInvite,
   updateMemberAdmin,
   updateTenantMembershipAdmin,
 } from "../../lib/dataService.js";
@@ -28,6 +28,25 @@ const createInviteForm = () => ({
 
 const MEMBER_ROLE_OPTIONS = ["member", "supervisor", "project_manager", "admin", "superadmin"];
 const MEMBER_STATUS_OPTIONS = ["active", "pending", "inactive"];
+const MEMBER_IMPORT_COLUMNS = ["name", "email", "phone_number", "role", "status", "join_date", "bio"];
+const MEMBER_IMPORT_TEMPLATE_ROW = {
+  name: "Alex Otieno",
+  email: "alex.otieno@example.org",
+  phone_number: "+254700000000",
+  role: "member",
+  status: "active",
+  join_date: new Date().toISOString().slice(0, 10),
+  bio: "Field mobilizer",
+};
+const MEMBER_IMPORT_ALIASES = {
+  name: ["name", "full_name", "member_name"],
+  email: ["email", "email_address"],
+  phone_number: ["phone_number", "phone", "telephone", "mobile"],
+  role: ["role", "tenant_role"],
+  status: ["status", "tenant_status"],
+  join_date: ["join_date", "joined_on", "joined_date", "date_joined"],
+  bio: ["bio", "notes", "description"],
+};
 const MEMBERS_MOBILE_TOUR_STORAGE_KEY = "members-mobile-tour-complete";
 const MEMBERS_MOBILE_TOUR_STEPS = [
   {
@@ -126,22 +145,122 @@ const toLabel = (value, fallback = "-") => {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 };
 
+const toInitials = (name, fallback = "M") => {
+  const raw = String(name || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (!raw) return fallback;
+  const parts = raw.split(" ").filter(Boolean);
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+};
+
 const buildCsvValue = (value) => {
   const text = String(value ?? "");
   if (!/[",\n]/.test(text)) return text;
   return `"${text.replace(/"/g, '""')}"`;
 };
 
+const normalizeCsvHeader = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+const parseCsvLine = (line) => {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      values.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  values.push(current);
+  return values.map((value) => String(value || "").trim());
+};
+
+const parseCsvText = (csvText) => {
+  const normalizedText = String(csvText || "")
+    .replace(/\ufeff/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+
+  if (!normalizedText) {
+    throw new Error("The CSV file is empty.");
+  }
+
+  const lines = normalizedText.split("\n").filter((line) => String(line || "").trim());
+  if (lines.length < 2) {
+    throw new Error("CSV must include a header row and at least one data row.");
+  }
+
+  const headers = parseCsvLine(lines[0]).map((header) => normalizeCsvHeader(header));
+  if (!headers.some(Boolean)) {
+    throw new Error("CSV header row is invalid.");
+  }
+
+  const rows = [];
+  for (let lineIndex = 1; lineIndex < lines.length; lineIndex += 1) {
+    const cells = parseCsvLine(lines[lineIndex]);
+    if (!cells.some((cell) => String(cell || "").trim())) {
+      continue;
+    }
+    const row = {};
+    headers.forEach((header, columnIndex) => {
+      if (!header) return;
+      row[header] = String(cells[columnIndex] || "").trim();
+    });
+    rows.push(row);
+  }
+  if (!rows.length) {
+    throw new Error("CSV has no valid data rows.");
+  }
+  return rows;
+};
+
+const isDuplicateDatabaseError = (error) => {
+  const code = String(error?.code || "");
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    code === "23505" ||
+    message.includes("duplicate") ||
+    message.includes("already exists") ||
+    message.includes("unique")
+  );
+};
+
 const getMembersMobileTourStorageKey = (tenantId, userId) =>
   `${MEMBERS_MOBILE_TOUR_STORAGE_KEY}:${String(tenantId || "tenant")}::${String(userId || "user")}`;
 
-export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, access, setActivePage }) {
+export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, setActivePage }) {
   const [members, setMembers] = useState([]);
   const [projects, setProjects] = useState([]);
   const [projectAssignments, setProjectAssignments] = useState([]);
   const [inviteRows, setInviteRows] = useState([]);
   const [memberAuditRows, setMemberAuditRows] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [showDirectoryTools, setShowDirectoryTools] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -161,10 +280,12 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     code: null,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [importingMembers, setImportingMembers] = useState(false);
   const [savingMember, setSavingMember] = useState(false);
   const [membershipActionBusy, setMembershipActionBusy] = useState(false);
-  const [inviteActionBusyId, setInviteActionBusyId] = useState("");
+  const [openMemberActionMenuId, setOpenMemberActionMenuId] = useState("");
   const [peopleTourStep, setPeopleTourStep] = useState(0);
+  const memberImportInputRef = useRef(null);
 
   const effectiveTenantId = tenantId || tenantInfo?.id || null;
   const roleKey = normalizeRoleKey(tenantRole || user?.role || "member");
@@ -385,6 +506,39 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     });
   }, [members, searchQuery]);
 
+  const roleFilterOptions = useMemo(
+    () =>
+      Array.from(new Set(members.map((member) => normalizeMembershipRole(member))))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right)),
+    [members]
+  );
+
+  const statusFilterOptions = useMemo(
+    () =>
+      Array.from(new Set(members.map((member) => normalizeMembershipStatus(member))))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right)),
+    [members]
+  );
+
+  const visibleMembers = useMemo(() => {
+    return filteredMembers.filter((member) => {
+      const normalizedRole = normalizeMembershipRole(member);
+      const normalizedStatus = normalizeMembershipStatus(member);
+      if (roleFilter !== "all" && normalizedRole !== roleFilter) {
+        return false;
+      }
+      if (statusFilter !== "all" && normalizedStatus !== statusFilter) {
+        return false;
+      }
+      return true;
+    });
+  }, [filteredMembers, roleFilter, statusFilter]);
+
+  const hasActiveMemberFilters =
+    String(searchQuery || "").trim().length > 0 || roleFilter !== "all" || statusFilter !== "all";
+
   const stats = useMemo(() => {
     const activeCount = members.filter((member) => normalizeMembershipStatus(member) === "active").length;
     const withoutProjectsCount = members.filter((member) => {
@@ -405,19 +559,6 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
       projects: projects.length,
     };
   }, [members, inviteRows, projectSummaryByMemberId, projects.length]);
-
-  const pendingInvites = useMemo(
-    () =>
-      inviteRows
-        .filter((invite) => {
-          const status = String(invite?.status || "pending").trim().toLowerCase();
-          return status === "pending" || status === "sent";
-        })
-        .slice(0, 6),
-    [inviteRows]
-  );
-
-  const recentAuditEntries = useMemo(() => memberAuditRows.slice(0, 6), [memberAuditRows]);
 
   const selectedMemberAuditEntries = useMemo(() => {
     const selectedMemberId = Number.parseInt(String(selectedMemberDetail?.member?.id || ""), 10);
@@ -444,13 +585,13 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
   );
 
   const handleExportCsv = () => {
-    if (!filteredMembers.length) {
+    if (!visibleMembers.length) {
       setNotice("No visible members to export.");
       return;
     }
 
     const header = ["Name", "Org role", "Status", "Projects", "Email", "Phone", "Joined"];
-    const rows = filteredMembers.map((member) => {
+    const rows = visibleMembers.map((member) => {
       const memberId = Number.parseInt(String(member?.id || ""), 10);
       const projectSummary = projectSummaryByMemberId.get(memberId) || null;
       const projectCount = projectSummary?.count || 0;
@@ -481,6 +622,145 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
     setNotice("Export complete.");
+  };
+
+  const handleDownloadMemberImportTemplate = () => {
+    const header = MEMBER_IMPORT_COLUMNS.join(",");
+    const sampleRow = MEMBER_IMPORT_COLUMNS.map((column) =>
+      buildCsvValue(MEMBER_IMPORT_TEMPLATE_ROW[column] ?? "")
+    ).join(",");
+    const csv = [header, sampleRow].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "members-import-template.csv";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+    setNotice("Downloaded members import template.");
+  };
+
+  const handlePickImportMembersCsv = () => {
+    if (!canAdministerMembers) return;
+    if (importingMembers) return;
+    memberImportInputRef.current?.click();
+  };
+
+  const handleImportMembersCsv = async (event) => {
+    const input = event?.target;
+    const file = input?.files?.[0] || null;
+    if (input) {
+      input.value = "";
+    }
+    if (!file) return;
+    if (!canAdministerMembers) {
+      setError("Only workspace admins can import members.");
+      return;
+    }
+    if (!effectiveTenantId) {
+      setError("Workspace context is missing. Cannot import members.");
+      return;
+    }
+
+    setImportingMembers(true);
+    setError("");
+    setNotice("");
+    try {
+      const csvText = await file.text();
+      const rows = parseCsvText(csvText);
+      const importedMemberIds = [];
+      let createdCount = 0;
+      let duplicateCount = 0;
+      let invalidCount = 0;
+      let failedCount = 0;
+
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        const getValue = (field) => {
+          const aliases = MEMBER_IMPORT_ALIASES[field] || [field];
+          for (const alias of aliases) {
+            const key = normalizeCsvHeader(alias);
+            const value = String(row?.[key] || "").trim();
+            if (value) return value;
+          }
+          return "";
+        };
+
+        const roleRaw = getValue("role").toLowerCase().replace(/\s+/g, "_");
+        const statusRaw = getValue("status").toLowerCase();
+        const role = MEMBER_ROLE_OPTIONS.includes(roleRaw) ? roleRaw : "member";
+        const status = MEMBER_STATUS_OPTIONS.includes(statusRaw) ? statusRaw : "active";
+        const payload = {
+          name: getValue("name"),
+          email: getValue("email"),
+          phone_number: getValue("phone_number"),
+          role,
+          status,
+          join_date: String(getValue("join_date") || "").slice(0, 10) || new Date().toISOString().slice(0, 10),
+          bio: getValue("bio"),
+        };
+
+        if (!payload.name || (!payload.email && !payload.phone_number)) {
+          invalidCount += 1;
+          continue;
+        }
+
+        try {
+          const savedMember = await createMemberAdmin(payload);
+          const createdMemberId = Number.parseInt(String(savedMember?.id || ""), 10);
+          if (!Number.isInteger(createdMemberId) || createdMemberId <= 0) {
+            failedCount += 1;
+            continue;
+          }
+
+          try {
+            const membership = await createTenantMembership({
+              tenantId: effectiveTenantId,
+              memberId: createdMemberId,
+              role,
+            });
+            const membershipId = Number.parseInt(String(membership?.id || ""), 10);
+            if (status !== "active" && Number.isInteger(membershipId) && membershipId > 0) {
+              await updateTenantMembershipAdmin(membershipId, { status });
+            }
+          } catch (membershipError) {
+            if (!isDuplicateDatabaseError(membershipError)) {
+              throw membershipError;
+            }
+          }
+
+          importedMemberIds.push(createdMemberId);
+          createdCount += 1;
+        } catch (importError) {
+          if (isDuplicateDatabaseError(importError)) {
+            duplicateCount += 1;
+            continue;
+          }
+          failedCount += 1;
+          console.error(`Members import failed at row ${index + 2}:`, importError, row);
+        }
+      }
+
+      await loadPeopleData();
+      if (importedMemberIds.length) {
+        setSelectedMemberIds(importedMemberIds);
+      }
+
+      if (failedCount > 0) {
+        setNotice(
+          `Imported ${createdCount}, duplicates ${duplicateCount}, invalid ${invalidCount}, failed ${failedCount}.`
+        );
+      } else {
+        setNotice(`Imported ${createdCount}, duplicates ${duplicateCount}, invalid ${invalidCount}.`);
+      }
+    } catch (importError) {
+      setError(importError?.message || "Failed to import members CSV.");
+    } finally {
+      setImportingMembers(false);
+    }
   };
 
   const handleInviteFormChange = (field, value) => {
@@ -638,7 +918,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
   };
 
   const toggleAllVisibleMembers = () => {
-    const visibleIds = filteredMembers
+    const visibleIds = visibleMembers
       .map((member) => Number.parseInt(String(member?.id || ""), 10))
       .filter((memberId) => Number.isInteger(memberId) && memberId > 0);
     if (!visibleIds.length) return;
@@ -862,61 +1142,6 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     }
   };
 
-  const isInviteExpired = useCallback((invite) => {
-    const expiresAt = Date.parse(String(invite?.expires_at || ""));
-    return Number.isFinite(expiresAt) && expiresAt < Date.now();
-  }, []);
-
-  const handleResendInvite = async (invite) => {
-    if (!canInviteMember || !invite?.id) {
-      return;
-    }
-
-    try {
-      setInviteActionBusyId(String(invite.id));
-      setError("");
-      setNotice("");
-      const updatedInvite = await resendMagicLinkInvite(invite.id);
-      await loadPeopleData();
-      setResponseData({
-        type: "success",
-        title: "Invite ready to share",
-        message: `Share this invite number with ${updatedInvite?.email || "the invited member"}. It is now active again.`,
-        code: updatedInvite?.invite_number || null,
-      });
-      setShowResponseModal(true);
-      setNotice(`Invite reissued for ${updatedInvite?.email || "the invited member"}.`);
-    } catch (inviteError) {
-      setError(inviteError?.message || "Could not resend that invite.");
-    } finally {
-      setInviteActionBusyId("");
-    }
-  };
-
-  const handleCancelInvite = async (invite) => {
-    if (!canInviteMember || !invite?.id) {
-      return;
-    }
-
-    const email = invite?.email || "this invited member";
-    if (!window.confirm(`Cancel the invite for ${email}?`)) {
-      return;
-    }
-
-    try {
-      setInviteActionBusyId(String(invite.id));
-      setError("");
-      setNotice("");
-      await cancelMagicLinkInvite(invite.id);
-      await loadPeopleData();
-      setNotice(`Invite canceled for ${email}.`);
-    } catch (inviteError) {
-      setError(inviteError?.message || "Could not cancel that invite.");
-    } finally {
-      setInviteActionBusyId("");
-    }
-  };
-
   const finishPeopleTour = useCallback(() => {
     if (typeof window !== "undefined" && peopleTourStorageKey) {
       window.localStorage.setItem(peopleTourStorageKey, "done");
@@ -944,12 +1169,30 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
     ? "all"
     : normalizeInviteProjectScope(inviteForm.project_access_scope);
   const inviteProjectIds = normalizeInviteProjectIds(inviteForm.project_ids);
-  const allVisibleMemberIds = filteredMembers
+  const allVisibleMemberIds = visibleMembers
     .map((member) => Number.parseInt(String(member?.id || ""), 10))
     .filter((memberId) => Number.isInteger(memberId) && memberId > 0);
   const allVisibleSelected =
     allVisibleMemberIds.length > 0 &&
     allVisibleMemberIds.every((memberId) => selectedMemberIds.includes(memberId));
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return undefined;
+    }
+    const handlePointerDown = (event) => {
+      const target = event?.target;
+      if (!(target instanceof Element)) {
+        setOpenMemberActionMenuId("");
+        return;
+      }
+      if (!target.closest(".members-shell-row-actions")) {
+        setOpenMemberActionMenuId("");
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, []);
 
   return (
     <div className={`members-shell dashboard-mobile-shell${peopleTourOpen ? " members-shell-tour-open" : ""}`}>
@@ -957,40 +1200,170 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
         <header className="members-shell-header">
           <div>
             <h2>People</h2>
-            <p>
-              Organization directory and project assignment coverage. Member editing is centralized here to avoid
-              duplication across settings and project tabs.
-            </p>
+            <div className="members-mobile-toolbar">
+              <div className="project-detail-mobile-header">
+                <button
+                  type="button"
+                  className="project-detail-mobile-back-btn"
+                  onClick={() => setActivePage?.("overview")}
+                  aria-label="Back to overview"
+                >
+                  <Icon name="arrow-left" size={16} />
+                </button>
+                <strong>People</strong>
+                <button
+                  type="button"
+                  className="project-detail-mobile-more-btn"
+                  onClick={() => {
+                    setShowDirectoryTools((current) => {
+                      if (current) {
+                        setSearchQuery("");
+                        setRoleFilter("all");
+                        setStatusFilter("all");
+                      }
+                      return !current;
+                    });
+                  }}
+                  aria-label={showDirectoryTools ? "Hide filters" : "Show filters"}
+                >
+                  <Icon name="more-horizontal" size={16} />
+                </button>
+              </div>
+              <div className="project-detail-mobile-pills members-mobile-action-pills">
+                <button
+                  type="button"
+                  className={`project-detail-mobile-pill${showDirectoryTools ? " active" : ""}`}
+                  onClick={() =>
+                    setShowDirectoryTools((current) => {
+                      if (current) {
+                        setSearchQuery("");
+                        setRoleFilter("all");
+                        setStatusFilter("all");
+                      }
+                      return !current;
+                    })
+                  }
+                >
+                  Filters
+                </button>
+                <button
+                  type="button"
+                  className="project-detail-mobile-pill"
+                  onClick={handleExportCsv}
+                  disabled={loading || !visibleMembers.length}
+                >
+                  Export
+                </button>
+                <button
+                  type="button"
+                  className="project-detail-mobile-pill"
+                  onClick={handleDownloadMemberImportTemplate}
+                >
+                  Template
+                </button>
+                {canAdministerMembers ? (
+                  <button
+                    type="button"
+                    className="project-detail-mobile-pill"
+                    onClick={handlePickImportMembersCsv}
+                    disabled={importingMembers}
+                  >
+                    {importingMembers ? "Importing..." : "Import CSV"}
+                  </button>
+                ) : null}
+                {canInviteMember ? (
+                  <button
+                    type="button"
+                    className="project-detail-mobile-pill"
+                    onClick={() => setShowInviteModal(true)}
+                    disabled={!effectiveTenantId}
+                  >
+                    Invite
+                  </button>
+                ) : null}
+              </div>
+            </div>
           </div>
-          <div className="members-shell-actions">
+          <div className="members-shell-actions members-shell-actions--icons">
             <button
               type="button"
-              className="members-shell-btn members-shell-btn--ghost"
-              onClick={() => setActivePage?.("settings")}
+              className={`members-shell-btn members-shell-btn--ghost members-shell-header-icon-btn${
+                showDirectoryTools ? " is-active" : ""
+              }`}
+              onClick={() => {
+                setShowDirectoryTools((current) => {
+                  if (current) {
+                    setSearchQuery("");
+                    setRoleFilter("all");
+                    setStatusFilter("all");
+                  }
+                  return !current;
+                });
+              }}
+              aria-label={showDirectoryTools ? "Hide filters" : "Show filters"}
+              title={showDirectoryTools ? "Hide filters" : "Show filters"}
             >
-              <Icon name="settings" size={15} />
-              My settings
+              <Icon name="filter" size={16} />
+              <span className="members-shell-action-tooltip">
+                {showDirectoryTools ? "Hide filters" : "Show filters"}
+              </span>
             </button>
             <button
               type="button"
-              className="members-shell-btn members-shell-btn--ghost"
+              className="members-shell-btn members-shell-btn--ghost members-shell-header-icon-btn"
               onClick={handleExportCsv}
-              disabled={loading || !filteredMembers.length}
+              disabled={loading || !visibleMembers.length}
+              aria-label="Export visible members"
+              title="Export visible members"
             >
-              <Icon name="download" size={15} />
-              Export
+              <Icon name="download" size={16} />
+              <span className="members-shell-action-tooltip">Export visible members</span>
             </button>
+            <button
+              type="button"
+              className="members-shell-btn members-shell-btn--ghost members-shell-header-icon-btn"
+              onClick={handleDownloadMemberImportTemplate}
+              aria-label="Download import template"
+              title="Download import template"
+            >
+              <Icon name="newspaper" size={16} />
+              <span className="members-shell-action-tooltip">Download CSV template</span>
+            </button>
+            {canAdministerMembers ? (
+              <button
+                type="button"
+                className="members-shell-btn members-shell-btn--ghost members-shell-header-icon-btn"
+                onClick={handlePickImportMembersCsv}
+                disabled={importingMembers}
+                aria-label="Import members CSV"
+                title="Import members CSV"
+              >
+                <Icon name={importingMembers ? "refresh-cw" : "upload"} size={16} />
+                <span className="members-shell-action-tooltip">
+                  {importingMembers ? "Importing members..." : "Import members CSV"}
+                </span>
+              </button>
+            ) : null}
             {canInviteMember ? (
               <button
                 type="button"
-                className="members-shell-btn members-shell-btn--primary members-shell-btn--invite"
+                className="members-shell-btn members-shell-btn--primary members-shell-btn--invite members-shell-header-icon-btn"
                 onClick={() => setShowInviteModal(true)}
                 disabled={!effectiveTenantId}
+                aria-label="Invite member"
+                title="Invite member"
               >
-                <Icon name="mail" size={15} />
-                Invite member
+                <Icon name="mail" size={16} />
+                <span className="members-shell-action-tooltip">Invite member</span>
               </button>
             ) : null}
+            <input
+              ref={memberImportInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={handleImportMembersCsv}
+              style={{ display: "none" }}
+            />
           </div>
         </header>
 
@@ -1020,18 +1393,56 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
           <article className="members-shell-panel members-shell-panel--table">
             <div className="members-shell-panel-header">
               <h3>Organization directory</h3>
-              <span className="members-shell-chip">{filteredMembers.length} shown</span>
+              <span className="members-shell-chip">{visibleMembers.length} shown</span>
             </div>
 
-            <label className="members-shell-search-live">
-              <Icon name="search" size={15} />
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search by name, role, email, phone"
-              />
-            </label>
+            {showDirectoryTools ? (
+              <div className="members-shell-directory-tools">
+                <label className="members-shell-search-live">
+                  <Icon name="search" size={15} />
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search by name, role, email, phone"
+                  />
+                </label>
+                <label className="members-shell-inline-filter">
+                  <span>Role</span>
+                  <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+                    <option value="all">All roles</option>
+                    {roleFilterOptions.map((role) => (
+                      <option key={role} value={role}>
+                        {toLabel(role)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="members-shell-inline-filter">
+                  <span>Status</span>
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                    <option value="all">All status</option>
+                    {statusFilterOptions.map((status) => (
+                      <option key={status} value={status}>
+                        {toLabel(status)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="members-shell-btn members-shell-btn--ghost members-shell-clear-filters"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setRoleFilter("all");
+                    setStatusFilter("all");
+                  }}
+                  disabled={!hasActiveMemberFilters}
+                >
+                  Clear filters
+                </button>
+              </div>
+            ) : null}
 
             {canAdministerMembers && selectedMembers.length ? (
               <div className="members-shell-selection-bar">
@@ -1114,6 +1525,7 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
               <span>Status</span>
               <span>Projects</span>
               <span>Contact</span>
+              <span>Actions</span>
             </div>
 
             <div className="members-shell-table-body">
@@ -1125,13 +1537,16 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
                     <span className="members-shell-line members-shell-line--status" />
                   </div>
                 ))
-              ) : filteredMembers.length ? (
-                filteredMembers.map((member) => {
+              ) : visibleMembers.length ? (
+                visibleMembers.map((member) => {
                   const memberId = Number.parseInt(String(member?.id || ""), 10);
                   const summary = projectSummaryByMemberId.get(memberId) || null;
                   const projectNames = summary ? Array.from(summary.projectNames) : [];
                   const projectCount = summary?.count || 0;
                   const safeStatus = normalizeMembershipStatus(member).replace(/[^a-z0-9_]+/g, "_");
+                  const memberActionMenuId = String(member?.id || member?.email || "");
+                  const memberRole = normalizeMembershipRole(member);
+                  const memberStatus = normalizeMembershipStatus(member);
                   return (
                     <div
                       className={`members-shell-row members-shell-row--live${canAdministerMembers ? " is-selectable" : ""}`}
@@ -1162,7 +1577,14 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
                       ) : null}
                       <div className="members-shell-cell-main">
                         <span className="members-shell-cell-label">Name</span>
-                        <strong>{member?.name || `Member #${member?.id || "-"}`}</strong>
+                        <strong>
+                          <span className="members-shell-member-initials" aria-hidden="true">
+                            {toInitials(member?.name || member?.email || "")}
+                          </span>
+                          <span className="members-shell-member-name">
+                            {member?.name || `Member #${member?.id || "-"}`}
+                          </span>
+                        </strong>
                         <small>Joined {formatDate(member?.join_date)}</small>
                       </div>
                       <div className="members-shell-role-cell">
@@ -1190,110 +1612,109 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, ac
                         <strong>{member?.email || "No email"}</strong>
                         <small>{member?.phone_number || "No phone"}</small>
                       </div>
+                      <div
+                        className="members-shell-row-actions"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          className="members-shell-row-menu-toggle"
+                          aria-label={`Open actions for ${member?.name || "member"}`}
+                          onClick={() =>
+                            setOpenMemberActionMenuId((previousId) =>
+                              previousId === memberActionMenuId ? "" : memberActionMenuId
+                            )
+                          }
+                        >
+                          <Icon name="more-vertical" size={16} />
+                        </button>
+                        {openMemberActionMenuId === memberActionMenuId ? (
+                          <div className="members-shell-row-menu" role="menu">
+                            <button
+                              type="button"
+                              className="members-shell-row-menu-btn"
+                              onClick={() => {
+                                setOpenMemberActionMenuId("");
+                                openMemberDetail(member);
+                              }}
+                            >
+                              View details
+                            </button>
+                            {canAdministerMembers ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="members-shell-row-menu-btn"
+                                  onClick={() => {
+                                    setOpenMemberActionMenuId("");
+                                    openMemberEditor(member);
+                                  }}
+                                >
+                                  Edit member
+                                </button>
+                                {!isAdminMembershipRole(memberRole) ? (
+                                  <button
+                                    type="button"
+                                    className="members-shell-row-menu-btn"
+                                    onClick={() => {
+                                      setOpenMemberActionMenuId("");
+                                      confirmAndApplyMembershipAction([member], "give_admin");
+                                    }}
+                                  >
+                                    Make admin
+                                  </button>
+                                ) : null}
+                                {memberStatus === "inactive" ? (
+                                  <button
+                                    type="button"
+                                    className="members-shell-row-menu-btn"
+                                    onClick={() => {
+                                      setOpenMemberActionMenuId("");
+                                      confirmAndApplyMembershipAction([member], "reinstate");
+                                    }}
+                                  >
+                                    Reinstate
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="members-shell-row-menu-btn"
+                                    onClick={() => {
+                                      setOpenMemberActionMenuId("");
+                                      confirmAndApplyMembershipAction([member], "dismiss");
+                                    }}
+                                  >
+                                    Dismiss
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  className="members-shell-row-menu-btn is-danger"
+                                  onClick={() => {
+                                    setOpenMemberActionMenuId("");
+                                    confirmAndApplyMembershipAction([member], "remove");
+                                  }}
+                                >
+                                  Terminate
+                                </button>
+                              </>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   );
                 })
               ) : (
                 <div className="members-shell-empty-state">
                   <Icon name="users" size={20} />
-                  <span>No members found for this search.</span>
+                  <span>No members match the current filters.</span>
                 </div>
               )}
             </div>
           </article>
 
-          <aside className="members-shell-side">
-            <article className="members-shell-panel">
-              <div className="members-shell-panel-header">
-                <h3>Pending invites</h3>
-                <span className="members-shell-chip">{canInviteMember ? pendingInvites.length : "Admin only"}</span>
-              </div>
-              {canInviteMember ? (
-                pendingInvites.length ? (
-                  <div className="members-shell-invite-list">
-                    {pendingInvites.map((invite) => (
-                      <div className="members-shell-invite-item" key={invite?.id || invite?.invite_number}>
-                        <div className="members-shell-invite-copy">
-                          <strong>{invite?.email || "No email"}</strong>
-                          <small>
-                            #{invite?.invite_number || "-"} · {toLabel(invite?.role, "Member")}
-                            {invite?.expires_at ? ` · Expires ${formatDate(invite.expires_at)}` : ""}
-                          </small>
-                          {isInviteExpired(invite) ? (
-                            <small className="members-shell-invite-expired">Expired. Resend to refresh access.</small>
-                          ) : null}
-                        </div>
-                        <div className="members-shell-invite-meta">
-                          <span>{formatDate(invite?.created_at)}</span>
-                          <div className="members-shell-invite-actions">
-                            <button
-                              type="button"
-                              className="members-shell-link-btn"
-                              onClick={() => handleResendInvite(invite)}
-                              disabled={inviteActionBusyId === String(invite?.id || "")}
-                            >
-                              {inviteActionBusyId === String(invite?.id || "") ? "Working..." : "Resend"}
-                            </button>
-                            <button
-                              type="button"
-                              className="members-shell-link-btn is-danger"
-                              onClick={() => handleCancelInvite(invite)}
-                              disabled={inviteActionBusyId === String(invite?.id || "")}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="members-shell-muted">No pending invites right now.</p>
-                )
-              ) : (
-                <p className="members-shell-muted">
-                  Organization-level invites are admin-only. Use project tabs for scoped invites.
-                </p>
-              )}
-            </article>
-
-            <article className="members-shell-panel">
-              <div className="members-shell-panel-header">
-                <h3>Access notes</h3>
-                <span className="members-shell-chip">{canAdministerMembers ? recentAuditEntries.length : "Admin only"}</span>
-              </div>
-              {canAdministerMembers ? (
-                recentAuditEntries.length ? (
-                  <div className="members-shell-audit-list">
-                    {recentAuditEntries.map((entry) => (
-                      <div className="members-shell-audit-item" key={entry?.id || `${entry?.member_id}-${entry?.occurred_at}`}>
-                        <strong>{entry?.note || "Membership updated."}</strong>
-                        <small>
-                          {entry?.member_name || "Member"} · {entry?.actor_name || "System"} ·{" "}
-                          {formatDateTime(entry?.occurred_at)}
-                        </small>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="members-shell-muted">No access notes recorded yet.</p>
-                )
-              ) : (
-                <p className="members-shell-muted">Access notes are visible to workspace admins only.</p>
-              )}
-            </article>
-
-            <article className="members-shell-panel">
-              <div className="members-shell-panel-header">
-                <h3>Simplified structure</h3>
-              </div>
-              <ul className="members-shell-checklist">
-                <li>People page: organization member directory and invite flow.</li>
-                <li>Project pages: assignment and project-scoped access only.</li>
-                <li>My Settings: each member manages own profile and account details.</li>
-              </ul>
-            </article>
-          </aside>
         </div>
       </section>
 
