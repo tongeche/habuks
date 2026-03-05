@@ -908,6 +908,7 @@ export function ProjectsPage({
   const [archivingExpenseCategoryId, setArchivingExpenseCategoryId] = useState("");
   const [selectedExpenseIds, setSelectedExpenseIds] = useState([]);
   const [selectedExpenseDetailId, setSelectedExpenseDetailId] = useState("");
+  const [expenseActionExpenseId, setExpenseActionExpenseId] = useState("");
   const [detailTab, setDetailTab] = useState("overview");
   const [overviewRange, setOverviewRange] = useState(DEFAULT_PROJECT_OVERVIEW_RANGE);
   const [showBudgetSummaryReportModal, setShowBudgetSummaryReportModal] = useState(false);
@@ -2306,8 +2307,11 @@ export function ProjectsPage({
       if (showCreateProjectActionSheet) {
         setShowCreateProjectActionSheet(false);
       }
+      if (expenseActionExpenseId) {
+        setExpenseActionExpenseId("");
+      }
     }
-  }, [isMobileProjectViewport, showProjectActionSheet, showCreateProjectActionSheet]);
+  }, [isMobileProjectViewport, showProjectActionSheet, showCreateProjectActionSheet, expenseActionExpenseId]);
 
   useEffect(() => {
     if (!selectedProject) {
@@ -2317,6 +2321,7 @@ export function ProjectsPage({
       setProjectInviteFormError("");
       setShowProjectActionSheet(false);
       setMobileDeleteArmed(false);
+      setExpenseActionExpenseId("");
     }
   }, [selectedProject]);
 
@@ -3618,6 +3623,14 @@ export function ProjectsPage({
     );
   }, [sortedProjectExpenses, selectedExpenseDetailId]);
 
+  const expenseActionExpense = useMemo(() => {
+    const normalizedId = String(expenseActionExpenseId || "").trim();
+    if (!normalizedId) return null;
+    return (
+      sortedProjectExpenses.find((expense) => String(expense?.id ?? "") === normalizedId) || null
+    );
+  }, [sortedProjectExpenses, expenseActionExpenseId]);
+
   const selectedExpenseDetailParsed = useMemo(
     () =>
       parseExpenseDescriptionForForm(
@@ -3691,6 +3704,67 @@ export function ProjectsPage({
 
   const closeExpenseDetailModal = () => {
     setSelectedExpenseDetailId("");
+  };
+
+  const openExpenseActionSheet = (expense) => {
+    if (!isMobileProjectViewport) return;
+    const expenseId = String(expense?.id ?? "").trim();
+    if (!expenseId) return;
+    setExpenseActionExpenseId(expenseId);
+  };
+
+  const closeExpenseActionSheet = () => {
+    setExpenseActionExpenseId("");
+  };
+
+  const handleEditExpenseFromActionSheet = () => {
+    if (!canManageProjectContent || !expenseActionExpense) return;
+    const expenseToEdit = expenseActionExpense;
+    closeExpenseActionSheet();
+    openEditExpenseModal(expenseToEdit);
+  };
+
+  const handleDuplicateExpenseFromActionSheet = () => {
+    if (!canManageProjectContent || !expenseActionExpense) return;
+    const parsed = parseExpenseDescriptionForForm(
+      expenseActionExpense?.description,
+      expenseActionExpense?.category
+    );
+    setSelectedExpenseDetailId("");
+    setEditingExpenseId(null);
+    setExpenseForm({
+      title: parsed.title || String(expenseActionExpense?.category || ""),
+      amount:
+        expenseActionExpense?.amount === undefined || expenseActionExpense?.amount === null
+          ? ""
+          : String(expenseActionExpense.amount),
+      category: String(expenseActionExpense?.category || "Supplies"),
+      vendor: String(expenseActionExpense?.vendor || ""),
+      date: String(
+        expenseActionExpense?.expense_date || new Date().toISOString().slice(0, 10)
+      ).slice(0, 10),
+      paymentReference: String(expenseActionExpense?.payment_reference || ""),
+      receiptFile: null,
+      existingReceiptUrl: "",
+      existingReceiptPath: "",
+      notes: parsed.notes || "",
+    });
+    if (expenseFormReceiptInputRef.current) {
+      expenseFormReceiptInputRef.current.value = "";
+    }
+    setExpenseReceiptDragActive(false);
+    setExpenseFormError("");
+    closeExpenseActionSheet();
+    setShowExpenseModal(true);
+  };
+
+  const handleDeleteExpenseFromActionSheet = () => {
+    if (!canManageProjectContent || !expenseActionExpense) return;
+    const expenseId = String(expenseActionExpense?.id ?? "").trim();
+    if (!expenseId) return;
+    setSelectedExpenseIds([expenseId]);
+    closeExpenseActionSheet();
+    setShowDeleteExpensesModal(true);
   };
 
   const clearExpenseLongPressTimer = () => {
@@ -3820,6 +3894,7 @@ export function ProjectsPage({
     setProjectExpenses([]);
     setSelectedExpenseIds([]);
     setSelectedExpenseDetailId("");
+    setExpenseActionExpenseId("");
     setProjectExpensesError("");
     setProjectExpensesLoading(false);
     setExpenseCategoryRows([]);
@@ -7397,15 +7472,15 @@ export function ProjectsPage({
                       <>
                         <div className="project-mobile-finance-summary">
                           <article>
-                            <span>Budget allocated</span>
+                            <span>Budget</span>
                             <strong>{formatCurrency(projectOverviewAnalytics.budgetAmount)}</strong>
                           </article>
                           <article>
-                            <span>Amount spent</span>
+                            <span>Spent</span>
                             <strong>{formatCurrency(projectOverviewAnalytics.spentAmount)}</strong>
                           </article>
                           <article>
-                            <span>Remaining</span>
+                            <span>Bal</span>
                             <strong>{formatCurrency(projectOverviewAnalytics.remainingAmount)}</strong>
                           </article>
                         </div>
@@ -7487,19 +7562,24 @@ export function ProjectsPage({
                               const detailTitle =
                                 String(parsed.title || "").trim() || categoryLabel || `Expense #${expenseId || "-"}`;
                               const vendorLabel = String(expense?.vendor || "").trim();
-                              const hasProof = hasExpenseProof(expense);
-                              const isApproved = Boolean(expense?.approved_by);
                               return (
-                                <button
+                                <div
                                   key={expenseId || `${detailTitle}-${expense?.expense_date || ""}`}
-                                  type="button"
                                   className={`project-expense-mobile-item${isSelected ? " is-selected" : ""}`}
                                   onClick={() => handleExpenseRowActivate(expense)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      handleExpenseRowActivate(expense);
+                                    }
+                                  }}
                                   onTouchStart={() => handleExpensePressStart(expenseId)}
                                   onTouchEnd={handleExpensePressEnd}
                                   onTouchCancel={handleExpensePressEnd}
                                   onTouchMove={handleExpensePressEnd}
                                   onContextMenu={(event) => event.preventDefault()}
+                                  role="button"
+                                  tabIndex={0}
                                   aria-pressed={canManageProjectContent ? isSelected : undefined}
                                 >
                                   <span className={`project-expense-mobile-item-icon tone-${categoryTone}`} aria-hidden="true">
@@ -7514,18 +7594,24 @@ export function ProjectsPage({
                                   </span>
                                   <span className="project-expense-mobile-item-right">
                                     <strong>{formatCurrency(expense?.amount)}</strong>
-                                    <span className="project-expense-mobile-item-flags">
-                                      <span className={`project-expense-mobile-flag${hasProof ? " is-active" : ""}`}>
-                                        <Icon name="receipt" size={12} />
-                                        {hasProof ? "Proof" : "No proof"}
-                                      </span>
-                                      <span className={`project-expense-mobile-flag${isApproved ? " is-active" : ""}`}>
-                                        <Icon name="check-circle" size={12} />
-                                        {isApproved ? "Approved" : "Pending"}
-                                      </span>
-                                    </span>
+                                    {canManageProjectContent ? (
+                                      <button
+                                        type="button"
+                                        className="project-expense-mobile-item-menu"
+                                        onTouchStart={(event) => event.stopPropagation()}
+                                        onTouchEnd={(event) => event.stopPropagation()}
+                                        onMouseDown={(event) => event.stopPropagation()}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openExpenseActionSheet(expense);
+                                        }}
+                                        aria-label={`Expense actions for ${detailTitle}`}
+                                      >
+                                        <Icon name="more-horizontal" size={14} />
+                                      </button>
+                                    ) : null}
                                   </span>
-                                </button>
+                                </div>
                               );
                             })}
                           </div>
@@ -8789,6 +8875,73 @@ export function ProjectsPage({
             >
               {mobileDeleteArmed ? "Tap again to delete project" : "Delete project"}
             </button>
+          </div>
+        </div>
+      ) : null}
+
+      {Boolean(selectedProject) && Boolean(expenseActionExpense) && isMobileProjectViewport ? (
+        <div className="project-action-sheet-overlay" onClick={closeExpenseActionSheet} role="presentation">
+          <div
+            className="project-action-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Expense actions"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="project-action-sheet-handle" aria-hidden="true" />
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => {
+                const expense = expenseActionExpense;
+                closeExpenseActionSheet();
+                openExpenseDetailModal(expense);
+              }}
+            >
+              View details
+            </button>
+            {canManageProjectContent ? (
+              <button
+                type="button"
+                className="project-action-sheet-btn"
+                onClick={handleEditExpenseFromActionSheet}
+                disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+              >
+                Edit expense
+              </button>
+            ) : null}
+            {canManageProjectContent ? (
+              <button
+                type="button"
+                className="project-action-sheet-btn"
+                onClick={handleDuplicateExpenseFromActionSheet}
+                disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+              >
+                Duplicate expense
+              </button>
+            ) : null}
+            {expenseActionExpense?.receipt_download_url ? (
+              <a
+                className="project-action-sheet-btn project-action-sheet-btn--link"
+                href={expenseActionExpense.receipt_download_url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={closeExpenseActionSheet}
+              >
+                View receipt
+              </a>
+            ) : null}
+            {canManageProjectContent ? <hr /> : null}
+            {canManageProjectContent ? (
+              <button
+                type="button"
+                className="project-action-sheet-btn is-danger"
+                onClick={handleDeleteExpenseFromActionSheet}
+                disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+              >
+                Delete expense
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}

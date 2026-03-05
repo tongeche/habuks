@@ -16283,6 +16283,20 @@
   font-size: 0.82rem;
 }
 
+.project-expense-mobile-item-menu {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #dbe4f0;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+
 .project-expense-mobile-item-flags {
   display: flex;
   flex-direction: column;
@@ -20661,6 +20675,20 @@
     font-size: 0.82rem;
   }
 
+  .project-expense-mobile-item-menu {
+    width: 28px;
+    height: 28px;
+    border: 1px solid #dbe4f0;
+    border-radius: 9px;
+    background: #f8fafc;
+    color: #475569;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+  }
+
   .project-expense-mobile-item-flags {
     display: flex;
     flex-direction: column;
@@ -20810,6 +20838,12 @@
     color: #0f172a;
     font-size: 0.94rem;
     font-weight: 500;
+  }
+
+  .project-action-sheet-btn--link {
+    display: block;
+    color: inherit;
+    text-decoration: none;
   }
 
   .project-action-sheet-btn.is-danger {
@@ -30631,6 +30665,12 @@
   border-color: rgba(45, 212, 191, 0.4);
   box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.2);
   background: rgba(15, 118, 110, 0.16);
+}
+
+.dashboard-layout.is-dark .project-expense-mobile-item-menu {
+  border-color: rgba(67, 84, 112, 0.72);
+  background: rgba(12, 28, 50, 0.9);
+  color: #9fb3d1;
 }
 
 .dashboard-layout.is-dark .project-expense-mobile-flag {
