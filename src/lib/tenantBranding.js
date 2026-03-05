@@ -25,12 +25,55 @@ const toObject = (value) => (value && typeof value === "object" ? value : {});
 
 export function buildTenantBrand(tenant, baseData = {}) {
   const overrides = toObject(tenant?.site_data);
+  const overrideContact = toObject(overrides.contact);
+  const baseContact = toObject(baseData.contact);
+  const overrideProfile = toObject(overrides.organization_profile);
+  const baseProfile = toObject(baseData.organization_profile);
   return {
     id: tenant?.id ?? null,
     name: overrides.orgName ?? tenant?.name ?? baseData.orgName ?? "Habuks",
     tagline: overrides.orgTagline ?? tenant?.tagline ?? baseData.orgTagline ?? "",
     logoUrl: overrides.logoUrl ?? tenant?.logo_url ?? baseData.logoUrl ?? "/assets/logo.png",
     slug: tenant?.slug ?? null,
+    contactEmail:
+      overrides.contactEmail ??
+      tenant?.contact_email ??
+      overrideContact.email ??
+      baseData.contactEmail ??
+      baseContact.email ??
+      "",
+    contactPhone:
+      overrides.contactPhone ??
+      tenant?.contact_phone ??
+      overrideContact.phone ??
+      baseData.contactPhone ??
+      baseContact.phone ??
+      "",
+    location: overrides.location ?? tenant?.location ?? overrideContact.location ?? baseContact.location ?? "",
+    address: overrides.address ?? overrideContact.address ?? baseContact.address ?? "",
+    website: overrides.website ?? overrideProfile.website ?? baseProfile.website ?? baseData.website ?? "",
+    contact: {
+      email:
+        overrides.contactEmail ??
+        tenant?.contact_email ??
+        overrideContact.email ??
+        baseData.contactEmail ??
+        baseContact.email ??
+        "",
+      phone:
+        overrides.contactPhone ??
+        tenant?.contact_phone ??
+        overrideContact.phone ??
+        baseData.contactPhone ??
+        baseContact.phone ??
+        "",
+      location: overrides.location ?? tenant?.location ?? overrideContact.location ?? baseContact.location ?? "",
+      address: overrides.address ?? overrideContact.address ?? baseContact.address ?? "",
+      website: overrides.website ?? overrideProfile.website ?? baseProfile.website ?? baseData.website ?? "",
+    },
+    organization_profile: {
+      website: overrides.website ?? overrideProfile.website ?? baseProfile.website ?? baseData.website ?? "",
+    },
   };
 }
 

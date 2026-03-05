@@ -195,13 +195,22 @@ function DashboardLayout({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [openSections, setOpenSections] = useState(() => new Set());
   const [isCollapsed, setIsCollapsed] = useState(() => {
-    // Load from localStorage on initial render
-    const saved = localStorage.getItem("dashboard-sidebar-collapsed");
-    return saved ? JSON.parse(saved) : false;
+    if (typeof window === "undefined") {
+      return true;
+    }
+    const saved = window.localStorage.getItem("dashboard-sidebar-collapsed");
+    if (saved === null) {
+      return true;
+    }
+    try {
+      const parsed = JSON.parse(saved);
+      return typeof parsed === "boolean" ? parsed : true;
+    } catch {
+      return true;
+    }
   });
   const [dashboardThemeMode, setDashboardThemeMode] = useState(getInitialDashboardThemeMode);
   const [quietModeUntil, setQuietModeUntil] = useState(getInitialQuietModeUntil);
-  const [sidebarHovered, setSidebarHovered] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showResponseModal, setShowResponseModal] = useState(false);
   const [inviteForm, setInviteForm] = useState(() => createInviteForm());
@@ -245,7 +254,8 @@ function DashboardLayout({
 
   // Persist sidebar state to localStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem("dashboard-sidebar-collapsed", JSON.stringify(isCollapsed));
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("dashboard-sidebar-collapsed", JSON.stringify(isCollapsed));
   }, [isCollapsed]);
 
   useEffect(() => {
@@ -573,19 +583,6 @@ function DashboardLayout({
       }
       return next;
     });
-  };
-
-  const handleSidebarMouseEnter = () => {
-    setSidebarHovered(true);
-    // Only expand on hover if currently collapsed
-    if (isCollapsed) {
-      setIsCollapsed(false);
-    }
-  };
-
-  const handleSidebarMouseLeave = () => {
-    setSidebarHovered(false);
-    // Don't auto-collapse on leave - user must manually collapse
   };
 
   const handleHeaderDoubleClick = (e) => {
@@ -998,8 +995,6 @@ function DashboardLayout({
         className={`dashboard-sidebar${sidebarOpen ? " open" : ""}${
           isCollapsed ? " is-collapsed" : ""
         }`}
-        onMouseEnter={handleSidebarMouseEnter}
-        onMouseLeave={handleSidebarMouseLeave}
       >
         <div className="dashboard-sidebar-card">
           <div className="dashboard-sidebar-header" onDoubleClick={handleHeaderDoubleClick}>
@@ -1075,6 +1070,7 @@ function DashboardLayout({
                               setSidebarOpen(false);
                             }}
                             title={isCollapsed ? item.label : undefined}
+                            data-nav-label={item.label}
                             style={accentStyle}
                           >
                             <span className="dashboard-nav-item-main">
@@ -1126,6 +1122,7 @@ function DashboardLayout({
               className="dashboard-switch-tenant"
               onClick={() => navigate("/select-tenant")}
               title={isCollapsed ? "Switch workspace" : undefined}
+              data-nav-label="Switch workspace"
             >
               <Icon name="layers" size={20} />
               <span>Switch workspace</span>
@@ -1134,6 +1131,7 @@ function DashboardLayout({
               className="dashboard-logout"
               onClick={handleLogout}
               title={isCollapsed ? "Logout" : undefined}
+              data-nav-label="Logout"
             >
               <Icon name="logout" size={20} />
               <span>Logout</span>

@@ -47,6 +47,7 @@ import {
 } from "../../lib/dataService.js";
 import { presentAppError } from "../../lib/appErrors.js";
 import { formatCurrencyAmount } from "../../lib/currency.js";
+import { buildActivityReportFile } from "../../lib/reporting/activityReport.js";
 import { buildProjectCompletionReportFile } from "../../lib/reporting/projectCompletionReport.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
@@ -1032,6 +1033,7 @@ export function ProjectsPage({
   const [projectActionConfirm, setProjectActionConfirm] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
   const [showProjectActionSheet, setShowProjectActionSheet] = useState(false);
+  const [mobileProjectActionTarget, setMobileProjectActionTarget] = useState(null);
   const [mobileDeleteArmed, setMobileDeleteArmed] = useState(false);
   const [isMobileProjectViewport, setIsMobileProjectViewport] = useState(() =>
     typeof window !== "undefined" ? window.matchMedia("(max-width: 720px)").matches : false
@@ -1143,6 +1145,7 @@ export function ProjectsPage({
   const canManageProjectContent = canCreateProject;
   const canSelfManageMembership = isAdmin;
   const canAcceptProjectInvites = Boolean(user?.id);
+  const activeProjectActionTarget = selectedProject || mobileProjectActionTarget;
   const parsedEditingProjectId = Number.parseInt(String(editingProjectId ?? ""), 10);
   const isEditingProject = Number.isInteger(parsedEditingProjectId) && parsedEditingProjectId > 0;
 
@@ -2049,9 +2052,17 @@ export function ProjectsPage({
     }
   };
 
-  const handleToggleProjectMenu = (projectId, event) => {
+  const handleToggleProjectMenu = (project, event) => {
     event.stopPropagation();
     if (projectActionInFlightId) return;
+    if (isMobileProjectViewport) {
+      setOpenProjectMenuId(null);
+      setMobileProjectActionTarget(project || null);
+      setMobileDeleteArmed(false);
+      setShowProjectActionSheet(Boolean(project));
+      return;
+    }
+    const projectId = project?.id;
     setOpenProjectMenuId((prev) => (prev === projectId ? null : projectId));
   };
 
@@ -2070,6 +2081,9 @@ export function ProjectsPage({
       confirmLabel: nextVisible ? "Show project" : "Hide project",
     });
     setOpenProjectMenuId(null);
+    setShowProjectActionSheet(false);
+    setMobileProjectActionTarget(null);
+    setMobileDeleteArmed(false);
   };
 
   const requestDeleteProject = (project) => {
@@ -2082,15 +2096,22 @@ export function ProjectsPage({
       confirmLabel: "Delete project",
     });
     setOpenProjectMenuId(null);
+    setShowProjectActionSheet(false);
+    setMobileProjectActionTarget(null);
+    setMobileDeleteArmed(false);
   };
 
   const closeProjectActionSheet = () => {
     if (projectActionInFlightId) return;
     setShowProjectActionSheet(false);
+    setMobileProjectActionTarget(null);
     setMobileDeleteArmed(false);
   };
 
-  const openProjectActionSheet = () => {
+  const openProjectActionSheet = (project = null) => {
+    if (project?.id) {
+      setMobileProjectActionTarget(project);
+    }
     setMobileDeleteArmed(false);
     setShowProjectActionSheet(true);
   };
@@ -2099,9 +2120,9 @@ export function ProjectsPage({
     setDetailTab(pillKey);
   };
 
-  const handleDuplicateSelectedProject = async () => {
-    if (!canCreateProject || !selectedProject?.id) return;
-    const sourceProject = selectedProject;
+  const handleDuplicateSelectedProject = async (project = null) => {
+    const sourceProject = project || activeProjectActionTarget;
+    if (!canCreateProject || !sourceProject?.id) return;
     const sourceName = String(sourceProject?.name || "Project").trim() || "Project";
     const duplicateName = `${sourceName} (Copy)`;
 
@@ -2126,6 +2147,7 @@ export function ProjectsPage({
         message: `Created duplicate project "${duplicateName}".`,
       });
       setShowProjectActionSheet(false);
+      setMobileProjectActionTarget(null);
       setMobileDeleteArmed(false);
     } catch (error) {
       showFriendlyProjectError(error, {
@@ -2143,26 +2165,28 @@ export function ProjectsPage({
     }
   };
 
-  const handleArchiveSelectedProject = async () => {
-    if (!canCreateProject || !selectedProject?.id) return;
-    const projectName = String(selectedProject?.name || "this project").trim();
+  const handleArchiveSelectedProject = async (project = null) => {
+    const targetProject = project || activeProjectActionTarget;
+    if (!canCreateProject || !targetProject?.id) return;
+    const projectName = String(targetProject?.name || "this project").trim();
     if (!window.confirm(`Archive ${projectName}?`)) {
       return;
     }
 
-    setProjectActionInFlightId(String(selectedProject.id));
+    setProjectActionInFlightId(String(targetProject.id));
     setProjectsNotice(null);
     try {
-      await updateIgaProject(selectedProject.id, { status: "archived" }, tenantId);
+      await updateIgaProject(targetProject.id, { status: "archived" }, tenantId);
       await loadProjects();
       setSelectedProject((prev) =>
-        prev?.id === selectedProject.id ? { ...prev, status: "archived" } : prev
+        prev?.id === targetProject.id ? { ...prev, status: "archived" } : prev
       );
       setProjectsNotice({
         type: "success",
         message: `${projectName} archived.`,
       });
       setShowProjectActionSheet(false);
+      setMobileProjectActionTarget(null);
       setMobileDeleteArmed(false);
     } catch (error) {
       showFriendlyProjectError(error, {
@@ -2172,7 +2196,7 @@ export function ProjectsPage({
           area: "projects",
           action: "archive_project",
           tenantId,
-          projectId: selectedProject.id,
+          projectId: targetProject.id,
         },
       });
     } finally {
@@ -2180,15 +2204,17 @@ export function ProjectsPage({
     }
   };
 
-  const handleMobileDeleteProject = () => {
-    if (!selectedProject?.id || !canCreateProject) return;
+  const handleMobileDeleteProject = (project = null) => {
+    const targetProject = project || activeProjectActionTarget;
+    if (!targetProject?.id || !canCreateProject) return;
     if (!mobileDeleteArmed) {
       setMobileDeleteArmed(true);
       return;
     }
     setShowProjectActionSheet(false);
+    setMobileProjectActionTarget(null);
     setMobileDeleteArmed(false);
-    requestDeleteProject(selectedProject);
+    requestDeleteProject(targetProject);
   };
 
   const closeProjectActionConfirm = () => {
@@ -2593,7 +2619,7 @@ export function ProjectsPage({
           aria-haspopup="menu"
           aria-expanded={openProjectMenuId === project.id}
           aria-label={`Project actions for ${project.name}`}
-          onClick={(event) => handleToggleProjectMenu(project.id, event)}
+          onClick={(event) => handleToggleProjectMenu(project, event)}
           disabled={isActionBusy}
         >
           <Icon name="more-horizontal" size={16} />
@@ -2647,6 +2673,7 @@ export function ProjectsPage({
     setSelectedProject(project);
     setDetailTab("overview");
     setShowProjectActionSheet(false);
+    setMobileProjectActionTarget(null);
     setMobileDeleteArmed(false);
     setOverviewRange(DEFAULT_PROJECT_OVERVIEW_RANGE);
     setShowBudgetSummaryReportModal(false);
@@ -2664,6 +2691,7 @@ export function ProjectsPage({
   const closeProjectDetails = () => {
     setShowBudgetSummaryReportModal(false);
     setSelectedProject(null);
+    setMobileProjectActionTarget(null);
   };
 
   useEffect(() => {
@@ -2695,6 +2723,7 @@ export function ProjectsPage({
     if (!isMobileProjectViewport) {
       if (showProjectActionSheet) {
         setShowProjectActionSheet(false);
+        setMobileProjectActionTarget(null);
         setMobileDeleteArmed(false);
       }
       if (showCreateProjectActionSheet) {
@@ -2715,6 +2744,9 @@ export function ProjectsPage({
       if (documentActionDocumentId) {
         setDocumentActionDocumentId("");
       }
+      if (openProjectMenuId) {
+        setOpenProjectMenuId(null);
+      }
     }
   }, [
     isMobileProjectViewport,
@@ -2725,6 +2757,7 @@ export function ProjectsPage({
     showDocumentCreateActionSheet,
     showDocumentTemplateActionSheet,
     documentActionDocumentId,
+    openProjectMenuId,
   ]);
 
   useEffect(() => {
@@ -2734,6 +2767,7 @@ export function ProjectsPage({
       setShowProjectInviteModal(false);
       setProjectInviteFormError("");
       setShowProjectActionSheet(false);
+      setMobileProjectActionTarget(null);
       setMobileDeleteArmed(false);
       setExpenseActionExpenseId("");
       setTaskActionTaskId("");
@@ -6009,6 +6043,15 @@ export function ProjectsPage({
     const dateStamp = new Date().toISOString().slice(0, 10);
     const fileName = `${toFilenameSlug(safeProjectName)}-${safeOption.value}-${dateStamp}.pdf`;
     const context = buildProjectDocumentContext();
+    if (safeOption.value === "activity_report") {
+      return buildActivityReportFile({
+        tenantBrand,
+        user,
+        context,
+        fileName,
+        currencyCode,
+      });
+    }
     if (safeOption.value === "project_completion_report") {
       return buildProjectCompletionReportFile({
         tenantBrand,
@@ -7395,6 +7438,14 @@ export function ProjectsPage({
       return;
     }
     openProjectDetails(project);
+  };
+
+  const openProjectDetailsFromActionSheet = (project, tab = "overview") => {
+    if (!project?.id) return;
+    setMobileProjectActionTarget(null);
+    setMobileDeleteArmed(false);
+    openProjectDetails(project);
+    setDetailTab(tab);
   };
 
   useEffect(
@@ -10298,7 +10349,7 @@ export function ProjectsPage({
         )}
       </DataModal>
 
-      {Boolean(selectedProject) && showProjectActionSheet ? (
+      {Boolean(activeProjectActionTarget) && showProjectActionSheet ? (
         <div className="project-action-sheet-overlay" onClick={closeProjectActionSheet} role="presentation">
           <div
             className="project-action-sheet"
@@ -10311,53 +10362,122 @@ export function ProjectsPage({
             <button
               type="button"
               className="project-action-sheet-btn"
-              onClick={() => {
-                const projectToEdit = selectedProject;
-                closeProjectActionSheet();
-                setSelectedProject(null);
-                openEditProjectModal(projectToEdit);
-              }}
+              onClick={() => openProjectDetailsFromActionSheet(activeProjectActionTarget, "overview")}
               disabled={Boolean(projectActionInFlightId)}
             >
-              Edit project
+              Open overview
             </button>
             <button
               type="button"
               className="project-action-sheet-btn"
-              onClick={handleDuplicateSelectedProject}
+              onClick={() => openProjectDetailsFromActionSheet(activeProjectActionTarget, "expenses")}
               disabled={Boolean(projectActionInFlightId)}
             >
-              Duplicate project
+              Open expenses
             </button>
             <button
               type="button"
               className="project-action-sheet-btn"
-              onClick={handleArchiveSelectedProject}
+              onClick={() => openProjectDetailsFromActionSheet(activeProjectActionTarget, "documents")}
               disabled={Boolean(projectActionInFlightId)}
             >
-              Archive project
+              Open docs
             </button>
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => openProjectDetailsFromActionSheet(activeProjectActionTarget, "tasks")}
+              disabled={Boolean(projectActionInFlightId)}
+            >
+              Open tasks
+            </button>
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => openProjectDetailsFromActionSheet(activeProjectActionTarget, "notes")}
+              disabled={Boolean(projectActionInFlightId)}
+            >
+              Open notes
+            </button>
+            {canViewProjectInvites ? (
+              <button
+                type="button"
+                className="project-action-sheet-btn"
+                onClick={() => openProjectDetailsFromActionSheet(activeProjectActionTarget, "invites")}
+                disabled={Boolean(projectActionInFlightId)}
+              >
+                Open invites
+              </button>
+            ) : null}
+            {canCreateProject ? (
+              <>
+                <hr />
+                <button
+                  type="button"
+                  className="project-action-sheet-btn"
+                  onClick={() => {
+                    const projectToEdit = activeProjectActionTarget;
+                    closeProjectActionSheet();
+                    if (selectedProject?.id === projectToEdit?.id) {
+                      setSelectedProject(null);
+                    }
+                    openEditProjectModal(projectToEdit);
+                  }}
+                  disabled={Boolean(projectActionInFlightId)}
+                >
+                  Edit project
+                </button>
+                <button
+                  type="button"
+                  className="project-action-sheet-btn"
+                  onClick={() => handleDuplicateSelectedProject(activeProjectActionTarget)}
+                  disabled={Boolean(projectActionInFlightId)}
+                >
+                  Duplicate project
+                </button>
+                <button
+                  type="button"
+                  className="project-action-sheet-btn"
+                  onClick={() => handleArchiveSelectedProject(activeProjectActionTarget)}
+                  disabled={Boolean(projectActionInFlightId)}
+                >
+                  Archive project
+                </button>
+                <button
+                  type="button"
+                  className="project-action-sheet-btn"
+                  onClick={() => requestProjectVisibilityToggle(activeProjectActionTarget)}
+                  disabled={Boolean(projectActionInFlightId)}
+                >
+                  {activeProjectActionTarget?.is_visible !== false ? "Hide project" : "Show project"}
+                </button>
+              </>
+            ) : null}
             <hr />
             <button
               type="button"
               className="project-action-sheet-btn"
               onClick={() => {
-                closeProjectActionSheet();
-                openBudgetSummaryReportModal();
+                openProjectDetailsFromActionSheet(activeProjectActionTarget, "overview");
+                setShowBudgetSummaryReportModal(true);
               }}
               disabled={Boolean(projectActionInFlightId)}
             >
               Export project report
             </button>
-            <hr />
-            <button
-              type="button"
-              className={`project-action-sheet-btn is-danger${mobileDeleteArmed ? " is-armed" : ""}`}
-              onClick={handleMobileDeleteProject}
-              disabled={Boolean(projectActionInFlightId)}
-            >
-              {mobileDeleteArmed ? "Tap again to delete project" : "Delete project"}
-            </button>
+            {canCreateProject ? (
+              <>
+                <hr />
+                <button
+                  type="button"
+                  className={`project-action-sheet-btn is-danger${mobileDeleteArmed ? " is-armed" : ""}`}
+                  onClick={() => handleMobileDeleteProject(activeProjectActionTarget)}
+                  disabled={Boolean(projectActionInFlightId)}
+                >
+                  {mobileDeleteArmed ? "Tap again to delete project" : "Delete project"}
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}
