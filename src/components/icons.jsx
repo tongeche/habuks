@@ -454,6 +454,14 @@ export const Icon = ({ name, size = 18, className = "" }) => {
           <circle cx="5" cy="12" r="1" fill="currentColor" />
         </svg>
       );
+    case "more-vertical":
+      return (
+        <svg {...common} aria-hidden="true">
+          <circle cx="12" cy="12" r="1" fill="currentColor" />
+          <circle cx="12" cy="19" r="1" fill="currentColor" />
+          <circle cx="12" cy="5" r="1" fill="currentColor" />
+        </svg>
+      );
     default:
       return null;
   }

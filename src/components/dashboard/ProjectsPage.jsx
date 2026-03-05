@@ -404,6 +404,13 @@ const TASK_STATUS_GROUP_LABELS = {
   cancelled: "Cancelled",
 };
 
+const MOBILE_TASK_STATUS_CHIPS = [
+  { key: "all", label: "All" },
+  { key: "open", label: "Open" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "done", label: "Completed" },
+];
+
 const NOTE_VISIBILITY_LABELS = {
   project_team: "Project team",
   admins_only: "Admins only",
@@ -449,6 +456,32 @@ const PROJECT_EMIT_DOCUMENT_OPTIONS = [
   { value: "activity_report", label: "Activity Report" },
   { value: "project_completion_report", label: "Project Completion Report" },
 ];
+
+const MOBILE_PROJECT_DOCUMENT_MODE_OPTIONS = [
+  { key: "files", label: "Files" },
+  { key: "reports", label: "Reports" },
+];
+
+const isGeneratedProjectReportDocument = (document) => {
+  const normalizedName = String(document?.name || "")
+    .trim()
+    .toLowerCase();
+  const normalizedPath = String(document?.file_path || "")
+    .trim()
+    .toLowerCase();
+  if (!normalizedName && !normalizedPath) return false;
+
+  return PROJECT_EMIT_DOCUMENT_OPTIONS.some((option) => {
+    const normalizedLabel = String(option.label || "")
+      .trim()
+      .toLowerCase();
+    const dashedToken = `-${option.value}-`;
+    if (normalizedName.startsWith(`${normalizedLabel} - `)) return true;
+    if (normalizedName.includes(dashedToken)) return true;
+    if (normalizedPath.includes(dashedToken)) return true;
+    return false;
+  });
+};
 
 const PROJECT_OVERVIEW_RANGE_OPTIONS = [
   { value: "30d", label: "30D", windowLabel: "Last 30 days", deltaLabel: "vs previous day" },
@@ -847,6 +880,11 @@ export function ProjectsPage({
   const suppressProjectOpenRef = useRef(false);
   const expenseLongPressTimerRef = useRef(null);
   const suppressExpenseOpenRef = useRef(false);
+  const documentLongPressTimerRef = useRef(null);
+  const documentSwipeTouchRef = useRef(null);
+  const suppressDocumentOpenRef = useRef(false);
+  const taskSwipeTouchRef = useRef(null);
+  const suppressTaskOpenRef = useRef(false);
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [joiningId, setJoiningId] = useState(null);
@@ -885,8 +923,12 @@ export function ProjectsPage({
   const [projectDocumentsLoading, setProjectDocumentsLoading] = useState(false);
   const [projectDocumentsError, setProjectDocumentsError] = useState("");
   const [projectDocumentMode, setProjectDocumentMode] = useState("upload");
+  const [mobileProjectDocumentMode, setMobileProjectDocumentMode] = useState("files");
   const [emitDocumentType, setEmitDocumentType] = useState(PROJECT_EMIT_DOCUMENT_OPTIONS[0].value);
   const [projectDocumentTemplateMenuOpen, setProjectDocumentTemplateMenuOpen] = useState(false);
+  const [showDocumentTemplateActionSheet, setShowDocumentTemplateActionSheet] = useState(false);
+  const [showDocumentCreateActionSheet, setShowDocumentCreateActionSheet] = useState(false);
+  const [documentActionDocumentId, setDocumentActionDocumentId] = useState("");
   const [emittingProjectDocument, setEmittingProjectDocument] = useState(false);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState([]);
   const [uploadingProjectDocument, setUploadingProjectDocument] = useState(false);
@@ -930,6 +972,8 @@ export function ProjectsPage({
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
   const [taskStatusFilter, setTaskStatusFilter] = useState("all");
   const [taskAssigneeFilter, setTaskAssigneeFilter] = useState("all");
+  const [mobileTaskStatusFilter, setMobileTaskStatusFilter] = useState("all");
+  const [taskActionTaskId, setTaskActionTaskId] = useState("");
   const [selectedTaskIds, setSelectedTaskIds] = useState([]);
   const [taskForm, setTaskForm] = useState(() => createInitialTaskForm());
   const [taskFormError, setTaskFormError] = useState("");
@@ -2285,6 +2329,10 @@ export function ProjectsPage({
     setProjectInviteForm(createInitialProjectInviteForm());
     setProjectInviteFormError("");
     setProjectInvitesError("");
+    setMobileProjectDocumentMode("files");
+    setShowDocumentCreateActionSheet(false);
+    setShowDocumentTemplateActionSheet(false);
+    setDocumentActionDocumentId("");
   };
 
   const closeProjectDetails = () => {
@@ -2299,6 +2347,25 @@ export function ProjectsPage({
   }, [detailTab, canViewProjectInvites]);
 
   useEffect(() => {
+    if (detailTab === "tasks") return;
+    if (!taskActionTaskId) return;
+    setTaskActionTaskId("");
+  }, [detailTab, taskActionTaskId]);
+
+  useEffect(() => {
+    if (detailTab === "documents") return;
+    if (showDocumentCreateActionSheet) {
+      setShowDocumentCreateActionSheet(false);
+    }
+    if (showDocumentTemplateActionSheet) {
+      setShowDocumentTemplateActionSheet(false);
+    }
+    if (documentActionDocumentId) {
+      setDocumentActionDocumentId("");
+    }
+  }, [detailTab, showDocumentCreateActionSheet, showDocumentTemplateActionSheet, documentActionDocumentId]);
+
+  useEffect(() => {
     if (!isMobileProjectViewport) {
       if (showProjectActionSheet) {
         setShowProjectActionSheet(false);
@@ -2310,8 +2377,29 @@ export function ProjectsPage({
       if (expenseActionExpenseId) {
         setExpenseActionExpenseId("");
       }
+      if (taskActionTaskId) {
+        setTaskActionTaskId("");
+      }
+      if (showDocumentCreateActionSheet) {
+        setShowDocumentCreateActionSheet(false);
+      }
+      if (showDocumentTemplateActionSheet) {
+        setShowDocumentTemplateActionSheet(false);
+      }
+      if (documentActionDocumentId) {
+        setDocumentActionDocumentId("");
+      }
     }
-  }, [isMobileProjectViewport, showProjectActionSheet, showCreateProjectActionSheet, expenseActionExpenseId]);
+  }, [
+    isMobileProjectViewport,
+    showProjectActionSheet,
+    showCreateProjectActionSheet,
+    expenseActionExpenseId,
+    taskActionTaskId,
+    showDocumentCreateActionSheet,
+    showDocumentTemplateActionSheet,
+    documentActionDocumentId,
+  ]);
 
   useEffect(() => {
     if (!selectedProject) {
@@ -2322,6 +2410,10 @@ export function ProjectsPage({
       setShowProjectActionSheet(false);
       setMobileDeleteArmed(false);
       setExpenseActionExpenseId("");
+      setTaskActionTaskId("");
+      setShowDocumentCreateActionSheet(false);
+      setShowDocumentTemplateActionSheet(false);
+      setDocumentActionDocumentId("");
     }
   }, [selectedProject]);
 
@@ -3881,7 +3973,11 @@ export function ProjectsPage({
     setProjectDocumentsLoading(false);
     setProjectDocumentsError("");
     setProjectDocumentMode("upload");
+    setMobileProjectDocumentMode("files");
     setEmitDocumentType(PROJECT_EMIT_DOCUMENT_OPTIONS[0].value);
+    setShowDocumentTemplateActionSheet(false);
+    setShowDocumentCreateActionSheet(false);
+    setDocumentActionDocumentId("");
     setEmittingProjectDocument(false);
     setSelectedDocumentIds([]);
     setUploadingProjectDocument(false);
@@ -3921,6 +4017,8 @@ export function ProjectsPage({
     setTaskSearchQuery("");
     setTaskStatusFilter("all");
     setTaskAssigneeFilter("all");
+    setMobileTaskStatusFilter("all");
+    setTaskActionTaskId("");
     setSelectedTaskIds([]);
     setTaskForm(createInitialTaskForm());
     setTaskFormError("");
@@ -4642,6 +4740,274 @@ export function ProjectsPage({
     return sortedProjectDocuments.filter((document) => selectedSet.has(String(document?.id ?? "")));
   }, [sortedProjectDocuments, selectedDocumentIds]);
 
+  const mobileReportProjectDocuments = useMemo(
+    () => sortedProjectDocuments.filter((document) => isGeneratedProjectReportDocument(document)),
+    [sortedProjectDocuments]
+  );
+
+  const mobileFileProjectDocuments = useMemo(
+    () => sortedProjectDocuments.filter((document) => !isGeneratedProjectReportDocument(document)),
+    [sortedProjectDocuments]
+  );
+
+  const mobileVisibleProjectDocuments = useMemo(
+    () => (mobileProjectDocumentMode === "reports" ? mobileReportProjectDocuments : mobileFileProjectDocuments),
+    [mobileProjectDocumentMode, mobileReportProjectDocuments, mobileFileProjectDocuments]
+  );
+
+  const documentActionDocument = useMemo(() => {
+    const normalizedId = String(documentActionDocumentId || "").trim();
+    if (!normalizedId) return null;
+    return (
+      sortedProjectDocuments.find((document) => String(document?.id ?? "") === normalizedId) || null
+    );
+  }, [sortedProjectDocuments, documentActionDocumentId]);
+
+  useEffect(() => {
+    if (!isMobileProjectViewport || detailTab !== "documents") return;
+    const visibleSet = new Set(
+      mobileVisibleProjectDocuments
+        .map((document) => String(document?.id ?? ""))
+        .filter(Boolean)
+    );
+    setSelectedDocumentIds((prev) => prev.filter((documentId) => visibleSet.has(String(documentId))));
+  }, [isMobileProjectViewport, detailTab, mobileVisibleProjectDocuments]);
+
+  useEffect(() => {
+    return () => {
+      if (documentLongPressTimerRef.current) {
+        window.clearTimeout(documentLongPressTimerRef.current);
+        documentLongPressTimerRef.current = null;
+      }
+      documentSwipeTouchRef.current = null;
+    };
+  }, []);
+
+  const getProjectDocumentUrl = (documentRow) =>
+    String(documentRow?.download_url || documentRow?.file_url || "").trim();
+
+  const openProjectDocumentInBrowser = (documentRow) => {
+    const downloadUrl = getProjectDocumentUrl(documentRow);
+    if (!downloadUrl) {
+      setProjectsNotice({
+        type: "warning",
+        message: "Document preview is unavailable.",
+      });
+      return;
+    }
+    window.open(downloadUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const handleDownloadProjectDocument = (documentRow) => {
+    const downloadUrl = getProjectDocumentUrl(documentRow);
+    if (!downloadUrl) {
+      setProjectsNotice({
+        type: "warning",
+        message: "Document download is unavailable.",
+      });
+      return;
+    }
+    window.open(downloadUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const handleShareProjectDocument = async (documentRow) => {
+    const downloadUrl = getProjectDocumentUrl(documentRow);
+    if (!downloadUrl) {
+      setProjectsNotice({
+        type: "warning",
+        message: "Document link is unavailable to share.",
+      });
+      return;
+    }
+    const fileName = String(documentRow?.name || "Document").trim() || "Document";
+
+    try {
+      if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+        await navigator.share({
+          title: fileName,
+          text: fileName,
+          url: downloadUrl,
+        });
+        return;
+      }
+    } catch (error) {
+      const isAbortError = String(error?.name || "").toLowerCase() === "aborterror";
+      if (!isAbortError) {
+        console.error("Error sharing project document:", error);
+      }
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(downloadUrl);
+      setProjectsNotice({
+        type: "success",
+        message: "Document link copied.",
+      });
+    } catch (error) {
+      console.error("Error copying document link:", error);
+      setProjectsNotice({
+        type: "warning",
+        message: "Unable to share this document right now.",
+      });
+    }
+  };
+
+  const openDocumentActionSheet = (documentRow) => {
+    if (!isMobileProjectViewport) return;
+    const documentId = String(documentRow?.id ?? "").trim();
+    if (!documentId) return;
+    setDocumentActionDocumentId(documentId);
+  };
+
+  const closeDocumentActionSheet = () => {
+    setDocumentActionDocumentId("");
+  };
+
+  const openDocumentCreateActionSheet = () => {
+    if (!isMobileProjectViewport || !canManageProjectContent) return;
+    setShowDocumentTemplateActionSheet(false);
+    setShowDocumentCreateActionSheet(true);
+  };
+
+  const closeDocumentCreateActionSheet = () => {
+    setShowDocumentCreateActionSheet(false);
+  };
+
+  const openDocumentTemplateActionSheet = () => {
+    if (!isMobileProjectViewport || !canManageProjectContent) return;
+    setShowDocumentCreateActionSheet(false);
+    setShowDocumentTemplateActionSheet(true);
+  };
+
+  const closeDocumentTemplateActionSheet = () => {
+    setShowDocumentTemplateActionSheet(false);
+  };
+
+  const handleDeleteDocumentFromActionSheet = () => {
+    if (!canManageProjectContent || !documentActionDocument) return;
+    const documentId = String(documentActionDocument?.id ?? "").trim();
+    if (!documentId) return;
+    closeDocumentActionSheet();
+    setSelectedDocumentIds([documentId]);
+    setShowDeleteDocumentsModal(true);
+  };
+
+  const handleRenameDocumentFromActionSheet = () => {
+    if (!canManageProjectContent || !documentActionDocument) return;
+    const documentId = String(documentActionDocument?.id ?? "").trim();
+    if (!documentId) return;
+    closeDocumentActionSheet();
+    setSelectedDocumentIds([documentId]);
+    setDocumentRenameValue(String(documentActionDocument?.name || "").trim());
+    setDocumentRenameError("");
+    setShowRenameDocumentModal(true);
+  };
+
+  const clearDocumentLongPressTimer = () => {
+    if (documentLongPressTimerRef.current) {
+      window.clearTimeout(documentLongPressTimerRef.current);
+      documentLongPressTimerRef.current = null;
+    }
+  };
+
+  const handleDocumentCardTouchStart = (documentId, event) => {
+    if (!isMobileProjectViewport) return;
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    const normalizedId = String(documentId ?? "").trim();
+    if (!normalizedId) return;
+    documentSwipeTouchRef.current = {
+      documentId: normalizedId,
+      x: touch.clientX,
+      y: touch.clientY,
+    };
+
+    if (!canManageProjectContent) return;
+    clearDocumentLongPressTimer();
+    documentLongPressTimerRef.current = window.setTimeout(() => {
+      setSelectedDocumentIds((prev) => (prev.includes(normalizedId) ? prev : [...prev, normalizedId]));
+      suppressDocumentOpenRef.current = true;
+    }, 420);
+  };
+
+  const handleDocumentCardTouchMove = (event) => {
+    const start = documentSwipeTouchRef.current;
+    if (!start) return;
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaX) > 12 || Math.abs(deltaY) > 12) {
+      clearDocumentLongPressTimer();
+    }
+  };
+
+  const handleDocumentCardTouchEnd = (documentRow, event) => {
+    clearDocumentLongPressTimer();
+    const start = documentSwipeTouchRef.current;
+    documentSwipeTouchRef.current = null;
+    if (!start) return;
+    if (String(start.documentId || "") !== String(documentRow?.id ?? "")) return;
+    const touch = event.changedTouches?.[0];
+    if (!touch) return;
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaY) > 48) return;
+    if (deltaX >= 72) {
+      suppressDocumentOpenRef.current = true;
+      handleDownloadProjectDocument(documentRow);
+      return;
+    }
+    if (deltaX <= -72) {
+      suppressDocumentOpenRef.current = true;
+      openDocumentActionSheet(documentRow);
+    }
+  };
+
+  const handleDocumentCardTouchCancel = () => {
+    clearDocumentLongPressTimer();
+    documentSwipeTouchRef.current = null;
+  };
+
+  const handleDocumentCardActivate = (documentRow) => {
+    const normalizedId = String(documentRow?.id ?? "").trim();
+    if (!normalizedId) return;
+    if (suppressDocumentOpenRef.current) {
+      suppressDocumentOpenRef.current = false;
+      return;
+    }
+    if (isMobileProjectViewport && canManageProjectContent && selectedDocumentIds.length > 0) {
+      handleToggleDocumentSelection(normalizedId);
+      return;
+    }
+    openDocumentActionSheet(documentRow);
+  };
+
+  const handleExportSelectedDocuments = () => {
+    const exportRows = selectedDocuments.filter((documentRow) => getProjectDocumentUrl(documentRow));
+    if (!exportRows.length) {
+      setProjectsNotice({
+        type: "warning",
+        message: "No downloadable documents selected.",
+      });
+      return;
+    }
+    exportRows.forEach((documentRow, index) => {
+      const url = getProjectDocumentUrl(documentRow);
+      window.setTimeout(() => {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }, index * 120);
+    });
+    setProjectsNotice({
+      type: "success",
+      message:
+        exportRows.length === 1
+          ? "Opened selected document."
+          : `Opened ${exportRows.length} selected documents.`,
+    });
+  };
+
   const triggerProjectDocumentPicker = () => {
     if (
       !canManageProjectContent ||
@@ -5298,7 +5664,7 @@ export function ProjectsPage({
     return new File([blob], fileName, { type: "application/pdf" });
   };
 
-  const handlePrepareEmitDocument = async () => {
+  const handlePrepareEmitDocument = async (optionOverride = null) => {
     if (
       !canManageProjectContent ||
       uploadingProjectDocument ||
@@ -5315,8 +5681,10 @@ export function ProjectsPage({
     }
 
     const selectedOption =
+      optionOverride ||
       PROJECT_EMIT_DOCUMENT_OPTIONS.find((option) => option.value === emitDocumentType) ||
       PROJECT_EMIT_DOCUMENT_OPTIONS[0];
+    setEmitDocumentType(selectedOption.value);
     setEmittingProjectDocument(true);
     setProjectDocumentsError("");
 
@@ -5418,6 +5786,9 @@ export function ProjectsPage({
         setSelectedDocumentIds((prev) =>
           prev.filter((documentId) => !deletedIds.includes(String(documentId)))
         );
+        if (documentActionDocumentId && deletedIds.includes(String(documentActionDocumentId))) {
+          setDocumentActionDocumentId("");
+        }
       }
 
       if (failureCount === 0) {
@@ -5509,6 +5880,26 @@ export function ProjectsPage({
       return haystack.includes(normalizedSearch);
     });
   }, [sortedProjectTasks, taskSearchQuery, taskStatusFilter, taskAssigneeFilter]);
+
+  const mobileFilteredProjectTasks = useMemo(() => {
+    return sortedProjectTasks.filter((task) => {
+      const safeStatus = String(task?.status || "open")
+        .trim()
+        .toLowerCase();
+      if (mobileTaskStatusFilter === "all") {
+        return true;
+      }
+      return safeStatus === mobileTaskStatusFilter;
+    });
+  }, [sortedProjectTasks, mobileTaskStatusFilter]);
+
+  const taskActionTask = useMemo(() => {
+    const normalizedId = String(taskActionTaskId || "").trim();
+    if (!normalizedId) return null;
+    return (
+      sortedProjectTasks.find((task) => String(task?.id ?? "") === normalizedId) || null
+    );
+  }, [sortedProjectTasks, taskActionTaskId]);
 
   const groupedTaskRows = useMemo(() => {
     const buckets = new Map();
@@ -5635,6 +6026,134 @@ export function ProjectsPage({
     setTaskFormError("");
     setShowTaskModal(true);
   }, [canManageProjectContent]);
+
+  const openTaskActionSheet = (task) => {
+    if (!isMobileProjectViewport) return;
+    const taskId = String(task?.id ?? "").trim();
+    if (!taskId) return;
+    setTaskActionTaskId(taskId);
+  };
+
+  const closeTaskActionSheet = () => {
+    setTaskActionTaskId("");
+  };
+
+  const persistTaskStatusUpdate = async (task, nextStatus) => {
+    const taskId = String(task?.id ?? "").trim();
+    if (!taskId) return;
+    const safeStatus = String(nextStatus || "open").trim().toLowerCase();
+    if (!TASK_STATUS_LABELS[safeStatus]) return;
+
+    const previousStatus = String(task?.status || "open").trim().toLowerCase() || "open";
+    if (previousStatus === safeStatus) return;
+
+    const payload = {
+      title: String(task?.title || "").trim() || "Untitled task",
+      details: String(task?.details || "").trim() || null,
+      assignee_member_id: parseMemberId(task?.assignee_member_id),
+      due_date: String(task?.due_date || "").trim() || null,
+      priority: ["high", "urgent"].includes(String(task?.priority || "").trim().toLowerCase())
+        ? String(task?.priority || "").trim().toLowerCase()
+        : "normal",
+      status: safeStatus,
+    };
+
+    setProjectTasks((prev) =>
+      prev.map((row) =>
+        String(row?.id ?? "") === taskId
+          ? {
+              ...row,
+              status: safeStatus,
+            }
+          : row
+      )
+    );
+
+    try {
+      await updateProjectTask(taskId, payload, tenantId);
+      setProjectsNotice({
+        type: "success",
+        message:
+          safeStatus === "done"
+            ? "Task marked completed."
+            : `Task moved to ${TASK_STATUS_LABELS[safeStatus] || toReadableLabel(safeStatus)}.`,
+      });
+    } catch (error) {
+      console.error("Error updating task status:", error);
+      setProjectTasks((prev) =>
+        prev.map((row) =>
+          String(row?.id ?? "") === taskId
+            ? {
+                ...row,
+                status: previousStatus,
+              }
+            : row
+        )
+      );
+      setProjectsNotice({
+        type: "warning",
+        message: error?.message || "Failed to update task status.",
+      });
+    }
+  };
+
+  const handleToggleTaskComplete = async (task) => {
+    if (!canManageProjectContent || savingTask || deletingTasks) return;
+    const currentStatus = String(task?.status || "open").trim().toLowerCase();
+    const nextStatus = currentStatus === "done" ? "open" : "done";
+    await persistTaskStatusUpdate(task, nextStatus);
+  };
+
+  const handleTaskCardTouchStart = (taskId, event) => {
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    taskSwipeTouchRef.current = {
+      taskId: String(taskId ?? ""),
+      x: touch.clientX,
+      y: touch.clientY,
+    };
+  };
+
+  const handleTaskCardTouchEnd = (task, event) => {
+    const start = taskSwipeTouchRef.current;
+    taskSwipeTouchRef.current = null;
+    if (!start) return;
+    if (String(start.taskId || "") !== String(task?.id ?? "")) return;
+    const touch = event.changedTouches?.[0];
+    if (!touch) return;
+    const deltaX = touch.clientX - start.x;
+    const deltaY = touch.clientY - start.y;
+    if (Math.abs(deltaY) > 42) return;
+    if (deltaX >= 72) {
+      suppressTaskOpenRef.current = true;
+      handleToggleTaskComplete(task);
+      return;
+    }
+    if (deltaX <= -72 && canManageProjectContent) {
+      suppressTaskOpenRef.current = true;
+      openTaskActionSheet(task);
+    }
+  };
+
+  const handleTaskCardTouchCancel = () => {
+    taskSwipeTouchRef.current = null;
+  };
+
+  const handleEditTaskFromActionSheet = () => {
+    if (!canManageProjectContent || !taskActionTask) return;
+    const taskToEdit = taskActionTask;
+    closeTaskActionSheet();
+    openTaskEditorForRow(taskToEdit);
+  };
+
+  const handleDeleteTaskFromActionSheet = () => {
+    if (!canManageProjectContent || !taskActionTask) return;
+    const taskId = String(taskActionTask?.id ?? "").trim();
+    if (!taskId) return;
+    setSelectedTaskIds([taskId]);
+    closeTaskActionSheet();
+    setShowDeleteTasksModal(true);
+  };
 
   const openEditSelectedTaskModal = () => {
     if (!canManageProjectContent) return;
@@ -5790,6 +6309,9 @@ export function ProjectsPage({
       if (deletedIds.length) {
         setProjectTasks((prev) => prev.filter((task) => !deletedIds.includes(String(task?.id ?? ""))));
         setSelectedTaskIds((prev) => prev.filter((taskId) => !deletedIds.includes(String(taskId))));
+        if (taskActionTaskId && deletedIds.includes(String(taskActionTaskId))) {
+          setTaskActionTaskId("");
+        }
       }
 
       if (failureCount === 0) {
@@ -7586,31 +8108,35 @@ export function ProjectsPage({
                                     <Icon name={categoryIcon} size={16} />
                                   </span>
                                   <span className="project-expense-mobile-item-main">
-                                    <strong>{truncateProjectCellText(detailTitle, 74)}</strong>
+                                    <span className="project-expense-mobile-item-head">
+                                      <strong className="project-expense-mobile-item-title">
+                                        {truncateProjectCellText(detailTitle, 74)}
+                                      </strong>
+                                      <strong className="project-expense-mobile-item-amount">
+                                        {formatCurrency(expense?.amount)}
+                                      </strong>
+                                    </span>
                                     <span className="project-expense-mobile-item-sub">{categoryLabel}</span>
                                     <span className="project-expense-mobile-item-meta">
                                       {vendorLabel || "No vendor"} · {formatShortDate(expense?.expense_date || expense?.created_at)}
                                     </span>
                                   </span>
-                                  <span className="project-expense-mobile-item-right">
-                                    <strong>{formatCurrency(expense?.amount)}</strong>
-                                    {canManageProjectContent ? (
-                                      <button
-                                        type="button"
-                                        className="project-expense-mobile-item-menu"
-                                        onTouchStart={(event) => event.stopPropagation()}
-                                        onTouchEnd={(event) => event.stopPropagation()}
-                                        onMouseDown={(event) => event.stopPropagation()}
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          openExpenseActionSheet(expense);
-                                        }}
-                                        aria-label={`Expense actions for ${detailTitle}`}
-                                      >
-                                        <Icon name="more-horizontal" size={14} />
-                                      </button>
-                                    ) : null}
-                                  </span>
+                                  {canManageProjectContent ? (
+                                    <button
+                                      type="button"
+                                      className="project-expense-mobile-item-menu"
+                                      onTouchStart={(event) => event.stopPropagation()}
+                                      onTouchEnd={(event) => event.stopPropagation()}
+                                      onMouseDown={(event) => event.stopPropagation()}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openExpenseActionSheet(expense);
+                                      }}
+                                      aria-label={`Expense actions for ${detailTitle}`}
+                                    >
+                                      <Icon name="more-vertical" size={14} />
+                                    </button>
+                                  ) : null}
                                 </div>
                               );
                             })}
@@ -7830,75 +8356,75 @@ export function ProjectsPage({
                   <div className="project-detail-section">
                     <div className="project-detail-section-head">
                       <h4>Documents</h4>
-                      <div className="project-detail-section-head-actions">
-                        {canManageProjectContent ? (
-                          <div className="project-documents-mode" role="tablist" aria-label="Document action mode">
+                      {!isMobileProjectViewport ? (
+                        <div className="project-detail-section-head-actions">
+                          {canManageProjectContent ? (
+                            <div className="project-documents-mode" role="tablist" aria-label="Document action mode">
+                              <button
+                                type="button"
+                                className={`project-documents-mode-btn${projectDocumentMode === "upload" ? " active" : ""}`}
+                                onClick={() => setProjectDocumentMode("upload")}
+                                disabled={
+                                  uploadingProjectDocument ||
+                                  deletingDocuments ||
+                                  emittingProjectDocument ||
+                                  renamingDocument
+                                }
+                                role="tab"
+                                aria-selected={projectDocumentMode === "upload"}
+                              >
+                                Upload
+                              </button>
+                              <button
+                                type="button"
+                                className={`project-documents-mode-btn${projectDocumentMode === "emit" ? " active" : ""}`}
+                                onClick={() => setProjectDocumentMode("emit")}
+                                disabled={
+                                  uploadingProjectDocument ||
+                                  deletingDocuments ||
+                                  emittingProjectDocument ||
+                                  renamingDocument
+                                }
+                                role="tab"
+                                aria-selected={projectDocumentMode === "emit"}
+                              >
+                                Emit
+                              </button>
+                            </div>
+                          ) : (
+                            <span>Read-only</span>
+                          )}
+                          {selectedDocumentIds.length === 1 && canManageProjectContent ? (
                             <button
                               type="button"
-                              className={`project-documents-mode-btn${projectDocumentMode === "upload" ? " active" : ""}`}
-                              onClick={() => setProjectDocumentMode("upload")}
+                              className="project-detail-action ghost"
+                              onClick={openRenameSelectedDocumentModal}
                               disabled={
-                                uploadingProjectDocument ||
+                                renamingDocument ||
                                 deletingDocuments ||
+                                uploadingProjectDocument ||
+                                emittingProjectDocument
+                              }
+                            >
+                              Rename selected
+                            </button>
+                          ) : null}
+                          {selectedDocumentIds.length > 0 && canManageProjectContent ? (
+                            <button
+                              type="button"
+                              className="project-detail-action ghost danger"
+                              onClick={requestDeleteSelectedDocuments}
+                              disabled={
+                                deletingDocuments ||
+                                uploadingProjectDocument ||
                                 emittingProjectDocument ||
                                 renamingDocument
                               }
-                              role="tab"
-                              aria-selected={projectDocumentMode === "upload"}
                             >
-                              Upload
+                              Delete selected
                             </button>
-                            <button
-                              type="button"
-                              className={`project-documents-mode-btn${projectDocumentMode === "emit" ? " active" : ""}`}
-                              onClick={() => setProjectDocumentMode("emit")}
-                              disabled={
-                                uploadingProjectDocument ||
-                                deletingDocuments ||
-                                emittingProjectDocument ||
-                                renamingDocument
-                              }
-                              role="tab"
-                              aria-selected={projectDocumentMode === "emit"}
-                            >
-                              Emit
-                            </button>
-                          </div>
-                        ) : (
-                          <span>Read-only</span>
-                        )}
-                        {selectedDocumentIds.length === 1 && canManageProjectContent ? (
-                          <button
-                            type="button"
-                            className="project-detail-action ghost"
-                            onClick={openRenameSelectedDocumentModal}
-                            disabled={
-                              renamingDocument ||
-                              deletingDocuments ||
-                              uploadingProjectDocument ||
-                              emittingProjectDocument
-                            }
-                          >
-                            Rename selected
-                          </button>
-                        ) : null}
-                        {selectedDocumentIds.length > 0 && canManageProjectContent ? (
-                          <button
-                            type="button"
-                            className="project-detail-action ghost danger"
-                            onClick={requestDeleteSelectedDocuments}
-                            disabled={
-                              deletingDocuments ||
-                              uploadingProjectDocument ||
-                              emittingProjectDocument ||
-                              renamingDocument
-                            }
-                          >
-                            Delete selected
-                          </button>
-                        ) : null}
-                        {canManageProjectContent && projectDocumentMode === "upload" ? (
-                          <>
+                          ) : null}
+                          {canManageProjectContent && projectDocumentMode === "upload" ? (
                             <button
                               type="button"
                               className="project-detail-action"
@@ -7912,39 +8438,195 @@ export function ProjectsPage({
                             >
                               {uploadingProjectDocument ? "Uploading..." : "Upload document"}
                             </button>
-                            <input
-                              ref={projectDocumentInputRef}
-                              type="file"
-                              className="project-documents-file-input"
-                              accept={PROJECT_DOCUMENT_ACCEPT}
-                              multiple
-                              onChange={handleProjectDocumentFileSelection}
+                          ) : canManageProjectContent ? (
+                            <button
+                              type="button"
+                              className="project-detail-action"
+                              onClick={() => handlePrepareEmitDocument()}
                               disabled={
+                                emittingProjectDocument ||
                                 uploadingProjectDocument ||
                                 deletingDocuments ||
-                                emittingProjectDocument ||
                                 renamingDocument
                               }
-                            />
-                          </>
-                        ) : canManageProjectContent ? (
-                          <button
-                            type="button"
-                            className="project-detail-action"
-                            onClick={handlePrepareEmitDocument}
-                            disabled={
-                              emittingProjectDocument ||
-                              uploadingProjectDocument ||
-                              deletingDocuments ||
-                              renamingDocument
-                            }
-                          >
-                            {emittingProjectDocument ? "Emitting..." : "Emit document"}
-                          </button>
-                        ) : null}
-                      </div>
+                            >
+                              {emittingProjectDocument ? "Emitting..." : "Emit document"}
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
-                    {canManageProjectContent ? (
+                    <input
+                      ref={projectDocumentInputRef}
+                      type="file"
+                      className="project-documents-file-input"
+                      accept={PROJECT_DOCUMENT_ACCEPT}
+                      multiple
+                      onChange={handleProjectDocumentFileSelection}
+                      disabled={
+                        uploadingProjectDocument ||
+                        deletingDocuments ||
+                        emittingProjectDocument ||
+                        renamingDocument
+                      }
+                    />
+                    {isMobileProjectViewport ? (
+                      <>
+                        <div className="project-documents-mobile-mode" role="tablist" aria-label="Document view mode">
+                          {MOBILE_PROJECT_DOCUMENT_MODE_OPTIONS.map((option) => (
+                            <button
+                              key={`mobile-doc-mode-${option.key}`}
+                              type="button"
+                              className={`project-documents-mobile-mode-btn${
+                                mobileProjectDocumentMode === option.key ? " active" : ""
+                              }`}
+                              role="tab"
+                              aria-selected={mobileProjectDocumentMode === option.key}
+                              onClick={() => {
+                                setMobileProjectDocumentMode(option.key);
+                                setSelectedDocumentIds([]);
+                              }}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="project-documents-hint">
+                          {mobileProjectDocumentMode === "reports"
+                            ? "Generated reports from project templates."
+                            : "Uploaded files and evidence for this project."}
+                        </p>
+                        {canManageProjectContent && selectedDocumentIds.length > 0 ? (
+                          <div className="project-documents-mobile-selection">
+                            <strong>{selectedDocumentIds.length} selected</strong>
+                            <div className="project-documents-mobile-selection-actions">
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={handleExportSelectedDocuments}
+                                disabled={deletingDocuments || uploadingProjectDocument || emittingProjectDocument}
+                              >
+                                Export
+                              </button>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost danger"
+                                onClick={requestDeleteSelectedDocuments}
+                                disabled={deletingDocuments || uploadingProjectDocument || emittingProjectDocument}
+                              >
+                                Delete
+                              </button>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={() => setSelectedDocumentIds([])}
+                                disabled={deletingDocuments || uploadingProjectDocument || emittingProjectDocument}
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {projectDocumentsError ? (
+                          <p className="project-detail-expense-error">{projectDocumentsError}</p>
+                        ) : null}
+                        {projectDocumentsLoading ? (
+                          <div className="project-expenses-loading">
+                            <div className="loading-spinner"></div>
+                            <span>Loading documents...</span>
+                          </div>
+                        ) : mobileVisibleProjectDocuments.length === 0 ? (
+                          <div className="project-detail-empty">
+                            <Icon name="folder" size={24} />
+                            <span>
+                              {mobileProjectDocumentMode === "reports"
+                                ? "No generated reports yet."
+                                : "No files yet."}
+                            </span>
+                            {canManageProjectContent ? (
+                              <button
+                                type="button"
+                                className="project-detail-action"
+                                onClick={
+                                  mobileProjectDocumentMode === "reports"
+                                    ? openDocumentTemplateActionSheet
+                                    : triggerProjectDocumentPicker
+                                }
+                              >
+                                {mobileProjectDocumentMode === "reports" ? "Generate report" : "Upload file"}
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="project-documents-mobile-list" role="list">
+                            {mobileVisibleProjectDocuments.map((document) => {
+                              const documentId = String(document?.id ?? "");
+                              const isSelected = selectedDocumentIds.includes(documentId);
+                              const fileName = String(document?.name || "Untitled document").trim() || "Untitled document";
+                              const fileTypeLabel = getProjectDocumentTypeLabel(document);
+                              const uploadedLabel = formatDate(document?.uploaded_at);
+                              const documentSize = formatFileSize(document?.file_size_bytes);
+                              const isReport = isGeneratedProjectReportDocument(document);
+                              const metaLabel =
+                                mobileProjectDocumentMode === "reports"
+                                  ? `Generated ${uploadedLabel}`
+                                  : `${fileTypeLabel} · ${uploadedLabel}`;
+                              const subLabel =
+                                mobileProjectDocumentMode === "reports"
+                                  ? `From: ${selectedProject?.name || "Project"}`
+                                  : documentSize;
+                              return (
+                                <article
+                                  key={documentId || `${fileName}-${document?.uploaded_at || ""}`}
+                                  className={`project-documents-mobile-card${isSelected ? " is-selected" : ""}`}
+                                  role="listitem"
+                                  tabIndex={0}
+                                  onClick={() => handleDocumentCardActivate(document)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      handleDocumentCardActivate(document);
+                                    }
+                                  }}
+                                  onTouchStart={(event) => handleDocumentCardTouchStart(documentId, event)}
+                                  onTouchMove={handleDocumentCardTouchMove}
+                                  onTouchEnd={(event) => handleDocumentCardTouchEnd(document, event)}
+                                  onTouchCancel={handleDocumentCardTouchCancel}
+                                  onContextMenu={(event) => event.preventDefault()}
+                                  aria-pressed={canManageProjectContent ? isSelected : undefined}
+                                >
+                                  <span
+                                    className={`project-documents-mobile-icon${isReport ? " is-report" : ""}`}
+                                    aria-hidden="true"
+                                  >
+                                    <Icon name={isReport ? "notes" : "folder"} size={16} />
+                                  </span>
+                                  <span className="project-documents-mobile-main">
+                                    <strong>{truncateProjectCellText(fileName, 86)}</strong>
+                                    <span>{metaLabel}</span>
+                                    <small>{subLabel}</small>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="project-documents-mobile-menu"
+                                    onTouchStart={(event) => event.stopPropagation()}
+                                    onTouchEnd={(event) => event.stopPropagation()}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      openDocumentActionSheet(document);
+                                    }}
+                                    aria-label={`Document actions for ${fileName}`}
+                                  >
+                                    <Icon name="more-vertical" size={14} />
+                                  </button>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
+                    ) : canManageProjectContent ? (
                       projectDocumentMode === "upload" ? (
                         <p className="project-documents-hint">
                           Allowed file types: <strong>.docx</strong>, <strong>.pdf</strong>, and image files.
@@ -8096,287 +8778,445 @@ export function ProjectsPage({
                   <div className="project-detail-section project-detail-tasks">
                     <div className="project-detail-section-head">
                       <h4>Tasks</h4>
-                      <div className="project-detail-section-head-actions">
-                        {canManageProjectContent && selectedTaskIds.length > 0 ? (
-                          <>
+                      {!isMobileProjectViewport ? (
+                        <div className="project-detail-section-head-actions">
+                          {canManageProjectContent && selectedTaskIds.length > 0 ? (
+                            <>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={openEditSelectedTaskModal}
+                                disabled={selectedTasks.length !== 1 || savingTask || deletingTasks}
+                              >
+                                Edit selected
+                              </button>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost danger"
+                                onClick={requestDeleteSelectedTasks}
+                                disabled={deletingTasks || savingTask}
+                              >
+                                Delete selected
+                              </button>
+                            </>
+                          ) : null}
+                          {canManageProjectContent ? (
                             <button
                               type="button"
-                              className="project-detail-action ghost"
-                              onClick={openEditSelectedTaskModal}
-                              disabled={selectedTasks.length !== 1 || savingTask || deletingTasks}
+                              className="project-detail-action"
+                              onClick={openTaskModal}
+                              disabled={savingTask || deletingTasks}
                             >
-                              Edit selected
+                              Add task
                             </button>
-                            <button
-                              type="button"
-                              className="project-detail-action ghost danger"
-                              onClick={requestDeleteSelectedTasks}
-                              disabled={deletingTasks || savingTask}
-                            >
-                              Delete selected
-                            </button>
-                          </>
-                        ) : null}
-                        {canManageProjectContent ? (
-                          <button
-                            type="button"
-                            className="project-detail-action"
-                            onClick={openTaskModal}
-                            disabled={savingTask || deletingTasks}
-                          >
-                            Add task
-                          </button>
-                        ) : null}
-                      </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                     {projectTasksError ? (
                       <p className="project-detail-expense-error">{projectTasksError}</p>
                     ) : null}
-                    {projectTasks.length > 0 ? (
-                      <div className="project-detail-filters">
-                        <label className="project-detail-filter project-detail-filter--search">
-                          <span>Search</span>
-                          <input
-                            type="search"
-                            placeholder="Search task title or details"
-                            value={taskSearchQuery}
-                            onChange={(event) => setTaskSearchQuery(event.target.value)}
-                          />
-                        </label>
-                        <label className="project-detail-filter">
-                          <span>Status</span>
-                          <select
-                            value={taskStatusFilter}
-                            onChange={(event) => setTaskStatusFilter(event.target.value)}
-                          >
-                            <option value="all">All statuses</option>
-                            {Object.entries(TASK_STATUS_LABELS).map(([value, label]) => (
-                              <option key={`task-filter-status-${value}`} value={value}>
-                                {label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="project-detail-filter">
-                          <span>Assignee</span>
-                          <select
-                            value={taskAssigneeFilter}
-                            onChange={(event) => setTaskAssigneeFilter(event.target.value)}
-                          >
-                            <option value="all">All assignees</option>
-                            <option value="unassigned">Unassigned</option>
-                            {taskAssigneeFilterOptions.map((option) => (
-                              <option key={`task-filter-assignee-${option.id}`} value={option.id}>
-                                {option.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <div className="project-detail-filter project-detail-filter--actions">
-                          <button
-                            type="button"
-                            className="project-detail-action ghost"
-                            onClick={() => {
-                              setTaskSearchQuery("");
-                              setTaskStatusFilter("all");
-                              setTaskAssigneeFilter("all");
-                            }}
-                            disabled={!hasActiveTaskFilters}
-                          >
-                            Clear filters
-                          </button>
-                        </div>
-                      </div>
-                    ) : null}
-                    {projectTasksLoading ? (
-                      <div className="project-expenses-loading">
-                        <div className="loading-spinner"></div>
-                        <span>Loading tasks...</span>
-                      </div>
-                    ) : projectTasks.length === 0 ? (
-                      <div className="project-detail-empty">
-                        <Icon name="check-circle" size={24} />
-                        <span>No tasks yet.</span>
-                      </div>
-                    ) : filteredProjectTasks.length === 0 ? (
-                      <div className="project-detail-empty">
-                        <Icon name="search" size={24} />
-                        <span>No tasks match the selected filters.</span>
-                      </div>
-                    ) : (
+                    {isMobileProjectViewport ? (
                       <>
-                        {canManageProjectContent ? (
-                          <div className="project-expenses-selection-note">
-                            {selectedTaskIds.length} selected
+                        {projectTasks.length > 0 ? (
+                          <div className="project-task-mobile-status-chips" role="tablist" aria-label="Task status">
+                            {MOBILE_TASK_STATUS_CHIPS.map((chip) => (
+                              <button
+                                key={`task-mobile-chip-${chip.key}`}
+                                type="button"
+                                className={`project-task-mobile-status-chip${
+                                  mobileTaskStatusFilter === chip.key ? " active" : ""
+                                }`}
+                                onClick={() => setMobileTaskStatusFilter(chip.key)}
+                              >
+                                {chip.label}
+                              </button>
+                            ))}
                           </div>
                         ) : null}
-                        <div className="project-expenses-selection-note">
-                          Showing {filteredProjectTasks.length} of {projectTasks.length} tasks.
-                        </div>
-                        {canManageProjectContent ? (
-                          <label className="project-group-select-all">
-                            <input
-                              type="checkbox"
-                              checked={allTasksSelected}
-                              onChange={handleToggleSelectAllTasks}
-                              aria-label="Select all visible project tasks"
-                            />
-                            <span>Select all visible tasks</span>
-                          </label>
-                        ) : null}
-                        <div className="project-grouped-board">
-                          {groupedTaskRows.map((lane) => {
-                            const laneTaskIds = lane.rows
-                              .map((task) => String(task?.id ?? ""))
-                              .filter(Boolean);
-                            const laneAllSelected =
-                              laneTaskIds.length > 0 &&
-                              laneTaskIds.every((taskId) => selectedTaskIds.includes(taskId));
-                            return (
-                              <section
-                                key={`task-lane-${lane.key}`}
-                                className={`project-group-lane is-${String(lane.key).replace(/[^a-z0-9_]+/g, "-")}`}
-                              >
-                                <header className="project-group-lane-head">
-                                  <div className="project-group-lane-title">
-                                    <span className="project-group-lane-dot" aria-hidden="true" />
-                                    <h5>{lane.label}</h5>
-                                    <span className="project-group-lane-count">{lane.rows.length}</span>
+                        {projectTasksLoading ? (
+                          <div className="project-expenses-loading">
+                            <div className="loading-spinner"></div>
+                            <span>Loading tasks...</span>
+                          </div>
+                        ) : projectTasks.length === 0 ? (
+                          <div className="project-detail-empty">
+                            <Icon name="check-circle" size={24} />
+                            <span>No tasks yet.</span>
+                            <p>Break the project into smaller activities.</p>
+                            {canManageProjectContent ? (
+                              <button type="button" className="project-detail-action" onClick={openTaskModal}>
+                                Add Task
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : mobileFilteredProjectTasks.length === 0 ? (
+                          <div className="project-detail-empty">
+                            <Icon name="search" size={24} />
+                            <span>No tasks in this status yet.</span>
+                          </div>
+                        ) : (
+                          <div className="project-task-mobile-list" role="list">
+                            {mobileFilteredProjectTasks.map((task) => {
+                              const taskId = String(task?.id ?? "");
+                              const safePriority = String(task?.priority || "normal")
+                                .trim()
+                                .toLowerCase();
+                              const safeStatus = String(task?.status || "open")
+                                .trim()
+                                .toLowerCase();
+                              const priorityLabel = TASK_PRIORITY_LABELS[safePriority] || "Normal";
+                              const statusLabel =
+                                TASK_STATUS_LABELS[safeStatus] || toReadableLabel(safeStatus, "Open");
+                              const assignee =
+                                task?.assignee_name ||
+                                (task?.assignee_member_id
+                                  ? `Member #${task.assignee_member_id}`
+                                  : "Unassigned");
+                              const assigneeInitials = getInitials(assignee, "UN");
+                              const taskTitle = String(task?.title || "Untitled task").trim() || "Untitled task";
+                              const dueLabel = task?.due_date
+                                ? `Due ${formatShortDate(task?.due_date)}`
+                                : "No due date";
+                              const isDone = safeStatus === "done";
+                              return (
+                                <article
+                                  key={taskId || `${taskTitle}-${task?.due_date || ""}`}
+                                  className={`project-task-mobile-card is-${safeStatus.replace(/[^a-z_]+/g, "")}`}
+                                  role="listitem"
+                                >
+                                  <button
+                                    type="button"
+                                    className={`project-task-mobile-check${isDone ? " is-done" : ""}`}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleToggleTaskComplete(task);
+                                    }}
+                                    disabled={!canManageProjectContent || savingTask || deletingTasks}
+                                    aria-label={isDone ? `Mark ${taskTitle} as open` : `Mark ${taskTitle} as completed`}
+                                  >
+                                    <Icon name="check-circle" size={16} />
+                                  </button>
+                                  <div
+                                    className="project-task-mobile-main"
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => {
+                                      if (suppressTaskOpenRef.current) {
+                                        suppressTaskOpenRef.current = false;
+                                        return;
+                                      }
+                                      openTaskEditorForRow(task);
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter" || event.key === " ") {
+                                        event.preventDefault();
+                                        openTaskEditorForRow(task);
+                                      }
+                                    }}
+                                    onTouchStart={(event) => handleTaskCardTouchStart(taskId, event)}
+                                    onTouchEnd={(event) => handleTaskCardTouchEnd(task, event)}
+                                    onTouchCancel={handleTaskCardTouchCancel}
+                                  >
+                                    <div className="project-task-mobile-head">
+                                      <strong>{taskTitle}</strong>
+                                      <span>{dueLabel}</span>
+                                    </div>
+                                    <div className="project-task-mobile-assignee">
+                                      <span className="project-task-mobile-avatar" aria-hidden="true">
+                                        {assigneeInitials}
+                                      </span>
+                                      <span>{assignee}</span>
+                                    </div>
+                                    <div className="project-task-mobile-badges">
+                                      <span
+                                        className={`project-task-badge is-status-${safeStatus.replace(
+                                          /[^a-z_]+/g,
+                                          ""
+                                        )}`}
+                                      >
+                                        {statusLabel}
+                                      </span>
+                                      <span
+                                        className={`project-task-badge is-priority-${safePriority.replace(
+                                          /[^a-z_]+/g,
+                                          ""
+                                        )}`}
+                                      >
+                                        {priorityLabel}
+                                      </span>
+                                    </div>
                                   </div>
                                   {canManageProjectContent ? (
                                     <button
                                       type="button"
-                                      className="project-group-lane-add"
-                                      onClick={() => openTaskModalForStatus(lane.key)}
-                                      disabled={savingTask || deletingTasks}
-                                      aria-label={`Add task in ${lane.label}`}
+                                      className="project-task-mobile-menu"
+                                      onTouchStart={(event) => event.stopPropagation()}
+                                      onMouseDown={(event) => event.stopPropagation()}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openTaskActionSheet(task);
+                                      }}
+                                      aria-label={`Task actions for ${taskTitle}`}
                                     >
-                                      <Icon name="plus" size={14} />
+                                      <Icon name="more-vertical" size={14} />
                                     </button>
                                   ) : null}
-                                </header>
-                                <div className="projects-table-wrap project-expenses-table-wrap project-group-lane-table-wrap">
-                                  <table className="projects-table-view project-expenses-table project-tasks-table project-group-lane-table">
-                                    <thead>
-                                      <tr>
-                                        {canManageProjectContent ? (
-                                          <th className="projects-table-check">
-                                            <input
-                                              type="checkbox"
-                                              checked={laneAllSelected}
-                                              onChange={() => {
-                                                if (laneAllSelected) {
-                                                  const laneSet = new Set(laneTaskIds);
-                                                  setSelectedTaskIds((prev) => prev.filter((id) => !laneSet.has(id)));
-                                                  return;
-                                                }
-                                                setSelectedTaskIds((prev) =>
-                                                  Array.from(new Set([...prev, ...laneTaskIds]))
-                                                );
-                                              }}
-                                              aria-label={`Select all tasks in ${lane.label}`}
-                                            />
-                                          </th>
-                                        ) : null}
-                                        <th className="project-task-col-name">Task Name</th>
-                                        <th className="project-task-col-description">Description</th>
-                                        <th className="project-task-col-due">Estimation</th>
-                                        <th className="project-task-col-people">People</th>
-                                        <th className="project-task-col-priority">Priority</th>
-                                        <th className="project-task-col-status">Status</th>
-                                        {canManageProjectContent ? (
-                                          <th className="project-group-actions-col project-task-col-actions" aria-label="Actions" />
-                                        ) : null}
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {lane.rows.map((task) => {
-                                        const taskId = String(task?.id ?? "");
-                                        const isChecked = selectedTaskIds.includes(taskId);
-                                        const safePriority = String(task?.priority || "normal")
-                                          .trim()
-                                          .toLowerCase();
-                                        const safeStatus = String(task?.status || "open")
-                                          .trim()
-                                          .toLowerCase();
-                                        const priorityLabel = TASK_PRIORITY_LABELS[safePriority] || "Normal";
-                                        const statusLabel = TASK_STATUS_LABELS[safeStatus] || toReadableLabel(safeStatus, "Open");
-                                        const assignee =
-                                          task?.assignee_name ||
-                                          (task?.assignee_member_id ? `Member #${task.assignee_member_id}` : "Unassigned");
-                                        const assigneeInitials = getInitials(assignee, "UN");
-                                        const taskDetailsRaw = String(task?.details || "").trim();
-                                        const taskDetailsDisplay = taskDetailsRaw
-                                          ? truncateProjectCellText(taskDetailsRaw, 108)
-                                          : "—";
-                                        return (
-                                          <tr key={taskId || `${task?.title || "task"}-${task?.due_date || ""}`}>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {projectTasks.length > 0 ? (
+                          <div className="project-detail-filters">
+                            <label className="project-detail-filter project-detail-filter--search">
+                              <span>Search</span>
+                              <input
+                                type="search"
+                                placeholder="Search task title or details"
+                                value={taskSearchQuery}
+                                onChange={(event) => setTaskSearchQuery(event.target.value)}
+                              />
+                            </label>
+                            <label className="project-detail-filter">
+                              <span>Status</span>
+                              <select
+                                value={taskStatusFilter}
+                                onChange={(event) => setTaskStatusFilter(event.target.value)}
+                              >
+                                <option value="all">All statuses</option>
+                                {Object.entries(TASK_STATUS_LABELS).map(([value, label]) => (
+                                  <option key={`task-filter-status-${value}`} value={value}>
+                                    {label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="project-detail-filter">
+                              <span>Assignee</span>
+                              <select
+                                value={taskAssigneeFilter}
+                                onChange={(event) => setTaskAssigneeFilter(event.target.value)}
+                              >
+                                <option value="all">All assignees</option>
+                                <option value="unassigned">Unassigned</option>
+                                {taskAssigneeFilterOptions.map((option) => (
+                                  <option key={`task-filter-assignee-${option.id}`} value={option.id}>
+                                    {option.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <div className="project-detail-filter project-detail-filter--actions">
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={() => {
+                                  setTaskSearchQuery("");
+                                  setTaskStatusFilter("all");
+                                  setTaskAssigneeFilter("all");
+                                }}
+                                disabled={!hasActiveTaskFilters}
+                              >
+                                Clear filters
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {projectTasksLoading ? (
+                          <div className="project-expenses-loading">
+                            <div className="loading-spinner"></div>
+                            <span>Loading tasks...</span>
+                          </div>
+                        ) : projectTasks.length === 0 ? (
+                          <div className="project-detail-empty">
+                            <Icon name="check-circle" size={24} />
+                            <span>No tasks yet.</span>
+                          </div>
+                        ) : filteredProjectTasks.length === 0 ? (
+                          <div className="project-detail-empty">
+                            <Icon name="search" size={24} />
+                            <span>No tasks match the selected filters.</span>
+                          </div>
+                        ) : (
+                          <>
+                            {canManageProjectContent ? (
+                              <div className="project-expenses-selection-note">
+                                {selectedTaskIds.length} selected
+                              </div>
+                            ) : null}
+                            <div className="project-expenses-selection-note">
+                              Showing {filteredProjectTasks.length} of {projectTasks.length} tasks.
+                            </div>
+                            {canManageProjectContent ? (
+                              <label className="project-group-select-all">
+                                <input
+                                  type="checkbox"
+                                  checked={allTasksSelected}
+                                  onChange={handleToggleSelectAllTasks}
+                                  aria-label="Select all visible project tasks"
+                                />
+                                <span>Select all visible tasks</span>
+                              </label>
+                            ) : null}
+                            <div className="project-grouped-board">
+                              {groupedTaskRows.map((lane) => {
+                                const laneTaskIds = lane.rows
+                                  .map((task) => String(task?.id ?? ""))
+                                  .filter(Boolean);
+                                const laneAllSelected =
+                                  laneTaskIds.length > 0 &&
+                                  laneTaskIds.every((taskId) => selectedTaskIds.includes(taskId));
+                                return (
+                                  <section
+                                    key={`task-lane-${lane.key}`}
+                                    className={`project-group-lane is-${String(lane.key).replace(/[^a-z0-9_]+/g, "-")}`}
+                                  >
+                                    <header className="project-group-lane-head">
+                                      <div className="project-group-lane-title">
+                                        <span className="project-group-lane-dot" aria-hidden="true" />
+                                        <h5>{lane.label}</h5>
+                                        <span className="project-group-lane-count">{lane.rows.length}</span>
+                                      </div>
+                                      {canManageProjectContent ? (
+                                        <button
+                                          type="button"
+                                          className="project-group-lane-add"
+                                          onClick={() => openTaskModalForStatus(lane.key)}
+                                          disabled={savingTask || deletingTasks}
+                                          aria-label={`Add task in ${lane.label}`}
+                                        >
+                                          <Icon name="plus" size={14} />
+                                        </button>
+                                      ) : null}
+                                    </header>
+                                    <div className="projects-table-wrap project-expenses-table-wrap project-group-lane-table-wrap">
+                                      <table className="projects-table-view project-expenses-table project-tasks-table project-group-lane-table">
+                                        <thead>
+                                          <tr>
                                             {canManageProjectContent ? (
-                                              <td className="projects-table-check">
+                                              <th className="projects-table-check">
                                                 <input
                                                   type="checkbox"
-                                                  checked={isChecked}
-                                                  onChange={() => handleToggleTaskSelection(taskId)}
-                                                  aria-label={`Select task ${task?.title || taskId}`}
+                                                  checked={laneAllSelected}
+                                                  onChange={() => {
+                                                    if (laneAllSelected) {
+                                                      const laneSet = new Set(laneTaskIds);
+                                                      setSelectedTaskIds((prev) => prev.filter((id) => !laneSet.has(id)));
+                                                      return;
+                                                    }
+                                                    setSelectedTaskIds((prev) =>
+                                                      Array.from(new Set([...prev, ...laneTaskIds]))
+                                                    );
+                                                  }}
+                                                  aria-label={`Select all tasks in ${lane.label}`}
                                                 />
-                                              </td>
+                                              </th>
                                             ) : null}
-                                            <td className="project-task-col-name">
-                                              <div className="project-expense-detail project-task-detail">
-                                                <strong className="project-row-title">{task?.title || "Untitled task"}</strong>
-                                              </div>
-                                            </td>
-                                            <td className="project-group-description-cell project-task-col-description">
-                                              <p className="project-group-description" title={taskDetailsRaw || undefined}>
-                                                {taskDetailsDisplay}
-                                              </p>
-                                            </td>
-                                            <td className="project-group-estimation project-task-col-due">{formatDate(task?.due_date)}</td>
-                                            <td className="project-task-col-people">
-                                              <div className="project-task-person">
-                                                <span className="project-task-person-avatar" aria-hidden="true">
-                                                  {assigneeInitials}
-                                                </span>
-                                                <span className="project-task-person-name">{assignee}</span>
-                                              </div>
-                                            </td>
-                                            <td className="project-task-col-priority">
-                                              <span
-                                                className={`project-task-badge is-priority-${safePriority.replace(/[^a-z_]+/g, "")}`}
-                                              >
-                                                {priorityLabel}
-                                              </span>
-                                            </td>
-                                            <td className="project-task-col-status">
-                                              <span
-                                                className={`project-task-badge is-status-${safeStatus.replace(/[^a-z_]+/g, "")}`}
-                                              >
-                                                {statusLabel}
-                                              </span>
-                                            </td>
+                                            <th className="project-task-col-name">Task Name</th>
+                                            <th className="project-task-col-description">Description</th>
+                                            <th className="project-task-col-due">Estimation</th>
+                                            <th className="project-task-col-people">People</th>
+                                            <th className="project-task-col-priority">Priority</th>
+                                            <th className="project-task-col-status">Status</th>
                                             {canManageProjectContent ? (
-                                              <td className="project-group-actions-col project-task-col-actions">
-                                                <button
-                                                  type="button"
-                                                  className="project-group-row-action"
-                                                  aria-label={`Edit ${task?.title || "task"}`}
-                                                  onClick={() => openTaskEditorForRow(task)}
-                                                  disabled={savingTask || deletingTasks}
-                                                >
-                                                  <Icon name="more-horizontal" size={15} />
-                                                </button>
-                                              </td>
+                                              <th className="project-group-actions-col project-task-col-actions" aria-label="Actions" />
                                             ) : null}
                                           </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </section>
-                            );
-                          })}
-                        </div>
+                                        </thead>
+                                        <tbody>
+                                          {lane.rows.map((task) => {
+                                            const taskId = String(task?.id ?? "");
+                                            const isChecked = selectedTaskIds.includes(taskId);
+                                            const safePriority = String(task?.priority || "normal")
+                                              .trim()
+                                              .toLowerCase();
+                                            const safeStatus = String(task?.status || "open")
+                                              .trim()
+                                              .toLowerCase();
+                                            const priorityLabel = TASK_PRIORITY_LABELS[safePriority] || "Normal";
+                                            const statusLabel = TASK_STATUS_LABELS[safeStatus] || toReadableLabel(safeStatus, "Open");
+                                            const assignee =
+                                              task?.assignee_name ||
+                                              (task?.assignee_member_id ? `Member #${task.assignee_member_id}` : "Unassigned");
+                                            const assigneeInitials = getInitials(assignee, "UN");
+                                            const taskDetailsRaw = String(task?.details || "").trim();
+                                            const taskDetailsDisplay = taskDetailsRaw
+                                              ? truncateProjectCellText(taskDetailsRaw, 108)
+                                              : "—";
+                                            return (
+                                              <tr key={taskId || `${task?.title || "task"}-${task?.due_date || ""}`}>
+                                                {canManageProjectContent ? (
+                                                  <td className="projects-table-check">
+                                                    <input
+                                                      type="checkbox"
+                                                      checked={isChecked}
+                                                      onChange={() => handleToggleTaskSelection(taskId)}
+                                                      aria-label={`Select task ${task?.title || taskId}`}
+                                                    />
+                                                  </td>
+                                                ) : null}
+                                                <td className="project-task-col-name">
+                                                  <div className="project-expense-detail project-task-detail">
+                                                    <strong className="project-row-title">{task?.title || "Untitled task"}</strong>
+                                                  </div>
+                                                </td>
+                                                <td className="project-group-description-cell project-task-col-description">
+                                                  <p className="project-group-description" title={taskDetailsRaw || undefined}>
+                                                    {taskDetailsDisplay}
+                                                  </p>
+                                                </td>
+                                                <td className="project-group-estimation project-task-col-due">{formatDate(task?.due_date)}</td>
+                                                <td className="project-task-col-people">
+                                                  <div className="project-task-person">
+                                                    <span className="project-task-person-avatar" aria-hidden="true">
+                                                      {assigneeInitials}
+                                                    </span>
+                                                    <span className="project-task-person-name">{assignee}</span>
+                                                  </div>
+                                                </td>
+                                                <td className="project-task-col-priority">
+                                                  <span
+                                                    className={`project-task-badge is-priority-${safePriority.replace(/[^a-z_]+/g, "")}`}
+                                                  >
+                                                    {priorityLabel}
+                                                  </span>
+                                                </td>
+                                                <td className="project-task-col-status">
+                                                  <span
+                                                    className={`project-task-badge is-status-${safeStatus.replace(/[^a-z_]+/g, "")}`}
+                                                  >
+                                                    {statusLabel}
+                                                  </span>
+                                                </td>
+                                                {canManageProjectContent ? (
+                                                  <td className="project-group-actions-col project-task-col-actions">
+                                                    <button
+                                                      type="button"
+                                                      className="project-group-row-action"
+                                                      aria-label={`Edit ${task?.title || "task"}`}
+                                                      onClick={() => openTaskEditorForRow(task)}
+                                                      disabled={savingTask || deletingTasks}
+                                                    >
+                                                      <Icon name="more-horizontal" size={15} />
+                                                    </button>
+                                                  </td>
+                                                ) : null}
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </section>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -8792,9 +9632,9 @@ export function ProjectsPage({
                 <button
                   type="button"
                   className="project-detail-fab project-detail-fab--note"
-                  onClick={triggerProjectDocumentPicker}
-                  disabled={uploadingProjectDocument || deletingDocuments || renamingDocument}
-                  aria-label="Upload file"
+                  onClick={openDocumentCreateActionSheet}
+                  disabled={uploadingProjectDocument || deletingDocuments || renamingDocument || emittingProjectDocument}
+                  aria-label="Document actions"
                 >
                   <Icon name="plus" size={20} />
                 </button>
@@ -8942,6 +9782,196 @@ export function ProjectsPage({
                 Delete expense
               </button>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {Boolean(selectedProject) && Boolean(taskActionTask) && isMobileProjectViewport ? (
+        <div className="project-action-sheet-overlay" onClick={closeTaskActionSheet} role="presentation">
+          <div
+            className="project-action-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Task actions"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="project-action-sheet-handle" aria-hidden="true" />
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={handleEditTaskFromActionSheet}
+              disabled={!canManageProjectContent || savingTask || deletingTasks}
+            >
+              Edit task
+            </button>
+            {String(taskActionTask?.status || "open").trim().toLowerCase() !== "done" ? (
+              <button
+                type="button"
+                className="project-action-sheet-btn"
+                onClick={() => {
+                  const selected = taskActionTask;
+                  closeTaskActionSheet();
+                  handleToggleTaskComplete(selected);
+                }}
+                disabled={!canManageProjectContent || savingTask || deletingTasks}
+              >
+                Mark completed
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="project-action-sheet-btn"
+                onClick={() => {
+                  const selected = taskActionTask;
+                  closeTaskActionSheet();
+                  persistTaskStatusUpdate(selected, "open");
+                }}
+                disabled={!canManageProjectContent || savingTask || deletingTasks}
+              >
+                Reopen task
+              </button>
+            )}
+            {canManageProjectContent ? <hr /> : null}
+            {canManageProjectContent ? (
+              <button
+                type="button"
+                className="project-action-sheet-btn is-danger"
+                onClick={handleDeleteTaskFromActionSheet}
+                disabled={savingTask || deletingTasks}
+              >
+                Delete task
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {Boolean(selectedProject) && Boolean(documentActionDocument) && isMobileProjectViewport ? (
+        <div className="project-action-sheet-overlay" onClick={closeDocumentActionSheet} role="presentation">
+          <div
+            className="project-action-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Document actions"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="project-action-sheet-handle" aria-hidden="true" />
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => {
+                const selected = documentActionDocument;
+                closeDocumentActionSheet();
+                openProjectDocumentInBrowser(selected);
+              }}
+            >
+              Open preview
+            </button>
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => {
+                const selected = documentActionDocument;
+                closeDocumentActionSheet();
+                handleDownloadProjectDocument(selected);
+              }}
+            >
+              Download
+            </button>
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => {
+                const selected = documentActionDocument;
+                closeDocumentActionSheet();
+                handleShareProjectDocument(selected);
+              }}
+            >
+              Share
+            </button>
+            {canManageProjectContent ? <hr /> : null}
+            {canManageProjectContent ? (
+              <button
+                type="button"
+                className="project-action-sheet-btn"
+                onClick={handleRenameDocumentFromActionSheet}
+                disabled={renamingDocument || deletingDocuments || uploadingProjectDocument || emittingProjectDocument}
+              >
+                Rename
+              </button>
+            ) : null}
+            {canManageProjectContent ? (
+              <button
+                type="button"
+                className="project-action-sheet-btn is-danger"
+                onClick={handleDeleteDocumentFromActionSheet}
+                disabled={deletingDocuments || renamingDocument || uploadingProjectDocument || emittingProjectDocument}
+              >
+                Delete document
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {Boolean(selectedProject) && showDocumentCreateActionSheet && isMobileProjectViewport ? (
+        <div className="project-action-sheet-overlay" onClick={closeDocumentCreateActionSheet} role="presentation">
+          <div
+            className="project-action-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create document"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="project-action-sheet-handle" aria-hidden="true" />
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={() => {
+                closeDocumentCreateActionSheet();
+                triggerProjectDocumentPicker();
+              }}
+              disabled={uploadingProjectDocument || deletingDocuments || renamingDocument || emittingProjectDocument}
+            >
+              Upload file
+            </button>
+            <button
+              type="button"
+              className="project-action-sheet-btn"
+              onClick={openDocumentTemplateActionSheet}
+              disabled={uploadingProjectDocument || deletingDocuments || renamingDocument || emittingProjectDocument}
+            >
+              Generate report
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {Boolean(selectedProject) && showDocumentTemplateActionSheet && isMobileProjectViewport ? (
+        <div className="project-action-sheet-overlay" onClick={closeDocumentTemplateActionSheet} role="presentation">
+          <div
+            className="project-action-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Report templates"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="project-action-sheet-handle" aria-hidden="true" />
+            {PROJECT_EMIT_DOCUMENT_OPTIONS.map((option) => (
+              <button
+                key={`mobile-document-template-${option.value}`}
+                type="button"
+                className="project-action-sheet-btn"
+                onClick={() => {
+                  closeDocumentTemplateActionSheet();
+                  setMobileProjectDocumentMode("reports");
+                  handlePrepareEmitDocument(option);
+                }}
+                disabled={uploadingProjectDocument || deletingDocuments || renamingDocument || emittingProjectDocument}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
       ) : null}

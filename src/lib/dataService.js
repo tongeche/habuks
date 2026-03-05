@@ -1387,59 +1387,12 @@ export async function deleteIgaProject(projectId, tenantId) {
 
   const parsedProjectId = parseProjectIdOrThrow(projectId);
 
-  const childTables = [
-    "iga_committee_members",
-    "iga_budgets",
-    "iga_inventory",
-    "iga_reports",
-    "iga_sales",
-    "iga_activities",
-    "iga_beneficiaries",
-    "iga_training_sessions",
-    "project_gallery",
-    "project_goals",
-    "project_volunteer_roles",
-    "project_faq",
-    "project_activities",
-    "project_donation_items",
-    "project_expenses",
-    "project_sales",
-    "project_products",
-    "jpp_birds",
-    "jpp_weekly_growth",
-    "jpp_daily_log",
-    "jpp_batches",
-    "jpp_expenses",
-    "jgf_farming_activities",
-    "jgf_crop_cycles",
-    "jgf_land_leases",
-    "jgf_inventory",
-    "jgf_purchases",
-    "jgf_sales",
-    "jgf_expenses",
-    "jgf_production_logs",
-    "jgf_batches",
-  ];
-
-  await deleteProjectMediaAssets(parsedProjectId, [], tenantId);
-
-  for (const tableName of childTables) {
-    if (tableName === "project_gallery") continue;
-    try {
-      let query = supabase.from(tableName).delete().eq("project_id", parsedProjectId);
-      query = applyTenantFilter(query, tenantId);
-      const { error } = await query;
-      if (error) {
-        const code = String(error?.code || "");
-        if (code === "42P01") {
-          continue;
-        }
-        throw error;
-      }
-    } catch (error) {
-      console.error(`Error deleting child records from ${tableName}:`, error);
-      throw new Error("Failed to delete project. Hide it first or remove linked records.");
-    }
+  // Best-effort cleanup for gallery files stored outside DB rows.
+  // Do not block project deletion if storage cleanup fails.
+  try {
+    await deleteProjectMediaAssets(parsedProjectId, [], tenantId);
+  } catch (error) {
+    console.warn("Project delete: gallery storage cleanup skipped.", error);
   }
 
   let projectDeleteQuery = supabase.from("iga_projects").delete().eq("id", parsedProjectId);
@@ -1447,7 +1400,14 @@ export async function deleteIgaProject(projectId, tenantId) {
   const { error: projectDeleteError } = await projectDeleteQuery;
   if (projectDeleteError) {
     console.error("Error deleting project:", projectDeleteError);
-    throw new Error("Failed to delete project. Hide it instead if records are linked.");
+    const code = String(projectDeleteError?.code || "");
+    if (code === "42501") {
+      throw new Error("You do not have permission to delete this project.");
+    }
+    if (code === "23503") {
+      throw new Error("Failed to delete project because linked records still reference it.");
+    }
+    throw new Error(projectDeleteError?.message || "Failed to delete project.");
   }
 
   return true;

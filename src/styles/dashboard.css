@@ -16179,10 +16179,11 @@
   padding: 0.62rem 0.64rem;
   min-height: 60px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.62rem;
   text-align: left;
   cursor: pointer;
+  position: relative;
 }
 
 .project-expense-mobile-item.is-selected {
@@ -16252,6 +16253,27 @@
   display: flex;
   flex-direction: column;
   gap: 0.14rem;
+  padding-right: 2.05rem;
+}
+
+.project-expense-mobile-item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.project-expense-mobile-item-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-expense-mobile-item-amount {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .project-expense-mobile-item-main strong {
@@ -16295,6 +16317,9 @@
   justify-content: center;
   padding: 0;
   cursor: pointer;
+  position: absolute;
+  right: 0.5rem;
+  top: 0.45rem;
 }
 
 .project-expense-mobile-item-flags {
@@ -17295,6 +17320,303 @@
 .project-group-row-action:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.project-task-mobile-status-chips {
+  display: flex;
+  gap: 0.48rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 0 0.72rem;
+}
+
+.project-task-mobile-status-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.project-task-mobile-status-chip {
+  border: 1px solid #dbe4f0;
+  background: #f8fafc;
+  color: #475569;
+  border-radius: 999px;
+  min-height: 36px;
+  padding: 0.36rem 0.76rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.project-task-mobile-status-chip.active {
+  border-color: rgba(31, 122, 140, 0.28);
+  background: rgba(31, 122, 140, 0.12);
+  color: var(--green-primary);
+}
+
+.project-task-mobile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.project-task-mobile-card {
+  position: relative;
+  border: 1px solid #dbe4f0;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 0.62rem 0.64rem;
+  min-height: 64px;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.62rem;
+}
+
+.project-task-mobile-check {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.project-task-mobile-check.is-done {
+  border-color: #34d399;
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.project-task-mobile-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.34rem;
+  padding-right: 2rem;
+}
+
+.project-task-mobile-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.project-task-mobile-head strong {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 0.84rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.project-task-mobile-head span {
+  flex-shrink: 0;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.project-task-mobile-assignee {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-width: 0;
+  color: #475569;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.project-task-mobile-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid #bae6fd;
+  background: #e0f2fe;
+  color: #0369a1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+.project-task-mobile-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.38rem;
+}
+
+.project-task-mobile-badges .project-task-badge {
+  font-size: 0.68rem;
+  padding: 0.18rem 0.5rem;
+}
+
+.project-task-mobile-menu {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #dbe4f0;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  position: absolute;
+  right: 0.5rem;
+  top: 0.45rem;
+}
+
+.project-documents-mobile-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  padding: 0.24rem;
+  border-radius: 12px;
+  border: 1px solid #dbe4f0;
+  background: #f8fafc;
+  margin: 0 0 0.7rem;
+}
+
+.project-documents-mobile-mode-btn {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 0.76rem;
+  font-weight: 700;
+  border-radius: 10px;
+  padding: 0.44rem 0.84rem;
+  cursor: pointer;
+}
+
+.project-documents-mobile-mode-btn.active {
+  background: #eef2ff;
+  color: #1d4ed8;
+}
+
+.project-documents-mobile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.project-documents-mobile-card {
+  position: relative;
+  border: 1px solid #dbe4f0;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 0.68rem 0.68rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  cursor: pointer;
+}
+
+.project-documents-mobile-card.is-selected {
+  border-color: rgba(31, 122, 140, 0.35);
+  box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.16);
+  background: #f3fbf9;
+}
+
+.project-documents-mobile-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.project-documents-mobile-icon.is-report {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #4338ca;
+}
+
+.project-documents-mobile-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding-right: 2rem;
+}
+
+.project-documents-mobile-main strong {
+  color: #0f172a;
+  font-size: 0.84rem;
+  line-height: 1.25;
+}
+
+.project-documents-mobile-main span {
+  color: #475569;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.project-documents-mobile-main small {
+  color: #64748b;
+  font-size: 0.72rem;
+}
+
+.project-documents-mobile-menu {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #dbe4f0;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  position: absolute;
+  right: 0.5rem;
+  top: 0.45rem;
+}
+
+.project-documents-mobile-selection {
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 0.62rem 0.66rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.56rem;
+  margin: 0 0 0.72rem;
+}
+
+.project-documents-mobile-selection strong {
+  color: #0f172a;
+  font-size: 0.78rem;
+}
+
+.project-documents-mobile-selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.project-documents-mobile-selection-actions .project-detail-action {
+  min-height: 34px;
+  padding: 0.4rem 0.68rem;
 }
 
 .project-detail-progress {
@@ -20149,7 +20471,7 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
-    padding: 1rem;
+    padding: 1rem 1rem calc(var(--dashboard-mobile-nav-height) + 1.35rem + env(safe-area-inset-bottom));
   }
 
   .data-modal-grid {
@@ -20571,10 +20893,11 @@
     padding: 0.62rem 0.64rem;
     min-height: 60px;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 0.62rem;
     text-align: left;
     cursor: pointer;
+    position: relative;
   }
 
   .project-expense-mobile-item.is-selected {
@@ -20644,6 +20967,27 @@
     display: flex;
     flex-direction: column;
     gap: 0.14rem;
+    padding-right: 2.05rem;
+  }
+
+  .project-expense-mobile-item-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.45rem;
+  }
+
+  .project-expense-mobile-item-title {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .project-expense-mobile-item-amount {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   .project-expense-mobile-item-main strong {
@@ -20687,6 +21031,9 @@
     justify-content: center;
     padding: 0;
     cursor: pointer;
+    position: absolute;
+    right: 0.5rem;
+    top: 0.45rem;
   }
 
   .project-expense-mobile-item-flags {
@@ -30671,6 +31018,87 @@
   border-color: rgba(67, 84, 112, 0.72);
   background: rgba(12, 28, 50, 0.9);
   color: #9fb3d1;
+}
+
+.dashboard-layout.is-dark .project-task-mobile-status-chip,
+.dashboard-layout.is-dark .project-task-mobile-card,
+.dashboard-layout.is-dark .project-task-mobile-check,
+.dashboard-layout.is-dark .project-task-mobile-menu {
+  border-color: rgba(67, 84, 112, 0.72);
+  background: rgba(8, 20, 38, 0.92);
+  color: #9fb3d1;
+}
+
+.dashboard-layout.is-dark .project-task-mobile-status-chip.active {
+  border-color: rgba(45, 212, 191, 0.44);
+  background: rgba(20, 184, 166, 0.18);
+  color: #5eead4;
+}
+
+.dashboard-layout.is-dark .project-task-mobile-head strong {
+  color: var(--dashboard-text-primary);
+}
+
+.dashboard-layout.is-dark .project-task-mobile-head span,
+.dashboard-layout.is-dark .project-task-mobile-assignee {
+  color: var(--dashboard-text-secondary);
+}
+
+.dashboard-layout.is-dark .project-task-mobile-avatar {
+  border-color: rgba(59, 130, 246, 0.3);
+  background: rgba(30, 64, 175, 0.18);
+  color: #93c5fd;
+}
+
+.dashboard-layout.is-dark .project-task-mobile-check.is-done {
+  border-color: rgba(45, 212, 191, 0.5);
+  background: rgba(20, 184, 166, 0.18);
+  color: #5eead4;
+}
+
+.dashboard-layout.is-dark .project-documents-mobile-mode,
+.dashboard-layout.is-dark .project-documents-mobile-card,
+.dashboard-layout.is-dark .project-documents-mobile-menu,
+.dashboard-layout.is-dark .project-documents-mobile-selection {
+  border-color: rgba(67, 84, 112, 0.72);
+  background: rgba(8, 20, 38, 0.92);
+}
+
+.dashboard-layout.is-dark .project-documents-mobile-mode-btn {
+  color: #9ab0cd;
+}
+
+.dashboard-layout.is-dark .project-documents-mobile-mode-btn.active {
+  background: rgba(59, 130, 246, 0.16);
+  color: #dbeafe;
+}
+
+.dashboard-layout.is-dark .project-documents-mobile-card.is-selected {
+  border-color: rgba(45, 212, 191, 0.44);
+  box-shadow: 0 0 0 2px rgba(20, 184, 166, 0.22);
+  background: rgba(7, 26, 27, 0.82);
+}
+
+.dashboard-layout.is-dark .project-documents-mobile-icon {
+  border-color: rgba(59, 130, 246, 0.34);
+  background: rgba(30, 64, 175, 0.2);
+  color: #93c5fd;
+}
+
+.dashboard-layout.is-dark .project-documents-mobile-icon.is-report {
+  border-color: rgba(129, 140, 248, 0.4);
+  background: rgba(55, 48, 163, 0.26);
+  color: #c7d2fe;
+}
+
+.dashboard-layout.is-dark .project-documents-mobile-main strong,
+.dashboard-layout.is-dark .project-documents-mobile-selection strong {
+  color: var(--dashboard-text-primary);
+}
+
+.dashboard-layout.is-dark .project-documents-mobile-main span,
+.dashboard-layout.is-dark .project-documents-mobile-main small {
+  color: var(--dashboard-text-secondary);
 }
 
 .dashboard-layout.is-dark .project-expense-mobile-flag {
