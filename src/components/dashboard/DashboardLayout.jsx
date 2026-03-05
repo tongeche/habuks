@@ -27,54 +27,6 @@ const baseMenuItems = [
     accentBg: "#e6efff",
   },
   {
-    key: "settings",
-    label: "Settings",
-    icon: "settings",
-    group: "primary",
-    accent: "#0f766e",
-    accentBg: "#e6fffb",
-  },
-  {
-    key: "meetings",
-    label: "Activities",
-    icon: "flag",
-    group: "primary",
-    accent: "#8b5cf6",
-    accentBg: "#efe7ff"
-  },
-  {
-    key: "contributions",
-    label: "Contributions",
-    icon: "wallet",
-    group: "finance",
-    accent: "#10b981",
-    accentBg: "#e7f8f1"
-  },
-  {
-    key: "expenses",
-    label: "Expenses",
-    icon: "receipt",
-    group: "finance",
-    accent: "#f59e0b",
-    accentBg: "#fff4df"
-  },
-  {
-    key: "welfare",
-    label: "Welfare Fund",
-    icon: "heart",
-    group: "finance",
-    accent: "#f97316",
-    accentBg: "#fff0e5"
-  },
-  {
-    key: "documents",
-    label: "Transactions",
-    icon: "coins",
-    group: "finance",
-    accent: "#0ea5e9",
-    accentBg: "#e0f2fe"
-  },
-  {
     key: "members",
     label: "People",
     icon: "users",
@@ -83,36 +35,28 @@ const baseMenuItems = [
     accentBg: "#ecebff"
   },
   {
-    key: "admin",
-    label: "Roles & Permissions",
-    icon: "shield",
-    group: "people",
-    accent: "#1d4ed8",
-    accentBg: "#e0ecff"
+    key: "expenses",
+    label: "Finance",
+    icon: "wallet",
+    group: "finance",
+    accent: "#10b981",
+    accentBg: "#e7f8f1",
   },
   {
-    key: "reports",
-    label: "Reports",
-    icon: "trending-up",
-    group: "reporting",
-    accent: "#06b6d4",
-    accentBg: "#e0f7fa"
+    key: "settings",
+    label: "Settings",
+    icon: "settings",
+    group: "management",
+    accent: "#0f766e",
+    accentBg: "#e6fffb",
   },
   {
     key: "news",
     label: "Updates",
     icon: "check-circle",
-    group: "reporting",
-    accent: "#14b8a6",
-    accentBg: "#e6fffb"
-  },
-  {
-    key: "payouts",
-    label: "Payout Schedule",
-    icon: "calendar",
     group: "management",
-    accent: "#22c55e",
-    accentBg: "#e7f8f1"
+    accent: "#14b8a6",
+    accentBg: "#e6fffb",
   },
 ];
 
@@ -380,13 +324,13 @@ function DashboardLayout({
     .filter(Boolean);
 
   const groupLabels = {
+    primary: "Workspace",
     finance: "Records",
     people: "People",
-    reporting: "Reporting",
     management: "Management",
   };
 
-  const groupOrder = ["primary", "finance", "people", "reporting", "management"];
+  const groupOrder = ["primary", "people", "finance", "management"];
   const groupedMenuItems = menuItems.reduce((acc, item) => {
     const group = item.group || "primary";
     if (!acc[group]) acc[group] = [];
@@ -809,7 +753,6 @@ function DashboardLayout({
     closeMobileSearchDrawer();
     setMobileSearchQuery("");
   };
-  const canOpenAdminConsole = allowedPages.has("admin");
   const canInviteMembers = canManageWorkspace;
   const mobileMoreActions = [
     canManageWorkspace
@@ -906,15 +849,6 @@ function DashboardLayout({
           onClick: () => setActivePage("members"),
         }
       : null,
-    allowedPages.has("reports")
-      ? {
-          key: "reports",
-          label: "Reports",
-          icon: "trending-up",
-          tone: "teal",
-          onClick: () => setActivePage("reports"),
-        }
-      : null,
     allowedPages.has("expenses") || allowedPages.has("documents") || allowedPages.has("contributions")
       ? {
           key: "finance",
@@ -950,15 +884,6 @@ function DashboardLayout({
           icon: "check-circle",
           tone: "mint",
           onClick: () => setActivePage("news"),
-        }
-      : null,
-    canOpenAdminConsole
-      ? {
-          key: "roles",
-          label: "Access",
-          icon: "shield",
-          tone: "sky",
-          onClick: () => setActivePage("admin"),
         }
       : null,
   ]
@@ -1152,7 +1077,6 @@ function DashboardLayout({
                   tenantRole={normalizedTenantRole}
                   canInviteMembers={canInviteMembers}
                   canManageWorkspace={canManageWorkspace}
-                  canOpenAdminConsole={canOpenAdminConsole}
                   themeMode={dashboardThemeMode}
                   onThemeModeChange={setDashboardThemeMode}
                   quietModeUntil={quietModeUntil}
@@ -1160,7 +1084,6 @@ function DashboardLayout({
                   onOpenInviteModal={() => setShowInviteModal(true)}
                   onOpenProfileSettings={() => openSettingsTab("my-settings")}
                   onOpenWorkspaceSettings={() => openSettingsTab("organization-settings")}
-                  onOpenAdminConsole={() => setActivePage("admin")}
                   onOpenNotifications={() => setActivePage("notifications")}
                   onSwitchWorkspace={() => navigate("/select-tenant")}
                   onOpenHelp={() => navigate("/resources")}
@@ -1248,7 +1171,6 @@ function DashboardLayout({
                   tenantRole={normalizedTenantRole}
                   canInviteMembers={canInviteMembers}
                   canManageWorkspace={canManageWorkspace}
-                  canOpenAdminConsole={canOpenAdminConsole}
                   themeMode={dashboardThemeMode}
                   onThemeModeChange={setDashboardThemeMode}
                   quietModeUntil={quietModeUntil}
@@ -1256,7 +1178,6 @@ function DashboardLayout({
                   onOpenInviteModal={() => setShowInviteModal(true)}
                   onOpenProfileSettings={() => openSettingsTab("my-settings")}
                   onOpenWorkspaceSettings={() => openSettingsTab("organization-settings")}
-                  onOpenAdminConsole={() => setActivePage("admin")}
                   onOpenNotifications={() => setActivePage("notifications")}
                   onSwitchWorkspace={() => navigate("/select-tenant")}
                   onOpenHelp={() => navigate("/resources")}

@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../icons.jsx";
 
 export default function DataModal({
@@ -29,8 +30,10 @@ export default function DataModal({
   }, [open, onClose]);
 
   if (!open) return null;
+  if (typeof document === "undefined") return null;
+  const portalTarget = document.querySelector(".dashboard-layout") || document.body;
 
-  return (
+  const modalContent = (
     <div className="data-modal-overlay" onClick={onClose} role="presentation">
       <div
         className={`data-modal ${className}`.trim()}
@@ -61,4 +64,6 @@ export default function DataModal({
       </div>
     </div>
   );
+
+  return createPortal(modalContent, portalTarget);
 }

@@ -2,17 +2,15 @@ import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import DashboardLayout from "./DashboardLayout.jsx";
 import DashboardOverview from "./DashboardOverview.jsx";
-import { ProjectsPage } from "./ProjectsPage.jsx";
+import ProjectsPage from "./ProjectsPage.jsx";
 import JppProjectPage from "./JppProjectPage.jsx";
 import { JgfProjectPage } from "./JgfProjectPage.jsx";
-import ReportsPage from "./ReportsPage.jsx";
 import NewsPage from "./NewsPage.jsx";
 import NotificationsPage from "./NotificationsPage.jsx";
 import { MeetingsPage } from "./MeetingsPage.jsx";
 import MembersPage from "./MembersPage.jsx";
 import { FinanceRecordsPage } from "./FinanceRecordsPage.jsx";
 import SettingsPage from "./SettingsPage.jsx";
-import AdminPage from "./AdminPage.jsx";
 import { TenantCurrencyProvider } from "./TenantCurrencyContext.jsx";
 import { getCurrentMember, getProjectsWithMembership, getTenantMembershipForSlug } from "../../lib/dataService.js";
 import { buildTenantBrand, buildTenantFeatures, buildTenantThemeVars } from "../../lib/tenantBranding.js";
@@ -37,6 +35,7 @@ export default function Dashboard() {
     }
     return {};
   }, []);
+  const activeTenantId = tenantInfo?.id || user?.tenant_id || null;
 
   useEffect(() => {
     async function loadUser() {
@@ -62,7 +61,7 @@ export default function Dashboard() {
     if (!user) return;
     const loadProjectAccess = async () => {
       try {
-        const projects = await getProjectsWithMembership(user?.id, tenantInfo?.id);
+        const projects = await getProjectsWithMembership(user?.id, activeTenantId);
         const visibleProjects = isAdminRole(user?.role)
           ? projects || []
           : (projects || []).filter(
@@ -88,7 +87,7 @@ export default function Dashboard() {
       }
     };
     loadProjectAccess();
-  }, [user, tenantInfo?.id]);
+  }, [user, activeTenantId]);
 
   useEffect(() => {
     if (!user || !slug) {
@@ -129,6 +128,13 @@ export default function Dashboard() {
   const tenantTheme = useMemo(
     () => buildTenantThemeVars(tenantInfo, baseSiteData),
     [tenantInfo, baseSiteData]
+  );
+  const dashboardTenant = useMemo(
+    () => ({
+      ...tenantBrand,
+      id: tenantBrand?.id || activeTenantId || null,
+    }),
+    [tenantBrand, activeTenantId]
   );
 
   const access = useMemo(
@@ -177,7 +183,7 @@ export default function Dashboard() {
         return (
           <DashboardOverview
             user={user}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             tenantBrand={tenantBrand}
             tenantFeatures={tenantFeatures}
             access={access}
@@ -189,7 +195,7 @@ export default function Dashboard() {
         return (
           <FinanceRecordsPage
             user={user}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             initialType="contribution"
             activePage="contributions"
           />
@@ -198,7 +204,7 @@ export default function Dashboard() {
         return (
           <FinanceRecordsPage
             user={user}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             initialType="payout"
             activePage="payouts"
           />
@@ -207,7 +213,7 @@ export default function Dashboard() {
         return (
           <FinanceRecordsPage
             user={user}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             initialType="welfare"
             activePage="welfare"
           />
@@ -219,7 +225,7 @@ export default function Dashboard() {
             tenantRole={tenantRole}
             access={access}
             setActivePage={setActivePage}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             tenantBrand={tenantBrand}
             onManageProject={(project) => {
               const raw = project?.module_key || project?.code || "";
@@ -238,7 +244,7 @@ export default function Dashboard() {
           <JppProjectPage
             user={user}
             tenantRole={tenantRole}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             activeProjectId={activeJppProjectId}
             onProjectChange={setActiveJppProjectId}
           />
@@ -248,7 +254,7 @@ export default function Dashboard() {
           <JgfProjectPage
             user={user}
             tenantRole={tenantRole}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             activeProjectId={activeJgfProjectId}
             onProjectChange={setActiveJgfProjectId}
           />
@@ -257,35 +263,28 @@ export default function Dashboard() {
         return (
           <FinanceRecordsPage
             user={user}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             initialType="expense"
             activePage="expenses"
             access={access}
             setActivePage={setActivePage}
           />
         );
-      case "reports":
-        return (
-          <ReportsPage
-            user={user}
-            tenantId={tenantInfo?.id}
-          />
-        );
       case "notifications":
         return (
           <NotificationsPage
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             user={user}
             setActivePage={setActivePage}
           />
         );
       case "news":
-        return <NewsPage user={user} tenantId={tenantInfo?.id} />;
+        return <NewsPage user={user} tenantId={activeTenantId} />;
       case "documents":
         return (
           <FinanceRecordsPage
             user={user}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             initialType="all"
             activePage="documents"
           />
@@ -294,14 +293,14 @@ export default function Dashboard() {
         return (
           <MeetingsPage
             user={user}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
           />
         );
       case "members":
         return (
           <MembersPage
             tenantInfo={tenantInfo}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             user={user}
             tenantRole={tenantRole}
             access={access}
@@ -313,7 +312,7 @@ export default function Dashboard() {
           <SettingsPage
             user={user}
             onUserUpdate={setUser}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             tenant={tenantInfo}
             tenantRole={tenantRole}
             requestedTab={settingsTabRequest}
@@ -321,20 +320,11 @@ export default function Dashboard() {
             setActivePage={setActivePage}
           />
         );
-      case "admin":
-        return (
-          <AdminPage
-            user={user}
-            tenantId={tenantInfo?.id}
-            tenantRole={tenantRole}
-            onTenantUpdated={setTenantInfo}
-          />
-        );
       default:
         return (
           <DashboardOverview
             user={user}
-            tenantId={tenantInfo?.id}
+            tenantId={activeTenantId}
             tenantBrand={tenantBrand}
             tenantFeatures={tenantFeatures}
             access={access}
@@ -352,7 +342,7 @@ export default function Dashboard() {
         setActivePage={setActivePage}
         user={user}
         access={access}
-        tenant={tenantBrand}
+        tenant={dashboardTenant}
         tenantRole={tenantRole}
         tenantTheme={tenantTheme}
         onRequestSettingsTab={setSettingsTabRequest}

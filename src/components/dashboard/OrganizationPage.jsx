@@ -255,6 +255,51 @@ const MEMBER_IMPORT_ALIASES = {
   ],
   avatar_url: ["avatar_url", "photo_url", "image_url"],
 };
+const PARTNER_IMPORT_COLUMNS = [
+  "name",
+  "kind",
+  "status",
+  "contact_person",
+  "contact_email",
+  "contact_phone",
+  "last_contact",
+  "linked_projects",
+  "notes",
+  "logo_url",
+];
+const PARTNER_IMPORT_TEMPLATE_ROW = {
+  name: "Lake Region Enterprise Foundation",
+  kind: "NGO",
+  status: "Active",
+  contact_person: "Partnerships Lead",
+  contact_email: "partnerships@example.org",
+  contact_phone: "+254722000000",
+  last_contact: "2026-02-23",
+  linked_projects: "Poultry Incubation Initiative | Youth Foods Truck",
+  notes: "Supports technical coaching and grant reporting.",
+  logo_url: "https://example.org/logo.png",
+};
+const PARTNER_IMPORT_ALIASES = {
+  name: ["name", "organization", "organization_name", "partner_name"],
+  kind: ["kind", "type", "partner_type", "category"],
+  status: ["status", "partner_status"],
+  contact_person: ["contact_person", "contact", "contact_name"],
+  contact_email: ["contact_email", "email", "email_address"],
+  contact_phone: ["contact_phone", "phone", "phone_number", "telephone"],
+  last_contact: ["last_contact", "last_contact_date", "contact_date"],
+  linked_projects: [
+    "linked_projects",
+    "linked_project",
+    "linked_project_ids",
+    "projects",
+    "project",
+    "project_name",
+    "project_names",
+    "project_ids",
+  ],
+  notes: ["notes", "note", "remarks"],
+  logo_url: ["logo_url", "logo", "logo_link", "logo_uri"],
+};
 
 const normalizeOptional = (value) => {
   const text = String(value ?? "").trim();
@@ -1100,6 +1145,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const [memberProjectAccessError, setMemberProjectAccessError] = useState("");
 
   const [showMemberImportChoiceModal, setShowMemberImportChoiceModal] = useState(false);
+  const [showPartnerImportChoiceModal, setShowPartnerImportChoiceModal] = useState(false);
 
   // Invite modal states
   const [showInviteModal, setShowInviteModal] = useState(false);
@@ -1129,6 +1175,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   const [partnerLogoUploadName, setPartnerLogoUploadName] = useState("");
   const [partnerFormError, setPartnerFormError] = useState("");
   const [savingPartner, setSavingPartner] = useState(false);
+  const [importingPartners, setImportingPartners] = useState(false);
   const [showDeletePartnerModal, setShowDeletePartnerModal] = useState(false);
 
   const formatCurrency = (value) => {
@@ -1141,6 +1188,7 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
   };
   const memberAvatarInputRef = useRef(null);
   const memberImportInputRef = useRef(null);
+  const partnerImportInputRef = useRef(null);
   const organizationDocumentInputRef = useRef(null);
   const websiteMediaInputRef = useRef(null);
   const documentSearchInputRef = useRef(null);
@@ -2100,6 +2148,221 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
       setNotice({ type: "error", message: error?.message || "Failed to import members CSV." });
     } finally {
       setImportingMembers(false);
+    }
+  };
+
+  const triggerPartnerImportPicker = () => {
+    if (savingPartner || importingPartners) return;
+    partnerImportInputRef.current?.click();
+  };
+
+  const openPartnerImportChoiceModal = () => {
+    if (savingPartner || importingPartners) return;
+    setShowPartnerImportChoiceModal(true);
+  };
+
+  const downloadPartnerImportTemplate = () => {
+    const header = PARTNER_IMPORT_COLUMNS.join(",");
+    const sampleRow = PARTNER_IMPORT_COLUMNS.map((column) =>
+      escapeCsvValue(PARTNER_IMPORT_TEMPLATE_ROW[column] ?? "")
+    ).join(",");
+    const csv = [header, sampleRow].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "partners-import-template.csv";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+
+    setNotice({
+      type: "success",
+      message: "Downloaded partners import template.",
+    });
+  };
+
+  const handlePartnerImportFileSelection = async (event) => {
+    const input = event?.target;
+    const file = input?.files?.[0] || null;
+    if (!file) return;
+    input.value = "";
+
+    if (!tenantId) {
+      setNotice({ type: "error", message: "Tenant context is missing. Cannot import partners." });
+      return;
+    }
+    if (!partnerProjectOptions.length) {
+      setNotice({
+        type: "error",
+        message: "Create at least one project before importing partners.",
+      });
+      return;
+    }
+
+    const toPartnerDuplicateKey = (partner) => {
+      const name = String(partner?.name || "").trim().toLowerCase();
+      const email = String(partner?.contact_email || "").trim().toLowerCase();
+      const phone = String(partner?.contact_phone || "").trim();
+      return `${name}|${email}|${phone}`;
+    };
+    const normalizePartnerKind = (value) => {
+      const normalized = String(value || "").trim().toLowerCase();
+      const matched = PARTNER_KIND_OPTIONS.find((option) => option.toLowerCase() === normalized);
+      return matched || "Partner";
+    };
+    const normalizePartnerStatus = (value) => {
+      const normalized = String(value || "").trim().toLowerCase();
+      const matched = PARTNER_STATUS_OPTIONS.find((option) => option.toLowerCase() === normalized);
+      return matched || "Active";
+    };
+
+    const projectIdByNormalizedName = new Map(
+      partnerProjectOptions.map((project) => [normalizeCsvHeader(project.name), project.id])
+    );
+    const validProjectIds = new Set(partnerProjectOptions.map((project) => project.id));
+    const defaultLinkedProjectId = String(partnerProjectOptions[0]?.id || "").trim();
+    const resolveLinkedProjectIds = (value) =>
+      Array.from(
+        new Set(
+          String(value || "")
+            .split(/[|;,]/)
+            .map((entry) => String(entry || "").trim())
+            .filter(Boolean)
+            .map((entry) => {
+              if (validProjectIds.has(entry)) {
+                return entry;
+              }
+              const parsedProjectId = parsePositiveInt(entry);
+              if (parsedProjectId && validProjectIds.has(String(parsedProjectId))) {
+                return String(parsedProjectId);
+              }
+              const byName = projectIdByNormalizedName.get(normalizeCsvHeader(entry));
+              return byName || "";
+            })
+            .filter(Boolean)
+        )
+      );
+    const normalizeLogoUrl = (value) => {
+      const url = String(value || "").trim();
+      if (!url) return "";
+      if (/^https?:\/\//i.test(url) || /^data:image\//i.test(url)) {
+        return url;
+      }
+      return "";
+    };
+
+    setImportingPartners(true);
+
+    try {
+      const csvText = await file.text();
+      const parsedRows = parseCsvText(csvText);
+      const currentPartners = getOrganizationPartners(tenantRecord?.site_data);
+      const existingDuplicateKeys = new Set(currentPartners.map((partner) => toPartnerDuplicateKey(partner)));
+      const importedPartners = [];
+      const importedIds = [];
+      let createdCount = 0;
+      let duplicateCount = 0;
+      let invalidCount = 0;
+      let failedCount = 0;
+      const importTime = Date.now();
+
+      for (let index = 0; index < parsedRows.length; index += 1) {
+        const row = parsedRows[index];
+        const getValue = (field) => {
+          const aliases = PARTNER_IMPORT_ALIASES[field] || [field];
+          for (const alias of aliases) {
+            const key = normalizeCsvHeader(alias);
+            const value = String(row?.[key] || "").trim();
+            if (value) {
+              return value;
+            }
+          }
+          return "";
+        };
+
+        try {
+          const name = getValue("name");
+          const contactEmail = getValue("contact_email");
+          const contactPhone = getValue("contact_phone");
+          const resolvedProjectIds = resolveLinkedProjectIds(getValue("linked_projects"));
+          const linkedProjectIds = resolvedProjectIds.length
+            ? resolvedProjectIds
+            : defaultLinkedProjectId
+              ? [defaultLinkedProjectId]
+              : [];
+          if (!name) {
+            invalidCount += 1;
+            continue;
+          }
+
+          const duplicateKey = toPartnerDuplicateKey({
+            name,
+            contact_email: contactEmail,
+            contact_phone: contactPhone,
+          });
+          if (existingDuplicateKeys.has(duplicateKey)) {
+            duplicateCount += 1;
+            continue;
+          }
+
+          const partnerId =
+            (typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `partner-import-${importTime}-${index + 1}`) || `partner-import-${importTime}-${index + 1}`;
+
+          const partner = {
+            id: partnerId,
+            name,
+            kind: normalizePartnerKind(getValue("kind")),
+            status: normalizePartnerStatus(getValue("status")),
+            contact_person: getValue("contact_person"),
+            contact_email: contactEmail,
+            contact_phone: contactPhone,
+            last_contact: normalizeDateInputValue(getValue("last_contact")),
+            notes: getValue("notes"),
+            logo_url: normalizeLogoUrl(getValue("logo_url")),
+            linked_project_ids: linkedProjectIds,
+          };
+
+          importedPartners.push(partner);
+          importedIds.push(partner.id);
+          existingDuplicateKeys.add(duplicateKey);
+          createdCount += 1;
+        } catch (rowError) {
+          failedCount += 1;
+          console.error(`Partner import row ${index + 2} failed:`, rowError, row);
+        }
+      }
+
+      if (!importedPartners.length) {
+        setNotice({
+          type: failedCount > 0 ? "error" : "warning",
+          message: `No partners imported. Duplicates ${duplicateCount}, invalid ${invalidCount}${
+            failedCount > 0 ? `, failed ${failedCount}` : ""
+          }.`,
+        });
+        return;
+      }
+
+      const summaryMessage = `Imported ${createdCount} partner${createdCount === 1 ? "" : "s"}, duplicates ${duplicateCount}, invalid ${invalidCount}${
+        failedCount > 0 ? `, failed ${failedCount}` : ""
+      }.`;
+      await persistPartners([...importedPartners, ...currentPartners], summaryMessage);
+      setSelectedPartnerIds(importedIds);
+      if (failedCount > 0) {
+        setNotice({
+          type: "warning",
+          message: summaryMessage,
+        });
+      }
+    } catch (error) {
+      console.error("Error importing partners:", error);
+      setNotice({ type: "error", message: error?.message || "Failed to import partners CSV." });
+    } finally {
+      setImportingPartners(false);
     }
   };
 
@@ -5006,6 +5269,16 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
           />
         </label>
         <div className="org-shell-toolbar-actions">
+          <button
+            type="button"
+            className="project-detail-action ghost icon-only"
+            onClick={openPartnerImportChoiceModal}
+            disabled={savingPartner || importingPartners}
+            title="Import partners from CSV"
+            aria-label="Import partners from CSV"
+          >
+            <Icon name="upload" size={16} />
+          </button>
           <button type="button" className="project-detail-action ghost" onClick={openCreatePartnerModal}>
             Add partner
           </button>
@@ -5118,6 +5391,15 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
           </tbody>
         </table>
       </div>
+
+      <input
+        ref={partnerImportInputRef}
+        type="file"
+        className="project-documents-file-input"
+        accept=".csv,text/csv"
+        onChange={handlePartnerImportFileSelection}
+        disabled={savingPartner || importingPartners}
+      />
     </article>
   );
 
@@ -6357,6 +6639,21 @@ function OrganizationPage({ user, tenantId, tenant, onTenantUpdated, setActivePa
         option2Icon="upload"
         option2Description="Continue with a completed members CSV file."
         onOption2Click={triggerMemberImportPicker}
+      />
+
+      <ChoiceModal
+        open={showPartnerImportChoiceModal}
+        onClose={() => setShowPartnerImportChoiceModal(false)}
+        title="Import partners"
+        message="Before upload, download the CSV template so partner columns and linked projects match expected values."
+        option1Label="Download template"
+        option1Icon="download"
+        option1Description="Get the latest partners CSV template."
+        onOption1Click={downloadPartnerImportTemplate}
+        option2Label="Upload CSV"
+        option2Icon="upload"
+        option2Description="Continue with a completed partners CSV file."
+        onOption2Click={triggerPartnerImportPicker}
       />
 
       {/* Invite Modal */}

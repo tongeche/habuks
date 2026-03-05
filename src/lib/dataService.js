@@ -1397,12 +1397,147 @@ export async function deleteIgaProject(projectId, tenantId) {
 
   const parsedProjectId = parseProjectIdOrThrow(projectId);
 
+  const deleteRowsByProjectId = async (tableName, options = {}) => {
+    const {
+      useTenantFilter = true,
+      ignoreMissingRelation = true,
+      ignoreMissingTenantColumn = true,
+    } = options;
+
+    let deleteQuery = supabase.from(tableName).delete().eq("project_id", parsedProjectId);
+    if (useTenantFilter) {
+      deleteQuery = applyTenantFilter(deleteQuery, tenantId);
+    }
+
+    const { error } = await deleteQuery;
+    if (!error) {
+      return;
+    }
+
+    if (ignoreMissingRelation && isMissingRelationError(error, tableName)) {
+      return;
+    }
+
+    if (
+      useTenantFilter &&
+      ignoreMissingTenantColumn &&
+      isMissingColumnError(error, "tenant_id")
+    ) {
+      const fallback = await supabase
+        .from(tableName)
+        .delete()
+        .eq("project_id", parsedProjectId);
+      if (!fallback.error || (ignoreMissingRelation && isMissingRelationError(fallback.error, tableName))) {
+        return;
+      }
+      throw fallback.error;
+    }
+
+    throw error;
+  };
+
+  const cleanupProjectDocumentStorage = async () => {
+    let docsQuery = supabase
+      .from("project_documents")
+      .select("file_path")
+      .eq("project_id", parsedProjectId);
+    docsQuery = applyTenantFilter(docsQuery, tenantId);
+    let docsResult = await docsQuery;
+
+    if (docsResult.error && isMissingColumnError(docsResult.error, "tenant_id")) {
+      docsResult = await supabase
+        .from("project_documents")
+        .select("file_path")
+        .eq("project_id", parsedProjectId);
+    }
+
+    if (docsResult.error) {
+      if (isMissingRelationError(docsResult.error, "project_documents")) {
+        return;
+      }
+      throw docsResult.error;
+    }
+
+    const paths = (docsResult.data || [])
+      .map((row) => String(row?.file_path || "").trim())
+      .filter(Boolean);
+
+    if (!paths.length) {
+      return;
+    }
+
+    const { error: storageError } = await supabase.storage.from(PROJECT_DOCUMENT_BUCKET).remove(paths);
+    if (storageError) {
+      throw storageError;
+    }
+  };
+
   // Best-effort cleanup for gallery files stored outside DB rows.
   // Do not block project deletion if storage cleanup fails.
   try {
     await deleteProjectMediaAssets(parsedProjectId, [], tenantId);
   } catch (error) {
     console.warn("Project delete: gallery storage cleanup skipped.", error);
+  }
+
+  // Best-effort cleanup for project document files stored outside DB rows.
+  // Do not block project deletion if storage cleanup fails.
+  try {
+    await cleanupProjectDocumentStorage();
+  } catch (error) {
+    console.warn("Project delete: document storage cleanup skipped.", error);
+  }
+
+  const dependentTables = [
+    "project_stock_movements",
+    "project_documents",
+    "project_gallery",
+    "project_expenses",
+    "project_sales",
+    "project_products",
+    "project_expense_items",
+    "project_expense_categories",
+    "project_tasks",
+    "project_notes",
+    "iga_budgets",
+    "iga_committee_members",
+    "project_goals",
+    "project_volunteer_roles",
+    "project_faq",
+    "project_activities",
+    "project_donation_items",
+    "jpp_daily_log",
+    "jpp_weekly_growth",
+    "jpp_birds",
+    "jpp_batches",
+    "jgf_farming_activities",
+    "jgf_crop_cycles",
+    "jgf_land_leases",
+    "jgf_production_logs",
+    "jgf_inventory",
+    "jgf_purchases",
+    "jgf_expenses",
+    "jgf_sales",
+    "jgf_batches",
+    "iga_activities",
+    "iga_reports",
+    "iga_beneficiaries",
+    "iga_inventory",
+    "iga_sales",
+    "iga_training_sessions",
+  ];
+
+  for (const tableName of dependentTables) {
+    try {
+      await deleteRowsByProjectId(tableName);
+    } catch (error) {
+      console.error(`Error deleting linked project rows from ${tableName}:`, error);
+      const code = String(error?.code || "");
+      if (code === "42501") {
+        throw new Error("You do not have permission to delete this project's linked records.");
+      }
+      throw new Error(error?.message || `Failed to delete linked records from ${tableName}.`);
+    }
   }
 
   let projectDeleteQuery = supabase.from("iga_projects").delete().eq("id", parsedProjectId);
@@ -2612,11 +2747,20 @@ const normalizeNoteVisibility = (value) => {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
-  if (normalized === "admins_only" || normalized === "project_team") {
+  if (
+    normalized === "admins_only" ||
+    normalized === "project_team" ||
+    normalized === "owner_only" ||
+    normalized === "selected_members"
+  ) {
     return normalized;
   }
   if (normalized === "admins only") return "admins_only";
   if (normalized === "project team") return "project_team";
+  if (normalized === "owner only") return "owner_only";
+  if (normalized === "specific members") return "selected_members";
+  if (normalized === "specific_members") return "selected_members";
+  if (normalized === "selected members") return "selected_members";
   return "project_team";
 };
 
@@ -2626,6 +2770,32 @@ const parseOptionalMemberId = (value) => {
     return null;
   }
   return parsed;
+};
+
+const normalizeNoteVisibleMemberIds = (value) => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  value.forEach((entry) => {
+    const memberId = parseOptionalMemberId(entry);
+    if (!memberId) return;
+    seen.add(memberId);
+  });
+  return Array.from(seen);
+};
+
+const PROJECT_NOTES_SELECT_COLUMNS =
+  "id, project_id, tenant_id, title, body, visibility, author_member_id, visible_member_ids, pinned, archived_at, created_at, updated_at";
+const PROJECT_NOTES_LEGACY_SELECT_COLUMNS =
+  "id, project_id, tenant_id, title, body, visibility, author_member_id, pinned, archived_at, created_at, updated_at";
+
+const isProjectNotesVisibilityMigrationMissing = (error) => {
+  if (!error) return false;
+  if (isMissingColumnError(error, "visible_member_ids")) return true;
+  const code = String(error?.code || "");
+  const payload = `${error?.message || ""} ${error?.details || ""} ${error?.hint || ""}`.toLowerCase();
+  if (code === "23514" && payload.includes("project_notes_visibility_chk")) return true;
+  if (code === "22P02" && payload.includes("visibility")) return true;
+  return false;
 };
 
 export async function getProjectTasks(projectRef, tenantId) {
@@ -2815,14 +2985,21 @@ export async function getProjectNotes(projectRef, tenantId) {
 
   const projectId = await resolveProjectId(projectRef, tenantId);
 
-  let query = supabase
-    .from("project_notes")
-    .select("id, project_id, tenant_id, title, body, visibility, author_member_id, pinned, archived_at, created_at, updated_at")
-    .eq("project_id", projectId)
-    .is("archived_at", null)
-    .order("created_at", { ascending: false });
-  query = applyTenantFilter(query, tenantId);
-  const { data, error } = await query;
+  const runQuery = async (selectColumns) => {
+    let query = supabase
+      .from("project_notes")
+      .select(selectColumns)
+      .eq("project_id", projectId)
+      .is("archived_at", null)
+      .order("created_at", { ascending: false });
+    query = applyTenantFilter(query, tenantId);
+    return query;
+  };
+
+  let { data, error } = await runQuery(PROJECT_NOTES_SELECT_COLUMNS);
+  if (error && isMissingColumnError(error, "visible_member_ids")) {
+    ({ data, error } = await runQuery(PROJECT_NOTES_LEGACY_SELECT_COLUMNS));
+  }
 
   if (error && isMissingRelationError(error, "project_notes")) {
     throw new Error("Notes table is not available. Run migration_044_project_tasks_notes.sql.");
@@ -2832,11 +3009,15 @@ export async function getProjectNotes(projectRef, tenantId) {
     throw error;
   }
 
-  const notes = Array.isArray(data) ? data : [];
+  const notes = (Array.isArray(data) ? data : []).map((note) => ({
+    ...note,
+    visible_member_ids: normalizeNoteVisibleMemberIds(note?.visible_member_ids),
+  }));
   const memberIds = Array.from(
     new Set(
       notes
-        .map((note) => Number.parseInt(String(note?.author_member_id ?? ""), 10))
+        .flatMap((note) => [note?.author_member_id, ...(note?.visible_member_ids || [])])
+        .map((id) => Number.parseInt(String(id ?? ""), 10))
         .filter((id) => Number.isInteger(id) && id > 0)
     )
   );
@@ -2871,32 +3052,64 @@ export async function createProjectNote(projectRef, payload, tenantId) {
   if (!title) {
     throw new Error("Note title is required.");
   }
+  const visibility = normalizeNoteVisibility(payload?.visibility);
+  const visibleMemberIds = normalizeNoteVisibleMemberIds(payload?.visible_member_ids);
+  const authorMemberId = parseOptionalMemberId(payload?.author_member_id);
+  if (visibility === "selected_members" && visibleMemberIds.length === 0) {
+    throw new Error("Select at least one member for this note.");
+  }
+  if (visibility === "owner_only" && !authorMemberId) {
+    throw new Error("Owner-only notes require an author.");
+  }
+  const requiresAudienceColumns = visibility === "selected_members";
 
   const insertPayload = {
     project_id: projectId,
     tenant_id: tenantId ?? null,
     title,
     body: normalizeOptional(payload?.body),
-    visibility: normalizeNoteVisibility(payload?.visibility),
-    author_member_id: parseOptionalMemberId(payload?.author_member_id),
+    visibility,
+    author_member_id: authorMemberId,
     pinned: Boolean(payload?.pinned),
   };
+  if (requiresAudienceColumns) {
+    insertPayload.visible_member_ids = visibleMemberIds;
+  }
 
-  const { data, error } = await supabase
-    .from("project_notes")
-    .insert(insertPayload)
-    .select("id, project_id, tenant_id, title, body, visibility, author_member_id, pinned, archived_at, created_at, updated_at")
-    .single();
+  const runInsert = async (selectColumns) =>
+    supabase
+      .from("project_notes")
+      .insert(insertPayload)
+      .select(selectColumns)
+      .single();
+
+  let { data, error } = await runInsert(PROJECT_NOTES_SELECT_COLUMNS);
+  if (error && isMissingColumnError(error, "visible_member_ids")) {
+    if (requiresAudienceColumns) {
+      throw new Error(
+        "Notes member visibility is not available. Run migration_080_project_notes_member_visibility.sql."
+      );
+    }
+    ({ data, error } = await runInsert(PROJECT_NOTES_LEGACY_SELECT_COLUMNS));
+  }
 
   if (error && isMissingRelationError(error, "project_notes")) {
     throw new Error("Notes table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (isProjectNotesVisibilityMigrationMissing(error)) {
+    throw new Error(
+      "Notes member visibility is not available. Run migration_080_project_notes_member_visibility.sql."
+    );
   }
   if (error) {
     console.error("Error creating project note:", error);
     throw error;
   }
 
-  return data;
+  return {
+    ...data,
+    visible_member_ids: normalizeNoteVisibleMemberIds(data?.visible_member_ids),
+  };
 }
 
 export async function updateProjectNote(noteId, payload, tenantId) {
@@ -2910,11 +3123,31 @@ export async function updateProjectNote(noteId, payload, tenantId) {
   }
 
   const updatePayload = {};
+  const normalizedVisibility =
+    Object.prototype.hasOwnProperty.call(payload || {}, "visibility")
+      ? normalizeNoteVisibility(payload?.visibility)
+      : null;
+  const explicitVisibleMemberIds = Object.prototype.hasOwnProperty.call(payload || {}, "visible_member_ids")
+    ? normalizeNoteVisibleMemberIds(payload?.visible_member_ids)
+    : null;
+
+  if (normalizedVisibility === "selected_members") {
+    const memberIdsForVisibility = explicitVisibleMemberIds || [];
+    if (memberIdsForVisibility.length === 0) {
+      throw new Error("Select at least one member for this note.");
+    }
+  }
+
   if ("title" in payload) updatePayload.title = normalizeOptional(payload?.title);
   if ("body" in payload) updatePayload.body = normalizeOptional(payload?.body);
-  if ("visibility" in payload) updatePayload.visibility = normalizeNoteVisibility(payload?.visibility);
+  if ("visibility" in payload) updatePayload.visibility = normalizedVisibility;
   if ("author_member_id" in payload) {
     updatePayload.author_member_id = parseOptionalMemberId(payload?.author_member_id);
+  }
+  if (normalizedVisibility === "selected_members") {
+    updatePayload.visible_member_ids = explicitVisibleMemberIds || [];
+  } else if (explicitVisibleMemberIds) {
+    updatePayload.visible_member_ids = explicitVisibleMemberIds;
   }
   if ("pinned" in payload) updatePayload.pinned = Boolean(payload?.pinned);
 
@@ -2923,25 +3156,45 @@ export async function updateProjectNote(noteId, payload, tenantId) {
   }
 
   updatePayload.updated_at = new Date().toISOString();
+  const requiresAudienceColumns =
+    normalizedVisibility === "selected_members" || Object.prototype.hasOwnProperty.call(updatePayload, "visible_member_ids");
 
-  let query = supabase
-    .from("project_notes")
-    .update(updatePayload)
-    .eq("id", parsedNoteId);
-  query = applyTenantFilter(query, tenantId);
-  const { data, error } = await query
-    .select("id, project_id, tenant_id, title, body, visibility, author_member_id, pinned, archived_at, created_at, updated_at")
-    .single();
+  const runUpdate = async (selectColumns) => {
+    let query = supabase
+      .from("project_notes")
+      .update(updatePayload)
+      .eq("id", parsedNoteId);
+    query = applyTenantFilter(query, tenantId);
+    return query.select(selectColumns).single();
+  };
+
+  let { data, error } = await runUpdate(PROJECT_NOTES_SELECT_COLUMNS);
+  if (error && isMissingColumnError(error, "visible_member_ids")) {
+    if (requiresAudienceColumns) {
+      throw new Error(
+        "Notes member visibility is not available. Run migration_080_project_notes_member_visibility.sql."
+      );
+    }
+    ({ data, error } = await runUpdate(PROJECT_NOTES_LEGACY_SELECT_COLUMNS));
+  }
 
   if (error && isMissingRelationError(error, "project_notes")) {
     throw new Error("Notes table is not available. Run migration_044_project_tasks_notes.sql.");
+  }
+  if (isProjectNotesVisibilityMigrationMissing(error)) {
+    throw new Error(
+      "Notes member visibility is not available. Run migration_080_project_notes_member_visibility.sql."
+    );
   }
   if (error) {
     console.error("Error updating project note:", error);
     throw error;
   }
 
-  return data;
+  return {
+    ...data,
+    visible_member_ids: normalizeNoteVisibleMemberIds(data?.visible_member_ids),
+  };
 }
 
 export async function deleteProjectNote(noteId, tenantId) {

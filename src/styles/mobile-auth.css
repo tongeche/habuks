@@ -1,22 +1,34 @@
 .mobile-auth-shell {
   min-height: 100vh;
-  padding: 24px 16px;
+  padding: clamp(14px, 3vw, 28px) 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   background:
-    radial-gradient(circle at 10% 10%, rgba(37, 99, 235, 0.12), transparent 45%),
-    radial-gradient(circle at 85% 85%, rgba(22, 163, 74, 0.1), transparent 50%),
-    #f4f6fb;
+    radial-gradient(circle at 12% 15%, rgba(31, 122, 140, 0.22), transparent 45%),
+    radial-gradient(circle at 86% 86%, rgba(45, 212, 191, 0.16), transparent 50%),
+    linear-gradient(165deg, #f4f8fb 0%, #eef5f8 52%, #f8fafc 100%);
 }
 
 .mobile-auth-card {
-  width: min(460px, 100%);
+  position: relative;
+  overflow: hidden;
+  width: min(480px, 100%);
   background: #ffffff;
-  border: 1px solid #d9e0ee;
-  border-radius: 18px;
+  border: 1px solid rgba(15, 95, 99, 0.16);
+  border-radius: 20px;
   padding: 24px 18px;
-  box-shadow: 0 22px 52px rgba(15, 23, 42, 0.08);
+  box-shadow: 0 26px 56px rgba(11, 18, 38, 0.12);
+}
+
+.mobile-auth-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--green-primary), var(--green-secondary), var(--accent));
 }
 
 .mobile-auth-logo {
@@ -33,14 +45,14 @@
 
 .mobile-auth-title {
   margin: 0;
-  font-size: clamp(1.45rem, 3.8vw, 1.9rem);
+  font-size: clamp(1.45rem, 3.8vw, 1.92rem);
   line-height: 1.2;
-  color: #0f172a;
+  color: var(--navy-900);
 }
 
 .mobile-auth-subtitle {
   margin: 10px 0 0;
-  color: #475569;
+  color: #445064;
   font-size: 0.97rem;
   line-height: 1.45;
 }
@@ -64,26 +76,29 @@
 
 .mobile-auth-field span {
   color: #334155;
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .mobile-auth-field input,
 .mobile-auth-field select {
   width: 100%;
-  border: 1px solid #cbd5e1;
-  border-radius: 11px;
-  background: #ffffff;
+  border: 1px solid #cfd8e3;
+  border-radius: 12px;
+  background: #fbfdff;
   color: #0f172a;
-  font-size: 0.98rem;
-  padding: 0.7rem 0.75rem;
+  font-size: 0.97rem;
+  padding: 0.72rem 0.78rem;
   outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .mobile-auth-field input:focus,
 .mobile-auth-field select:focus {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  border-color: var(--green-primary);
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(31, 122, 140, 0.17);
 }
 
 .mobile-auth-btn {
@@ -91,7 +106,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 11px;
+  border-radius: 12px;
   border: 1px solid transparent;
   font-size: 0.98rem;
   font-weight: 700;
@@ -99,58 +114,78 @@
   cursor: pointer;
   min-height: 44px;
   padding: 0.72rem 0.95rem;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.18s ease, border-color 0.18s ease;
 }
 
 .mobile-auth-btn--primary {
-  background: #2563eb;
+  background: linear-gradient(120deg, var(--green-primary) 0%, var(--green-secondary) 100%);
   color: #ffffff;
+  box-shadow: 0 12px 24px rgba(15, 95, 99, 0.22);
 }
 
 .mobile-auth-btn--primary:hover {
-  background: #1e4fd1;
+  background: linear-gradient(120deg, var(--green-dark) 0%, var(--green-primary) 100%);
+  transform: translateY(-1px);
 }
 
 .mobile-auth-btn--secondary {
-  background: #eef3ff;
-  border-color: #d5e3ff;
-  color: #12316d;
+  background: #ffffff;
+  border-color: rgba(31, 122, 140, 0.26);
+  color: var(--green-dark);
 }
 
 .mobile-auth-btn--secondary:hover {
-  background: #dbe9ff;
+  background: rgba(31, 122, 140, 0.08);
+  border-color: rgba(31, 122, 140, 0.5);
 }
 
 .mobile-auth-btn:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .mobile-auth-meta {
   margin: 12px 0 0;
-  color: #475569;
+  color: #4b5c72;
   font-size: 0.9rem;
 }
 
+.mobile-auth-meta strong {
+  color: var(--navy-900);
+}
+
 .mobile-auth-meta a {
-  color: #1d4ed8;
+  color: var(--green-dark);
   text-decoration: none;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .mobile-auth-meta a:hover {
+  color: var(--green-primary);
   text-decoration: underline;
 }
 
-.mobile-auth-error {
+.mobile-auth-error,
+.mobile-auth-message {
   margin: 0;
+  font-size: 0.88rem;
+  border-radius: 10px;
+  padding: 0.58rem 0.68rem;
+  border: 1px solid transparent;
+}
+
+.mobile-auth-error {
   color: #b91c1c;
-  font-size: 0.89rem;
+  background: #fef2f2;
+  border-color: #fecaca;
 }
 
 .mobile-auth-message {
-  margin: 0;
-  color: #166534;
-  font-size: 0.89rem;
+  color: #0f5f63;
+  background: #ecfdf5;
+  border-color: #bbf7d0;
 }
 
 @media (max-width: 480px) {
@@ -160,7 +195,7 @@
   }
 
   .mobile-auth-card {
-    border-radius: 14px;
+    border-radius: 16px;
     padding: 18px 14px;
     margin-top: 6px;
   }

@@ -47,8 +47,7 @@ import {
 } from "../../lib/dataService.js";
 import { presentAppError } from "../../lib/appErrors.js";
 import { formatCurrencyAmount } from "../../lib/currency.js";
-import { buildActivityReportFile } from "../../lib/reporting/activityReport.js";
-import { buildProjectCompletionReportFile } from "../../lib/reporting/projectCompletionReport.js";
+import { buildProjectTemplateOfficialReportFile } from "../../lib/reporting/projectTemplateOfficialReport.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
 import ProjectEditorForm from "./ProjectEditorForm.jsx";
@@ -204,6 +203,7 @@ const createInitialTaskForm = () => ({
 const createInitialNoteForm = () => ({
   title: "",
   visibility: "project_team",
+  visibleMemberIds: [],
   details: "",
 });
 
@@ -537,10 +537,55 @@ const MOBILE_TASK_STATUS_CHIPS = [
 
 const NOTE_VISIBILITY_LABELS = {
   project_team: "Project team",
+  selected_members: "Specific members",
+  owner_only: "Owner only",
   admins_only: "Admins only",
 };
 
-const NOTE_VISIBILITY_GROUP_ORDER = ["project_team", "admins_only"];
+const NOTE_VISIBILITY_GROUP_ORDER = ["project_team", "selected_members", "owner_only", "admins_only"];
+
+const normalizeNoteVisibilityKey = (value) => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (
+    normalized === "project_team" ||
+    normalized === "admins_only" ||
+    normalized === "owner_only" ||
+    normalized === "selected_members"
+  ) {
+    return normalized;
+  }
+  if (normalized === "project team") return "project_team";
+  if (normalized === "admins only") return "admins_only";
+  if (normalized === "owner only") return "owner_only";
+  if (normalized === "specific members") return "selected_members";
+  return "project_team";
+};
+
+const getNoteVisibilityLabel = (visibility, visibleMemberIds = []) => {
+  const visibilityKey = normalizeNoteVisibilityKey(visibility);
+  if (visibilityKey === "selected_members") {
+    const memberCount = Array.isArray(visibleMemberIds)
+      ? visibleMemberIds.filter((value) => {
+          const parsed = Number.parseInt(String(value ?? ""), 10);
+          return Number.isInteger(parsed) && parsed > 0;
+        }).length
+      : 0;
+    if (memberCount > 0) {
+      return `Specific members (${memberCount})`;
+    }
+  }
+  return NOTE_VISIBILITY_LABELS[visibilityKey] || toReadableLabel(visibilityKey, "Project team");
+};
+
+const getNoteVisibilityIcon = (visibility) => {
+  const visibilityKey = normalizeNoteVisibilityKey(visibility);
+  if (visibilityKey === "admins_only") return "shield";
+  if (visibilityKey === "owner_only") return "user";
+  if (visibilityKey === "selected_members") return "member";
+  return "users";
+};
 
 const toReadableLabel = (value, fallback = "Unknown") => {
   const normalized = String(value || "")
@@ -632,6 +677,17 @@ const parseMemberId = (value) => {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   if (!Number.isInteger(parsed) || parsed <= 0) return null;
   return parsed;
+};
+
+const normalizeNoteVisibilityMemberIds = (value) => {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  value.forEach((memberId) => {
+    const parsed = parseMemberId(memberId);
+    if (!parsed) return;
+    seen.add(parsed);
+  });
+  return Array.from(seen);
 };
 
 const normalizeModuleKeyForForm = (value) => {
@@ -1025,6 +1081,13 @@ export function ProjectsPage({
   });
   const [projectsNotice, setProjectsNotice] = useState(null);
   const [projectView, setProjectView] = useState("grid");
+  const [projectSearchQuery, setProjectSearchQuery] = useState("");
+  const [projectCategoryFilter, setProjectCategoryFilter] = useState("all");
+  const [projectStatusFilter, setProjectStatusFilter] = useState("all");
+  const [projectOwnerFilter, setProjectOwnerFilter] = useState("all");
+  const [projectSortKey, setProjectSortKey] = useState("newest");
+  const [showProjectFilters, setShowProjectFilters] = useState(false);
+  const [showProjectsToolsMenu, setShowProjectsToolsMenu] = useState(false);
   const [selectedProjectIds, setSelectedProjectIds] = useState([]);
   const [availableMembers, setAvailableMembers] = useState([]);
   const [membersLoading, setMembersLoading] = useState(false);
@@ -1103,6 +1166,10 @@ export function ProjectsPage({
   const [deletingTasks, setDeletingTasks] = useState(false);
   const [showDeleteTasksModal, setShowDeleteTasksModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
+  const [showTaskFilters, setShowTaskFilters] = useState(false);
+  const [showTasksToolsMenu, setShowTasksToolsMenu] = useState(false);
+  const [openTaskRowMenuId, setOpenTaskRowMenuId] = useState("");
+  const [activeTaskDetails, setActiveTaskDetails] = useState(null);
   const [projectNotes, setProjectNotes] = useState([]);
   const [projectNotesLoading, setProjectNotesLoading] = useState(false);
   const [projectNotesError, setProjectNotesError] = useState("");
@@ -1116,6 +1183,10 @@ export function ProjectsPage({
   const [deletingNotes, setDeletingNotes] = useState(false);
   const [showDeleteNotesModal, setShowDeleteNotesModal] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
+  const [showNoteFilters, setShowNoteFilters] = useState(false);
+  const [showNotesToolsMenu, setShowNotesToolsMenu] = useState(false);
+  const [openNoteRowMenuId, setOpenNoteRowMenuId] = useState("");
+  const [activeNoteDetails, setActiveNoteDetails] = useState(null);
   const [projectInvites, setProjectInvites] = useState([]);
   const [projectInvitesLoading, setProjectInvitesLoading] = useState(false);
   const [projectInvitesError, setProjectInvitesError] = useState("");
@@ -1135,6 +1206,7 @@ export function ProjectsPage({
   const [acceptingPendingProjectInviteId, setAcceptingPendingProjectInviteId] = useState("");
   const [organizationPartners, setOrganizationPartners] = useState([]);
   const [organizationPartnersLoading, setOrganizationPartnersLoading] = useState(false);
+  const currentMemberId = parseMemberId(user?.id);
   const role = String(tenantRole || user?.role || "member");
   const roleKey = normalizeRoleKey(role);
   const isAdmin = ["admin", "superadmin", "super_admin"].includes(roleKey);
@@ -1326,13 +1398,16 @@ export function ProjectsPage({
   };
 
   useEffect(() => {
-    if (!openProjectMenuId) {
+    if (!openProjectMenuId && !showProjectsToolsMenu) {
       return undefined;
     }
-    const handleWindowClick = () => setOpenProjectMenuId(null);
+    const handleWindowClick = () => {
+      setOpenProjectMenuId(null);
+      setShowProjectsToolsMenu(false);
+    };
     window.addEventListener("click", handleWindowClick);
     return () => window.removeEventListener("click", handleWindowClick);
-  }, [openProjectMenuId]);
+  }, [openProjectMenuId, showProjectsToolsMenu]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2057,13 +2132,16 @@ export function ProjectsPage({
     if (projectActionInFlightId) return;
     if (isMobileProjectViewport) {
       setOpenProjectMenuId(null);
+      setShowProjectsToolsMenu(false);
       setMobileProjectActionTarget(project || null);
       setMobileDeleteArmed(false);
       setShowProjectActionSheet(Boolean(project));
       return;
     }
-    const projectId = project?.id;
-    setOpenProjectMenuId((prev) => (prev === projectId ? null : projectId));
+    const projectId = String(project?.id ?? "");
+    if (!projectId) return;
+    setShowProjectsToolsMenu(false);
+    setOpenProjectMenuId((prev) => (String(prev ?? "") === projectId ? null : projectId));
   };
 
   const requestProjectVisibilityToggle = (project) => {
@@ -2092,7 +2170,7 @@ export function ProjectsPage({
       type: "delete",
       projects: [project],
       title: "Delete project?",
-      subtitle: `Delete "${project.name}" and its linked records that can be safely removed.`,
+      subtitle: `Delete "${project.name}" and all associated activities, expenses, documents, tasks, and records. This cannot be undone.`,
       confirmLabel: "Delete project",
     });
     setOpenProjectMenuId(null);
@@ -2603,9 +2681,22 @@ export function ProjectsPage({
   };
 
   const renderProjectActionMenu = (project, variant = "overlay") => {
-    if (!canCreateProject) return null;
+    if (!project?.id) return null;
     const isVisible = project?.is_visible !== false;
-    const isActionBusy = projectActionInFlightId === project.id;
+    const projectId = String(project.id);
+    const isActionBusy = projectActionInFlightId === projectId;
+    const isMenuOpen = String(openProjectMenuId ?? "") === projectId;
+    const isMember = Boolean(project?.membership);
+    const closeProjectMenus = () => {
+      setOpenProjectMenuId(null);
+      setShowProjectsToolsMenu(false);
+    };
+    const openProjectTab = (tab = "overview") => {
+      closeProjectMenus();
+      openProjectDetails(project);
+      setDetailTab(tab);
+    };
+
     return (
       <div
         className={`project-card-menu${variant === "inline" ? " project-card-menu--inline" : ""}`}
@@ -2617,40 +2708,136 @@ export function ProjectsPage({
           type="button"
           className="project-card-menu-btn"
           aria-haspopup="menu"
-          aria-expanded={openProjectMenuId === project.id}
+          aria-expanded={isMenuOpen}
           aria-label={`Project actions for ${project.name}`}
           onClick={(event) => handleToggleProjectMenu(project, event)}
           disabled={isActionBusy}
         >
-          <Icon name="more-horizontal" size={16} />
+          <Icon name="more-vertical" size={16} />
         </button>
-        {openProjectMenuId === project.id ? (
+        {isMenuOpen ? (
           <div className="project-card-menu-dropdown" role="menu">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => openEditProjectModal(project)}
-              disabled={isActionBusy}
-            >
-              Edit
+            <button type="button" role="menuitem" onClick={() => openProjectTab("overview")} disabled={isActionBusy}>
+              <Icon name="home" size={14} />
+              <span>Open overview</span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => openProjectTab("expenses")} disabled={isActionBusy}>
+              <Icon name="wallet" size={14} />
+              <span>Open expenses</span>
             </button>
             <button
               type="button"
               role="menuitem"
-              onClick={() => requestProjectVisibilityToggle(project)}
+              onClick={() => openProjectTab("documents")}
               disabled={isActionBusy}
             >
-              {isVisible ? "Hide" : "Show"}
+              <Icon name="folder" size={14} />
+              <span>Open docs</span>
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="danger"
-              onClick={() => requestDeleteProject(project)}
-              disabled={isActionBusy}
-            >
-              Delete
+            <button type="button" role="menuitem" onClick={() => openProjectTab("tasks")} disabled={isActionBusy}>
+              <Icon name="check-circle" size={14} />
+              <span>Open tasks</span>
             </button>
+            <button type="button" role="menuitem" onClick={() => openProjectTab("notes")} disabled={isActionBusy}>
+              <Icon name="notes" size={14} />
+              <span>Open notes</span>
+            </button>
+            {canViewProjectInvites ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => openProjectTab("invites")}
+                disabled={isActionBusy}
+              >
+                <Icon name="mail" size={14} />
+                <span>Open invites</span>
+              </button>
+            ) : null}
+            {canSelfManageMembership ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeProjectMenus();
+                  if (isMember) {
+                    handleLeave(project.id);
+                    return;
+                  }
+                  handleJoin(project.id);
+                }}
+                disabled={Boolean(joiningId) || isActionBusy}
+              >
+                <Icon name={isMember ? "user-minus" : "plus"} size={14} />
+                <span>{isMember ? "Leave project" : "Join project"}</span>
+              </button>
+            ) : null}
+            {canCreateProject ? <div className="project-card-menu-divider" role="separator" /> : null}
+            {canCreateProject ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeProjectMenus();
+                  openEditProjectModal(project);
+                }}
+                disabled={isActionBusy}
+              >
+                <Icon name="tag" size={14} />
+                <span>Edit project</span>
+              </button>
+            ) : null}
+            {canCreateProject ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeProjectMenus();
+                  handleDuplicateSelectedProject(project);
+                }}
+                disabled={isActionBusy}
+              >
+                <Icon name="plus" size={14} />
+                <span>Duplicate project</span>
+              </button>
+            ) : null}
+            {canCreateProject ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  closeProjectMenus();
+                  handleArchiveSelectedProject(project);
+                }}
+                disabled={isActionBusy}
+              >
+                <Icon name="clock-alert" size={14} />
+                <span>Archive project</span>
+              </button>
+            ) : null}
+            {canCreateProject ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => requestProjectVisibilityToggle(project)}
+                disabled={isActionBusy}
+              >
+                <Icon name="filter" size={14} />
+                <span>{isVisible ? "Hide project" : "Show project"}</span>
+              </button>
+            ) : null}
+            {canCreateProject ? <div className="project-card-menu-divider" role="separator" /> : null}
+            {canCreateProject ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="danger"
+                onClick={() => requestDeleteProject(project)}
+                disabled={isActionBusy}
+              >
+                <Icon name="trash" size={14} />
+                <span>Delete project</span>
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -2744,9 +2931,6 @@ export function ProjectsPage({
       if (documentActionDocumentId) {
         setDocumentActionDocumentId("");
       }
-      if (openProjectMenuId) {
-        setOpenProjectMenuId(null);
-      }
     }
   }, [
     isMobileProjectViewport,
@@ -2757,7 +2941,6 @@ export function ProjectsPage({
     showDocumentCreateActionSheet,
     showDocumentTemplateActionSheet,
     documentActionDocumentId,
-    openProjectMenuId,
   ]);
 
   useEffect(() => {
@@ -6043,29 +6226,17 @@ export function ProjectsPage({
     const dateStamp = new Date().toISOString().slice(0, 10);
     const fileName = `${toFilenameSlug(safeProjectName)}-${safeOption.value}-${dateStamp}.pdf`;
     const context = buildProjectDocumentContext();
-    if (safeOption.value === "activity_report") {
-      return buildActivityReportFile({
-        tenantBrand,
-        user,
-        context,
-        fileName,
-        currencyCode,
-      });
-    }
-    if (safeOption.value === "project_completion_report") {
-      return buildProjectCompletionReportFile({
-        tenantBrand,
-        user,
-        context,
-        summaryReport: projectSummaryReport,
-        fileName,
-        currencyCode,
-      });
-    }
-    const title = `${safeOption.label} - ${safeProjectName}`;
     const lines = buildEmitDocumentLines(safeOption.value, context);
-    const blob = buildSimplePdfBlob(title, lines);
-    return new File([blob], fileName, { type: "application/pdf" });
+    return buildProjectTemplateOfficialReportFile({
+      templateKey: safeOption.value,
+      templateLabel: safeOption.label,
+      tenantBrand,
+      user,
+      context,
+      currencyCode,
+      lines,
+      fileName,
+    });
   };
 
   const handlePrepareEmitDocument = async (optionOverride = null) => {
@@ -6392,6 +6563,39 @@ export function ProjectsPage({
     taskStatusFilter !== "all" ||
     taskAssigneeFilter !== "all";
 
+  const openTaskDetailsModal = useCallback((task) => {
+    if (!task) return;
+    setActiveTaskDetails(task);
+    setShowTasksToolsMenu(false);
+    setOpenTaskRowMenuId("");
+  }, []);
+
+  const closeTaskDetailsModal = () => {
+    setActiveTaskDetails(null);
+  };
+
+  const handleToggleTasksToolsMenu = (event) => {
+    event.stopPropagation();
+    setShowTasksToolsMenu((prev) => !prev);
+    setOpenTaskRowMenuId("");
+  };
+
+  const handleToggleTaskRowMenu = (taskId, event) => {
+    event.stopPropagation();
+    const normalizedId = String(taskId || "");
+    setOpenTaskRowMenuId((prev) => (prev === normalizedId ? "" : normalizedId));
+    setShowTasksToolsMenu(false);
+  };
+
+  const handleRequestDeleteSingleTask = (task) => {
+    if (!canManageProjectContent) return;
+    const taskId = String(task?.id || "").trim();
+    if (!taskId) return;
+    setSelectedTaskIds([taskId]);
+    setOpenTaskRowMenuId("");
+    setShowDeleteTasksModal(true);
+  };
+
   const openTaskModalForStatus = useCallback(
     (status = "open") => {
       if (!canManageProjectContent) return;
@@ -6399,6 +6603,8 @@ export function ProjectsPage({
         TASK_STATUS_LABELS[String(status || "").trim().toLowerCase()] ? String(status).trim().toLowerCase() : "open";
       const defaultAssignee = parseMemberId(user?.id);
       setEditingTaskId(null);
+      setShowTasksToolsMenu(false);
+      setOpenTaskRowMenuId("");
       setTaskForm({
         ...createInitialTaskForm(),
         assigneeId: defaultAssignee ? String(defaultAssignee) : "",
@@ -6419,6 +6625,8 @@ export function ProjectsPage({
     if (!canManageProjectContent) return;
     if (!task) return;
     setEditingTaskId(String(task?.id ?? ""));
+    setShowTasksToolsMenu(false);
+    setOpenTaskRowMenuId("");
     setTaskForm({
       title: String(task?.title || ""),
       assigneeId: task?.assignee_member_id ? String(task.assignee_member_id) : "",
@@ -6562,6 +6770,7 @@ export function ProjectsPage({
   const openEditSelectedTaskModal = () => {
     if (!canManageProjectContent) return;
     if (selectedTasks.length !== 1) return;
+    setShowTasksToolsMenu(false);
     openTaskEditorForRow(selectedTasks[0]);
   };
 
@@ -6575,6 +6784,8 @@ export function ProjectsPage({
   const requestDeleteSelectedTasks = () => {
     if (!canManageProjectContent) return;
     if (!selectedTasks.length) return;
+    setShowTasksToolsMenu(false);
+    setOpenTaskRowMenuId("");
     setShowDeleteTasksModal(true);
   };
 
@@ -6588,6 +6799,31 @@ export function ProjectsPage({
     if (selectedTasks.length > 0) return;
     setShowDeleteTasksModal(false);
   }, [showDeleteTasksModal, selectedTasks.length]);
+
+  useEffect(() => {
+    if (detailTab === "tasks") return;
+    setShowTasksToolsMenu(false);
+    setOpenTaskRowMenuId("");
+    setActiveTaskDetails(null);
+  }, [detailTab]);
+
+  useEffect(() => {
+    setShowTasksToolsMenu(false);
+    setOpenTaskRowMenuId("");
+    setActiveTaskDetails(null);
+  }, [selectedProject?.id]);
+
+  useEffect(() => {
+    if (!showTasksToolsMenu && !openTaskRowMenuId) {
+      return undefined;
+    }
+    const handleWindowClick = () => {
+      setShowTasksToolsMenu(false);
+      setOpenTaskRowMenuId("");
+    };
+    window.addEventListener("click", handleWindowClick);
+    return () => window.removeEventListener("click", handleWindowClick);
+  }, [showTasksToolsMenu, openTaskRowMenuId]);
 
   const handleTaskFormFieldChange = (field, value) => {
     setTaskForm((prev) => ({
@@ -6736,6 +6972,29 @@ export function ProjectsPage({
   };
 
 
+  const noteVisibilityMemberOptions = useMemo(() => {
+    const map = new Map();
+    (Array.isArray(projectAssignableMembers) ? projectAssignableMembers : []).forEach((member) => {
+      const memberId = parseMemberId(member?.id);
+      if (!memberId || map.has(memberId)) return;
+      map.set(memberId, {
+        id: memberId,
+        name: String(member?.name || `Member #${memberId}`).trim() || `Member #${memberId}`,
+        role: String(member?.role || "").trim(),
+      });
+    });
+
+    if (currentMemberId && !map.has(currentMemberId)) {
+      map.set(currentMemberId, {
+        id: currentMemberId,
+        name: String(user?.name || "You").trim() || "You",
+        role: "",
+      });
+    }
+
+    return Array.from(map.values()).sort((left, right) => left.name.localeCompare(right.name));
+  }, [projectAssignableMembers, currentMemberId, user?.name]);
+
   const sortedProjectNotes = useMemo(() => {
     return [...projectNotes].sort((a, b) => {
       const aTime = Date.parse(String(a?.created_at || ""));
@@ -6746,14 +7005,39 @@ export function ProjectsPage({
     });
   }, [projectNotes]);
 
+  const readableProjectNotes = useMemo(() => {
+    return sortedProjectNotes.filter((note) => {
+      if (isAdmin) {
+        return true;
+      }
+
+      const visibility = normalizeNoteVisibilityKey(note?.visibility);
+      const authorMemberId = parseMemberId(note?.author_member_id);
+      const visibleMemberIds = normalizeNoteVisibilityMemberIds(note?.visible_member_ids);
+
+      if (currentMemberId && authorMemberId && currentMemberId === authorMemberId) {
+        return true;
+      }
+
+      if (visibility === "project_team") return true;
+      if (visibility === "admins_only") return false;
+      if (visibility === "owner_only") return false;
+
+      if (visibility === "selected_members") {
+        if (!currentMemberId) return false;
+        return visibleMemberIds.includes(currentMemberId);
+      }
+
+      return true;
+    });
+  }, [sortedProjectNotes, isAdmin, currentMemberId]);
+
   const filteredProjectNotes = useMemo(() => {
     const normalizedSearch = String(noteSearchQuery || "")
       .trim()
       .toLowerCase();
-    return sortedProjectNotes.filter((note) => {
-      const safeVisibility = String(note?.visibility || "project_team")
-        .trim()
-        .toLowerCase();
+    return readableProjectNotes.filter((note) => {
+      const safeVisibility = normalizeNoteVisibilityKey(note?.visibility);
       if (noteVisibilityFilter !== "all" && safeVisibility !== noteVisibilityFilter) {
         return false;
       }
@@ -6764,7 +7048,7 @@ export function ProjectsPage({
         .join(" ");
       return haystack.includes(normalizedSearch);
     });
-  }, [sortedProjectNotes, noteSearchQuery, noteVisibilityFilter]);
+  }, [readableProjectNotes, noteSearchQuery, noteVisibilityFilter]);
 
   const groupedNoteRows = useMemo(() => {
     const buckets = new Map();
@@ -6774,9 +7058,7 @@ export function ProjectsPage({
     const customBuckets = new Map();
 
     filteredProjectNotes.forEach((note) => {
-      const safeVisibility = String(note?.visibility || "project_team")
-        .trim()
-        .toLowerCase();
+      const safeVisibility = normalizeNoteVisibilityKey(note?.visibility);
       const visibilityKey = safeVisibility || "project_team";
       if (buckets.has(visibilityKey)) {
         buckets.get(visibilityKey).push(note);
@@ -6821,16 +7103,13 @@ export function ProjectsPage({
       };
     });
 
-    const noteRows = sortedProjectNotes.map((note) => {
+    const noteRows = readableProjectNotes.map((note) => {
       const timestamp = Date.parse(String(note?.updated_at || note?.created_at || ""));
-      const safeVisibility = String(note?.visibility || "project_team")
-        .trim()
-        .toLowerCase();
       return {
         id: `note-${String(note?.id || "")}`,
         type: "note",
         title: String(note?.title || "Untitled note").trim() || "Untitled note",
-        subtitle: NOTE_VISIBILITY_LABELS[safeVisibility] || toReadableLabel(safeVisibility, "Project team"),
+        subtitle: getNoteVisibilityLabel(note?.visibility, note?.visible_member_ids),
         secondary: formatDate(note?.updated_at || note?.created_at),
         timestamp: Number.isFinite(timestamp) ? timestamp : 0,
         notePreview: truncateProjectCellText(String(note?.body || "").trim(), 140),
@@ -6838,7 +7117,7 @@ export function ProjectsPage({
     });
 
     return [...documentRows, ...noteRows].sort((left, right) => right.timestamp - left.timestamp);
-  }, [sortedProjectDocuments, sortedProjectNotes]);
+  }, [sortedProjectDocuments, readableProjectNotes]);
 
   const noteRowIds = useMemo(
     () =>
@@ -6883,15 +7162,18 @@ export function ProjectsPage({
 
   const hasActiveNoteFilters =
     String(noteSearchQuery || "").trim().length > 0 || noteVisibilityFilter !== "all";
+  const selectedNoteVisibilityMemberIds = useMemo(
+    () => new Set(normalizeNoteVisibilityMemberIds(noteForm.visibleMemberIds)),
+    [noteForm.visibleMemberIds]
+  );
 
   const openNoteModalForVisibility = useCallback(
     (visibility = "project_team") => {
       if (!canManageProjectContent) return;
-      const normalizedVisibility =
-        NOTE_VISIBILITY_LABELS[String(visibility || "").trim().toLowerCase()]
-          ? String(visibility).trim().toLowerCase()
-          : "project_team";
+      const normalizedVisibility = normalizeNoteVisibilityKey(visibility);
       setEditingNoteId(null);
+      setShowNotesToolsMenu(false);
+      setOpenNoteRowMenuId("");
       setNoteForm({
         ...createInitialNoteForm(),
         visibility: normalizedVisibility,
@@ -6913,13 +7195,49 @@ export function ProjectsPage({
     setEditingNoteId(null);
   };
 
+  const openNoteDetailsModal = useCallback((note) => {
+    if (!note) return;
+    setActiveNoteDetails(note);
+    setShowNotesToolsMenu(false);
+    setOpenNoteRowMenuId("");
+  }, []);
+
+  const closeNoteDetailsModal = () => {
+    setActiveNoteDetails(null);
+  };
+
+  const handleToggleNotesToolsMenu = (event) => {
+    event.stopPropagation();
+    setShowNotesToolsMenu((prev) => !prev);
+    setOpenNoteRowMenuId("");
+  };
+
+  const handleToggleNoteRowMenu = (noteId, event) => {
+    event.stopPropagation();
+    const normalizedId = String(noteId || "");
+    setOpenNoteRowMenuId((prev) => (prev === normalizedId ? "" : normalizedId));
+    setShowNotesToolsMenu(false);
+  };
+
+  const handleRequestDeleteSingleNote = (note) => {
+    if (!canManageProjectContent) return;
+    const noteId = String(note?.id || "").trim();
+    if (!noteId) return;
+    setSelectedNoteIds([noteId]);
+    setOpenNoteRowMenuId("");
+    setShowDeleteNotesModal(true);
+  };
+
   const openNoteEditorForRow = useCallback((note) => {
     if (!canManageProjectContent) return;
     if (!note) return;
     setEditingNoteId(String(note?.id ?? ""));
+    setOpenNoteRowMenuId("");
+    setShowNotesToolsMenu(false);
     setNoteForm({
       title: String(note?.title || ""),
-      visibility: String(note?.visibility || "project_team"),
+      visibility: normalizeNoteVisibilityKey(note?.visibility),
+      visibleMemberIds: normalizeNoteVisibilityMemberIds(note?.visible_member_ids),
       details: String(note?.body || ""),
     });
     setNoteFormError("");
@@ -6929,12 +7247,15 @@ export function ProjectsPage({
   const openEditSelectedNoteModal = () => {
     if (!canManageProjectContent) return;
     if (selectedNotes.length !== 1) return;
+    setShowNotesToolsMenu(false);
     openNoteEditorForRow(selectedNotes[0]);
   };
 
   const requestDeleteSelectedNotes = () => {
     if (!canManageProjectContent) return;
     if (!selectedNotes.length) return;
+    setShowNotesToolsMenu(false);
+    setOpenNoteRowMenuId("");
     setShowDeleteNotesModal(true);
   };
 
@@ -6949,11 +7270,74 @@ export function ProjectsPage({
     setShowDeleteNotesModal(false);
   }, [showDeleteNotesModal, selectedNotes.length]);
 
+  useEffect(() => {
+    if (detailTab === "notes") return;
+    setShowNotesToolsMenu(false);
+    setOpenNoteRowMenuId("");
+    setActiveNoteDetails(null);
+  }, [detailTab]);
+
+  useEffect(() => {
+    setShowNotesToolsMenu(false);
+    setOpenNoteRowMenuId("");
+    setActiveNoteDetails(null);
+  }, [selectedProject?.id]);
+
+  useEffect(() => {
+    if (!showNotesToolsMenu && !openNoteRowMenuId) {
+      return undefined;
+    }
+    const handleWindowClick = () => {
+      setShowNotesToolsMenu(false);
+      setOpenNoteRowMenuId("");
+    };
+    window.addEventListener("click", handleWindowClick);
+    return () => window.removeEventListener("click", handleWindowClick);
+  }, [showNotesToolsMenu, openNoteRowMenuId]);
+
   const handleNoteFormFieldChange = (field, value) => {
-    setNoteForm((prev) => ({
-      ...prev,
-      [field]: value,
-    }));
+    setNoteForm((prev) => {
+      if (field === "visibility") {
+        const nextVisibility = normalizeNoteVisibilityKey(value);
+        return {
+          ...prev,
+          visibility: nextVisibility,
+          visibleMemberIds: nextVisibility === "selected_members" ? prev.visibleMemberIds : [],
+        };
+      }
+
+      if (field === "visibleMemberIds") {
+        return {
+          ...prev,
+          visibleMemberIds: normalizeNoteVisibilityMemberIds(value),
+        };
+      }
+
+      return {
+        ...prev,
+        [field]: value,
+      };
+    });
+    if (noteFormError) {
+      setNoteFormError("");
+    }
+  };
+
+  const handleToggleNoteVisibilityMember = (memberId) => {
+    const parsedMemberId = parseMemberId(memberId);
+    if (!parsedMemberId) return;
+    setNoteForm((prev) => {
+      const selectedIds = new Set(normalizeNoteVisibilityMemberIds(prev.visibleMemberIds));
+      if (selectedIds.has(parsedMemberId)) {
+        selectedIds.delete(parsedMemberId);
+      } else {
+        selectedIds.add(parsedMemberId);
+      }
+      return {
+        ...prev,
+        visibleMemberIds: Array.from(selectedIds),
+      };
+    });
     if (noteFormError) {
       setNoteFormError("");
     }
@@ -6972,16 +7356,30 @@ export function ProjectsPage({
     }
 
     const title = String(noteForm.title || "").trim();
-    const visibility = String(noteForm.visibility || "project_team").trim().toLowerCase();
+    const visibility = normalizeNoteVisibilityKey(noteForm.visibility);
     const body = String(noteForm.details || "").trim();
-    const currentUserId = parseMemberId(user?.id);
+    const selectedVisibleMemberIds = normalizeNoteVisibilityMemberIds(noteForm.visibleMemberIds);
+    const currentUserId = currentMemberId;
 
     if (!title) {
       setNoteFormError("Note title is required.");
       return;
     }
-    if (visibility !== "project_team" && visibility !== "admins_only") {
+    if (
+      visibility !== "project_team" &&
+      visibility !== "admins_only" &&
+      visibility !== "owner_only" &&
+      visibility !== "selected_members"
+    ) {
       setNoteFormError("Select a valid visibility.");
+      return;
+    }
+    if (visibility === "selected_members" && selectedVisibleMemberIds.length === 0) {
+      setNoteFormError("Select at least one member for this note.");
+      return;
+    }
+    if (visibility === "owner_only" && !currentUserId) {
+      setNoteFormError("Unable to resolve note owner for this account.");
       return;
     }
 
@@ -6989,25 +7387,25 @@ export function ProjectsPage({
     setNoteFormError("");
 
     try {
+      const notePayload = {
+        title,
+        visibility,
+        body: body || null,
+      };
+      if (visibility === "selected_members") {
+        notePayload.visible_member_ids = selectedVisibleMemberIds;
+      }
+
       if (isEditingNote) {
         await updateProjectNote(
           parsedEditingNoteId,
-          {
-            title,
-            visibility,
-            body: body || null,
-          },
+          notePayload,
           tenantId
         );
       } else {
         await createProjectNote(
           projectId,
-          {
-            title,
-            visibility,
-            body: body || null,
-            author_member_id: currentUserId,
-          },
+          { ...notePayload, author_member_id: currentUserId },
           tenantId
         );
       }
@@ -7355,13 +7753,194 @@ export function ProjectsPage({
     }
   };
 
-  const visibleProjects = isAdmin
-    ? projects
-    : projects.filter(
-        (project) =>
-          project.is_visible !== false &&
-          (project.membership || project.project_leader === user?.id)
-      );
+  const handleToggleProjectsToolsMenu = (event) => {
+    event.stopPropagation();
+    setShowProjectsToolsMenu((prev) => !prev);
+    setOpenProjectMenuId(null);
+  };
+
+  const clearProjectFilters = useCallback(() => {
+    setProjectSearchQuery("");
+    setProjectCategoryFilter("all");
+    setProjectStatusFilter("all");
+    setProjectOwnerFilter("all");
+  }, []);
+
+  const baseVisibleProjects = useMemo(
+    () =>
+      isAdmin
+        ? projects
+        : projects.filter(
+            (project) =>
+              project.is_visible !== false &&
+              (project.membership || project.project_leader === user?.id)
+          ),
+    [isAdmin, projects, user?.id]
+  );
+
+  const projectFilterCategoryOptions = useMemo(() => {
+    const categories = new Set();
+    baseVisibleProjects.forEach((project) => {
+      const label = String(getProjectCategory(project) || "").trim();
+      if (label) {
+        categories.add(label);
+      }
+    });
+    return Array.from(categories).sort((left, right) => left.localeCompare(right));
+  }, [baseVisibleProjects]);
+
+  const projectStatusOptions = useMemo(() => {
+    const statuses = new Map();
+    baseVisibleProjects.forEach((project) => {
+      const statusKey = String(project?.status || "active")
+        .trim()
+        .toLowerCase();
+      if (!statusKey || statuses.has(statusKey)) return;
+      statuses.set(statusKey, toReadableLabel(statusKey, "Active"));
+    });
+    return Array.from(statuses.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [baseVisibleProjects]);
+
+  const projectOwnerOptions = useMemo(() => {
+    const owners = new Map();
+    const currentUserId = parseMemberId(user?.id);
+    baseVisibleProjects.forEach((project) => {
+      const ownerId = parseMemberId(project?.project_leader);
+      if (!ownerId || owners.has(ownerId)) return;
+      owners.set(ownerId, ownerId === currentUserId ? "You" : `Member #${ownerId}`);
+    });
+    return Array.from(owners.entries())
+      .map(([value, label]) => ({ value: String(value), label }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [baseVisibleProjects, user?.id]);
+
+  const hasActiveProjectFilters =
+    String(projectSearchQuery || "").trim().length > 0 ||
+    projectCategoryFilter !== "all" ||
+    projectStatusFilter !== "all" ||
+    projectOwnerFilter !== "all";
+
+  const visibleProjects = useMemo(() => {
+    const currentUserId = parseMemberId(user?.id);
+    const normalizedSearch = String(projectSearchQuery || "")
+      .trim()
+      .toLowerCase();
+    const normalizedCategory = String(projectCategoryFilter || "all")
+      .trim()
+      .toLowerCase();
+    const normalizedStatus = String(projectStatusFilter || "all")
+      .trim()
+      .toLowerCase();
+    const normalizedOwner = String(projectOwnerFilter || "all")
+      .trim()
+      .toLowerCase();
+
+    const filtered = baseVisibleProjects.filter((project) => {
+      const statusKey = String(project?.status || "active")
+        .trim()
+        .toLowerCase();
+      const isVisible = project?.is_visible !== false;
+      const categoryLabel = String(getProjectCategory(project) || "").trim();
+      const categoryKey = categoryLabel.toLowerCase();
+      const ownerId = parseMemberId(project?.project_leader);
+
+      if (normalizedSearch) {
+        const haystack = [
+          project?.name,
+          project?.description,
+          project?.short_description,
+          project?.code,
+          categoryLabel,
+          statusKey,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(normalizedSearch)) {
+          return false;
+        }
+      }
+
+      if (normalizedCategory !== "all" && categoryKey !== normalizedCategory) {
+        return false;
+      }
+
+      if (normalizedStatus === "visible" && !isVisible) {
+        return false;
+      }
+      if (normalizedStatus === "hidden" && isVisible) {
+        return false;
+      }
+      if (
+        normalizedStatus !== "all" &&
+        normalizedStatus !== "visible" &&
+        normalizedStatus !== "hidden" &&
+        normalizedStatus !== statusKey
+      ) {
+        return false;
+      }
+
+      if (normalizedOwner === "mine") {
+        if (!currentUserId || ownerId !== currentUserId) {
+          return false;
+        }
+      } else if (normalizedOwner === "joined") {
+        if (!project?.membership) {
+          return false;
+        }
+      } else if (normalizedOwner === "unassigned") {
+        if (ownerId) {
+          return false;
+        }
+      } else if (normalizedOwner !== "all") {
+        const selectedOwnerId = parseMemberId(normalizedOwner);
+        if (!selectedOwnerId || ownerId !== selectedOwnerId) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    const sorted = [...filtered];
+    sorted.sort((left, right) => {
+      if (projectSortKey === "name_asc") {
+        return String(left?.name || "").localeCompare(String(right?.name || ""));
+      }
+      if (projectSortKey === "name_desc") {
+        return String(right?.name || "").localeCompare(String(left?.name || ""));
+      }
+      if (projectSortKey === "progress_desc") {
+        return getProjectProgress(right) - getProjectProgress(left);
+      }
+      if (projectSortKey === "budget_desc") {
+        return getProjectBudgetAmount(right) - getProjectBudgetAmount(left);
+      }
+
+      const leftStart = Date.parse(String(left?.start_date || ""));
+      const rightStart = Date.parse(String(right?.start_date || ""));
+      const safeLeftStart = Number.isFinite(leftStart) ? leftStart : 0;
+      const safeRightStart = Number.isFinite(rightStart) ? rightStart : 0;
+
+      if (projectSortKey === "oldest") {
+        return safeLeftStart - safeRightStart;
+      }
+
+      return safeRightStart - safeLeftStart;
+    });
+
+    return sorted;
+  }, [
+    baseVisibleProjects,
+    user?.id,
+    projectSearchQuery,
+    projectCategoryFilter,
+    projectStatusFilter,
+    projectOwnerFilter,
+    projectSortKey,
+  ]);
 
   const visibleProjectIds = useMemo(
     () =>
@@ -7391,7 +7970,6 @@ export function ProjectsPage({
     (memberPendingProjectInvitesLoading ||
       Boolean(memberPendingProjectInvitesError) ||
       memberPendingProjectInvites.length > 0);
-  const isDesktopExpenseTab = detailTab === "expenses" && !isMobileProjectViewport;
 
   const handleToggleSelectAllVisible = () => {
     if (allVisibleSelected) {
@@ -7484,7 +8062,8 @@ export function ProjectsPage({
       type: "delete",
       projects: selectedProjects,
       title: `Delete ${count} selected project${count === 1 ? "" : "s"}?`,
-      subtitle: "This will permanently remove selected projects and linked records that can be safely deleted.",
+      subtitle:
+        "This will permanently remove the selected projects and all associated activities and linked records. This cannot be undone.",
       confirmLabel: "Delete selected",
     });
   };
@@ -7506,16 +8085,25 @@ export function ProjectsPage({
   return (
     <div className="projects-page-modern">
       <div className="projects-toolbar">
-        <div className="projects-toolbar-left">
-          <button className="projects-filter-btn projects-filter-btn--state" type="button">
-            <span className="projects-filter-btn-label">Active</span>
-            <Icon name="chevron" size={16} />
-          </button>
-          <button className="projects-filter-btn projects-filter-btn--state" type="button">
-            <span className="projects-filter-btn-label">Completed</span>
-            <Icon name="chevron" size={16} />
-          </button>
-        </div>
+        <label className="projects-toolbar-search" aria-label="Search projects">
+          <Icon name="search" size={16} />
+          <input
+            type="search"
+            placeholder="Search projects, category, status, or code"
+            value={projectSearchQuery}
+            onChange={(event) => setProjectSearchQuery(event.target.value)}
+          />
+          {projectSearchQuery ? (
+            <button
+              type="button"
+              className="projects-toolbar-search-clear"
+              onClick={() => setProjectSearchQuery("")}
+              aria-label="Clear project search"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          ) : null}
+        </label>
         <div className="projects-toolbar-right">
           <div className="projects-view-toggle" role="tablist" aria-label="Project view">
             {PROJECT_VIEW_OPTIONS.map((option) => (
@@ -7532,20 +8120,140 @@ export function ProjectsPage({
               </button>
             ))}
           </div>
-          <button className="projects-filter-btn projects-filter-btn--category" type="button">
-            <span className="projects-filter-btn-label">All Categories</span>
-            <Icon name="chevron" size={16} />
-          </button>
-          <button className="projects-filter-btn projects-filter-btn--sort" type="button">
-            <span className="projects-filter-btn-label">Newest</span>
-            <Icon name="chevron" size={16} />
-          </button>
+          <label className="projects-filter-btn projects-filter-btn--select" aria-label="Sort projects">
+            <Icon name="calendar" size={14} />
+            <select value={projectSortKey} onChange={(event) => setProjectSortKey(event.target.value)}>
+              <option value="newest">Newest</option>
+              <option value="oldest">Oldest</option>
+              <option value="name_asc">Name A-Z</option>
+              <option value="name_desc">Name Z-A</option>
+              <option value="progress_desc">Highest progress</option>
+              <option value="budget_desc">Highest budget</option>
+            </select>
+          </label>
           {canAcceptProjectInvites ? (
             <button className="projects-filter-btn" type="button" onClick={openAcceptInviteModal}>
               <Icon name="mail" size={14} />
               <span className="projects-filter-btn-label">Accept invite</span>
             </button>
           ) : null}
+          <div
+            className="project-note-tools-menu projects-toolbar-tools-menu"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <button
+              type="button"
+              className="projects-filter-btn projects-filter-btn--icon"
+              aria-haspopup="menu"
+              aria-expanded={showProjectsToolsMenu}
+              aria-label="Project tools"
+              onClick={handleToggleProjectsToolsMenu}
+            >
+              <Icon name="more-vertical" size={16} />
+            </button>
+            {showProjectsToolsMenu ? (
+              <div className="project-note-tools-dropdown projects-toolbar-tools-dropdown" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setShowProjectFilters((prev) => !prev);
+                    setShowProjectsToolsMenu(false);
+                  }}
+                >
+                  {showProjectFilters ? "Hide filters" : "Show filters"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    clearProjectFilters();
+                    setShowProjectsToolsMenu(false);
+                  }}
+                  disabled={!hasActiveProjectFilters}
+                >
+                  Clear filters
+                </button>
+                {projectView !== "grid" ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      handleToggleSelectAllVisible();
+                      setShowProjectsToolsMenu(false);
+                    }}
+                    disabled={visibleProjectIds.length === 0}
+                  >
+                    {allVisibleSelected ? "Clear selected" : "Select all visible"}
+                  </button>
+                ) : null}
+                {projectView !== "grid" ? (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setSelectedProjectIds([]);
+                      setShowProjectsToolsMenu(false);
+                    }}
+                    disabled={selectedProjectIds.length === 0}
+                  >
+                    Clear selection
+                  </button>
+                ) : null}
+                {canCreateProject && projectView !== "grid" ? (
+                  <>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        handleEditSelectedProject();
+                        setShowProjectsToolsMenu(false);
+                      }}
+                      disabled={selectedProjects.length !== 1 || Boolean(projectActionInFlightId)}
+                    >
+                      Edit selected
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        requestSelectedProjectsVisibility(false);
+                        setShowProjectsToolsMenu(false);
+                      }}
+                      disabled={selectedProjects.length === 0 || Boolean(projectActionInFlightId)}
+                    >
+                      Hide selected
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        requestSelectedProjectsVisibility(true);
+                        setShowProjectsToolsMenu(false);
+                      }}
+                      disabled={selectedProjects.length === 0 || Boolean(projectActionInFlightId)}
+                    >
+                      Show selected
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="danger"
+                      onClick={() => {
+                        requestDeleteSelectedProjects();
+                        setShowProjectsToolsMenu(false);
+                      }}
+                      disabled={selectedProjects.length === 0 || Boolean(projectActionInFlightId)}
+                    >
+                      Delete selected
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           <button
             className="projects-new-btn"
             type="button"
@@ -7560,6 +8268,61 @@ export function ProjectsPage({
           </button>
         </div>
       </div>
+      {showProjectFilters ? (
+        <div className="project-detail-filters projects-toolbar-filters">
+          <label className="project-detail-filter">
+            <span>Status</span>
+            <select value={projectStatusFilter} onChange={(event) => setProjectStatusFilter(event.target.value)}>
+              <option value="all">All status</option>
+              <option value="visible">Visible</option>
+              <option value="hidden">Hidden</option>
+              {projectStatusOptions.map((option) => (
+                <option key={`project-status-filter-${option.value}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="project-detail-filter">
+            <span>Category</span>
+            <select
+              value={projectCategoryFilter}
+              onChange={(event) => setProjectCategoryFilter(event.target.value)}
+            >
+              <option value="all">All categories</option>
+              {projectFilterCategoryOptions.map((option) => (
+                <option key={`project-category-filter-${option}`} value={option.toLowerCase()}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="project-detail-filter">
+            <span>Owner</span>
+            <select value={projectOwnerFilter} onChange={(event) => setProjectOwnerFilter(event.target.value)}>
+              <option value="all">All owners</option>
+              <option value="mine">Mine</option>
+              <option value="joined">Joined projects</option>
+              <option value="unassigned">Unassigned</option>
+              {projectOwnerOptions.map((option) => (
+                <option key={`project-owner-filter-${option.value}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="project-detail-filter project-detail-filter--actions">
+            <button
+              type="button"
+              className="project-detail-action ghost"
+              onClick={clearProjectFilters}
+              disabled={!hasActiveProjectFilters}
+            >
+              Clear filters
+            </button>
+          </div>
+        </div>
+      ) : null}
       {projectsNotice?.message ? (
         <p className={`projects-notice projects-notice--${projectsNotice.type || "warning"}`}>
           {projectsNotice.message}
@@ -7705,6 +8468,7 @@ export function ProjectsPage({
             <div className="projects-card-grid">
               {visibleProjects.map((project) => {
                 const projectId = Number.parseInt(String(project.id), 10);
+                const isProjectMenuOpen = String(openProjectMenuId ?? "") === String(project?.id ?? "");
                 const progressValue = getProjectProgress(project);
                 const avatarLetters = getAvatarLetters(project);
                 const extraMembers = Math.max((project.member_count || 0) - avatarLetters.length, 0);
@@ -7712,7 +8476,9 @@ export function ProjectsPage({
                 const isVisible = project?.is_visible !== false;
                 return (
                   <article
-                    className={`project-card-elevated${isVisible ? "" : " project-card-elevated--hidden"}`}
+                    className={`project-card-elevated${isVisible ? "" : " project-card-elevated--hidden"}${
+                      isProjectMenuOpen ? " project-card-elevated--menu-open" : ""
+                    }`}
                     key={project.id}
                     role="button"
                     tabIndex={0}
@@ -7725,13 +8491,13 @@ export function ProjectsPage({
                     onTouchEnd={handleProjectLongPressCancel}
                     onTouchCancel={handleProjectLongPressCancel}
                   >
+                    {renderProjectActionMenu(project)}
                     <div className="project-card-hero">
                       <span className="project-pill project-pill--category">{getProjectCategory(project)}</span>
                       <span className="project-pill project-pill--status">
                         <span className="status-dot" style={{ background: getStatusColor(project.status, isVisible) }}></span>
                         {isVisible ? project.status || "Active" : "Hidden"}
                       </span>
-                      {renderProjectActionMenu(project)}
                       <img src={getProjectImage(project)} alt={`${project.name} cover`} loading="lazy" />
                     </div>
                     <div className="project-card-body">
@@ -8104,149 +8870,7 @@ export function ProjectsPage({
         hideHeader={isMobileProjectViewport}
       >
         {selectedProject && (
-          <div className={`project-detail-layout${isDesktopExpenseTab ? " project-detail-layout--expenses" : ""}`}>
-            {!isDesktopExpenseTab ? (
-              <div className={`project-detail-left${detailTab === "expenses" ? " is-expenses" : ""}`}>
-              {detailTab === "expenses" ? (
-                <div className="project-expense-sidebar">
-                  <article className="project-expense-insight-card project-expense-insight-card--hero">
-                    <h5>Expense Overview</h5>
-                    <p>{selectedProject.name}</p>
-                    <div className="project-expense-insight-meta">
-                      <span>
-                        <Icon name="calendar" size={14} />
-                        Started: {formatDate(selectedProject.start_date)}
-                      </span>
-                      <span>
-                        <Icon name="member" size={14} />
-                        {selectedProject.member_count || 0} members
-                      </span>
-                      <span>
-                        <Icon name="receipt" size={14} />
-                        {projectExpenseInsights.expenseCount} expenses tracked
-                      </span>
-                    </div>
-                  </article>
-
-                  <article className="project-expense-insight-card">
-                    <h5>Total Expenses</h5>
-                    <strong className="project-expense-insight-total">
-                      {formatCurrency(projectExpenseInsights.totalAmount)}
-                    </strong>
-                    <div className="project-expense-donut-wrap">
-                      <div
-                        className="project-expense-donut-ring"
-                        style={{ background: projectExpenseInsights.donutGradient }}
-                      >
-                        <div className="project-expense-donut-hole">
-                          <span>Total</span>
-                          <strong>{formatCurrency(projectExpenseInsights.totalAmount)}</strong>
-                        </div>
-                      </div>
-                    </div>
-                    {projectExpenseInsights.legendCategories.length ? (
-                      <div className="project-expense-legend-list">
-                        {projectExpenseInsights.legendCategories.map((item) => (
-                          <div className="project-expense-legend-row" key={`legend-${item.label}`}>
-                            <span className="project-expense-legend-label">
-                              <i style={{ background: item.color }} aria-hidden="true" />
-                              {item.label}
-                            </span>
-                            <strong>{formatCurrency(item.amount)}</strong>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="project-expense-insight-empty">No expenses recorded yet.</p>
-                    )}
-                  </article>
-
-                  <article className="project-expense-insight-card">
-                    <h5>Expense Breakdown</h5>
-                    {projectExpenseInsights.legendCategories.length ? (
-                      <div className="project-expense-breakdown-bars">
-                        {projectExpenseInsights.legendCategories.map((item) => {
-                          const barHeight =
-                            projectExpenseInsights.maxCategoryAmount > 0
-                              ? Math.max(16, (item.amount / projectExpenseInsights.maxCategoryAmount) * 84)
-                              : 16;
-                          return (
-                            <div className="project-expense-breakdown-item" key={`breakdown-${item.label}`}>
-                              <span
-                                className="project-expense-breakdown-bar"
-                                style={{
-                                  height: `${barHeight}px`,
-                                  background: `linear-gradient(180deg, ${item.color}, ${item.color}cc)`,
-                                }}
-                              />
-                              <span className="project-expense-breakdown-label">{item.label}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <p className="project-expense-insight-empty">No breakdown available.</p>
-                    )}
-
-                    {projectExpenseInsights.leadingVendor ? (
-                      <div className="project-expense-leading-vendor">
-                        <div className="project-expense-leading-vendor-main">
-                          {leadingExpenseVendorLogo ? (
-                            <img
-                              src={leadingExpenseVendorLogo}
-                              alt={`${leadingExpenseVendorName} logo`}
-                              className="project-expense-vendor-logo"
-                              loading="lazy"
-                            />
-                          ) : (
-                            <span className="project-expense-vendor-fallback" aria-hidden="true">
-                              {getProjectExpenseVendorInitials(leadingExpenseVendorName)}
-                            </span>
-                          )}
-                          <div>
-                            <strong>{leadingExpenseVendorName}</strong>
-                            <span>
-                              {projectExpenseInsights.leadingVendor.count} expense
-                              {projectExpenseInsights.leadingVendor.count === 1 ? "" : "s"}
-                            </span>
-                          </div>
-                        </div>
-                        <span className="project-expense-leading-vendor-amount">
-                          {formatCurrency(projectExpenseInsights.leadingVendor.amount)}
-                        </span>
-                      </div>
-                    ) : null}
-
-                    <p className="project-expense-insight-foot">
-                      {projectExpenseInsights.missingReceiptCount} expense
-                      {projectExpenseInsights.missingReceiptCount === 1 ? "" : "s"} missing proof
-                    </p>
-                  </article>
-                </div>
-              ) : (
-                <>
-                  <div className="project-detail-image">
-                    <img src={getProjectImage(selectedProject)} alt={selectedProject.name} />
-                  </div>
-                  <div className="project-detail-thumbs">
-                    <img src={getProjectImage(selectedProject)} alt={`${selectedProject.name} preview`} />
-                    <img src={getProjectImage(selectedProject)} alt={`${selectedProject.name} preview`} />
-                    <img src={getProjectImage(selectedProject)} alt={`${selectedProject.name} preview`} />
-                  </div>
-                  <div className="project-detail-meta">
-                    <span>
-                      <Icon name="calendar" size={14} />
-                      Started: {formatDate(selectedProject.start_date)}
-                    </span>
-                    <span>
-                      <Icon name="member" size={14} />
-                      {selectedProject.member_count || 0} members
-                    </span>
-                  </div>
-                </>
-              )}
-              </div>
-            ) : null}
+          <div className="project-detail-layout project-detail-layout--expenses">
             <div className="project-detail-center">
               {isMobileProjectViewport ? (
                 <div className="project-detail-mobile-header">
@@ -8269,43 +8893,6 @@ export function ProjectsPage({
                   </button>
                 </div>
               ) : null}
-              {!isDesktopExpenseTab ? (
-                <div className="project-detail-identity">
-                  <div className="project-detail-identity-top">
-                    <span
-                      className={`project-overview-status-badge is-${String(
-                        selectedProject?.status || "active"
-                      )
-                        .trim()
-                        .toLowerCase()
-                        .replace(/[^a-z0-9]+/g, "-")}`}
-                    >
-                      {String(selectedProject?.status || "active")
-                        .replace(/[_-]+/g, " ")
-                        .replace(/\b\w/g, (char) => char.toUpperCase())}
-                    </span>
-                    <div className="project-detail-identity-top-actions">
-                      <span className="project-detail-identity-progress-label">
-                        {formatPercentLabel(projectOverviewAnalytics.progressPercent)} progress
-                      </span>
-                    </div>
-                  </div>
-                  <div className="project-detail-identity-meta">
-                    <span>
-                      <Icon name="calendar" size={14} />
-                      Started {formatDate(selectedProject.start_date)}
-                    </span>
-                    <span>
-                      <Icon name="member" size={14} />
-                      {selectedProject.member_count || 0} members
-                    </span>
-                  </div>
-                  <div className="project-detail-identity-progress" aria-hidden="true">
-                    <span style={{ width: `${clampPercent(projectOverviewAnalytics.progressPercent)}%` }} />
-                  </div>
-                </div>
-              ) : null}
-
               {isMobileProjectViewport ? (
                 <div className="project-detail-mobile-pills" role="tablist" aria-label="Project actions">
                   {PROJECT_MOBILE_PILLS.map((pill) => (
@@ -8594,28 +9181,32 @@ export function ProjectsPage({
                         ) : null}
                       </div>
                       {!isMobileProjectViewport ? (
-                        <div className="project-detail-section-head-actions">
+                        <div className="project-detail-section-head-actions project-expense-head-actions">
                           {canManageProjectContent ? (
                             <button
                               type="button"
-                              className="project-detail-action project-expense-add-btn"
+                              className="project-detail-action icon-only project-expense-head-action"
                               onClick={openExpenseModal}
                               disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                              aria-label="Add expense"
                             >
-                              <Icon name="plus" size={14} />
-                              Add expense
+                              <Icon name="plus" size={16} />
+                              <span className="project-expense-head-action-tooltip" role="tooltip">
+                                Add expense
+                              </span>
                             </button>
                           ) : null}
                           <button
                             type="button"
-                            className="project-detail-action ghost"
+                            className="project-detail-action ghost icon-only project-expense-head-action"
                             onClick={handleExportVisibleExpensesCsv}
                             disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
-                            title="Export shown expenses as CSV"
                             aria-label="Export shown expenses as CSV"
                           >
                             <Icon name="download" size={16} />
-                            Export CSV
+                            <span className="project-expense-head-action-tooltip" role="tooltip">
+                              Export CSV
+                            </span>
                           </button>
                         </div>
                       ) : null}
@@ -9473,37 +10064,98 @@ export function ProjectsPage({
                     <div className="project-detail-section-head">
                       <h4>Tasks</h4>
                       {!isMobileProjectViewport ? (
-                        <div className="project-detail-section-head-actions">
-                          {canManageProjectContent && selectedTaskIds.length > 0 ? (
-                            <>
-                              <button
-                                type="button"
-                                className="project-detail-action ghost"
-                                onClick={openEditSelectedTaskModal}
-                                disabled={selectedTasks.length !== 1 || savingTask || deletingTasks}
-                              >
-                                Edit selected
-                              </button>
-                              <button
-                                type="button"
-                                className="project-detail-action ghost danger"
-                                onClick={requestDeleteSelectedTasks}
-                                disabled={deletingTasks || savingTask}
-                              >
-                                Delete selected
-                              </button>
-                            </>
-                          ) : null}
+                        <div className="project-detail-section-head-actions project-expense-head-actions">
                           {canManageProjectContent ? (
                             <button
                               type="button"
-                              className="project-detail-action"
+                              className="project-detail-action icon-only project-expense-head-action"
                               onClick={openTaskModal}
                               disabled={savingTask || deletingTasks}
+                              aria-label="Add task"
                             >
-                              Add task
+                              <Icon name="plus" size={16} />
+                              <span className="project-expense-head-action-tooltip" role="tooltip">
+                                Add task
+                              </span>
                             </button>
                           ) : null}
+                          <div
+                            className="project-note-tools-menu"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="project-group-row-action project-note-tools-menu-btn"
+                              onClick={handleToggleTasksToolsMenu}
+                              aria-haspopup="menu"
+                              aria-expanded={showTasksToolsMenu}
+                              aria-label="Task options"
+                            >
+                              <Icon name="more-vertical" size={15} />
+                            </button>
+                            {showTasksToolsMenu ? (
+                              <div className="project-note-tools-dropdown" role="menu">
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setShowTaskFilters((prev) => !prev);
+                                    setShowTasksToolsMenu(false);
+                                  }}
+                                  disabled={projectTasks.length === 0}
+                                >
+                                  {showTaskFilters ? "Hide filters" : "Show filters"}
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setTaskSearchQuery("");
+                                    setTaskStatusFilter("all");
+                                    setTaskAssigneeFilter("all");
+                                    setShowTasksToolsMenu(false);
+                                  }}
+                                  disabled={!hasActiveTaskFilters}
+                                >
+                                  Clear filters
+                                </button>
+                                {canManageProjectContent ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => {
+                                        handleToggleSelectAllTasks();
+                                        setShowTasksToolsMenu(false);
+                                      }}
+                                      disabled={filteredProjectTasks.length === 0}
+                                    >
+                                      {allTasksSelected ? "Clear selected" : "Select all visible"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={openEditSelectedTaskModal}
+                                      disabled={selectedTasks.length !== 1 || savingTask || deletingTasks}
+                                    >
+                                      Edit selected
+                                    </button>
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="danger"
+                                      onClick={requestDeleteSelectedTasks}
+                                      disabled={selectedTasks.length === 0 || deletingTasks || savingTask}
+                                    >
+                                      Delete selected
+                                    </button>
+                                  </>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       ) : null}
                     </div>
@@ -9664,7 +10316,7 @@ export function ProjectsPage({
                       </>
                     ) : (
                       <>
-                        {projectTasks.length > 0 ? (
+                        {showTaskFilters && projectTasks.length > 0 ? (
                           <div className="project-detail-filters">
                             <label className="project-detail-filter project-detail-filter--search">
                               <span>Search</span>
@@ -9737,25 +10389,6 @@ export function ProjectsPage({
                           </div>
                         ) : (
                           <>
-                            {canManageProjectContent ? (
-                              <div className="project-expenses-selection-note">
-                                {selectedTaskIds.length} selected
-                              </div>
-                            ) : null}
-                            <div className="project-expenses-selection-note">
-                              Showing {filteredProjectTasks.length} of {projectTasks.length} tasks.
-                            </div>
-                            {canManageProjectContent ? (
-                              <label className="project-group-select-all">
-                                <input
-                                  type="checkbox"
-                                  checked={allTasksSelected}
-                                  onChange={handleToggleSelectAllTasks}
-                                  aria-label="Select all visible project tasks"
-                                />
-                                <span>Select all visible tasks</span>
-                              </label>
-                            ) : null}
                             <div className="project-grouped-board">
                               {groupedTaskRows.map((lane) => {
                                 const laneTaskIds = lane.rows
@@ -9842,13 +10475,18 @@ export function ProjectsPage({
                                               ? truncateProjectCellText(taskDetailsRaw, 108)
                                               : "—";
                                             return (
-                                              <tr key={taskId || `${task?.title || "task"}-${task?.due_date || ""}`}>
+                                              <tr
+                                                key={taskId || `${task?.title || "task"}-${task?.due_date || ""}`}
+                                                className="project-task-row"
+                                                onClick={() => openTaskDetailsModal(task)}
+                                              >
                                                 {canManageProjectContent ? (
                                                   <td className="projects-table-check">
                                                     <input
                                                       type="checkbox"
                                                       checked={isChecked}
                                                       onChange={() => handleToggleTaskSelection(taskId)}
+                                                      onClick={(event) => event.stopPropagation()}
                                                       aria-label={`Select task ${task?.title || taskId}`}
                                                     />
                                                   </td>
@@ -9888,15 +10526,64 @@ export function ProjectsPage({
                                                 </td>
                                                 {canManageProjectContent ? (
                                                   <td className="project-group-actions-col project-task-col-actions">
-                                                    <button
-                                                      type="button"
-                                                      className="project-group-row-action"
-                                                      aria-label={`Edit ${task?.title || "task"}`}
-                                                      onClick={() => openTaskEditorForRow(task)}
-                                                      disabled={savingTask || deletingTasks}
+                                                    <div
+                                                      className="project-note-row-menu"
+                                                      onClick={(event) => event.stopPropagation()}
                                                     >
-                                                      <Icon name="more-horizontal" size={15} />
-                                                    </button>
+                                                      <button
+                                                        type="button"
+                                                        className="project-group-row-action"
+                                                        aria-label={`Actions for ${task?.title || "task"}`}
+                                                        aria-haspopup="menu"
+                                                        aria-expanded={openTaskRowMenuId === taskId}
+                                                        onClick={(event) => handleToggleTaskRowMenu(taskId, event)}
+                                                        disabled={savingTask || deletingTasks}
+                                                      >
+                                                        <Icon name="more-vertical" size={15} />
+                                                      </button>
+                                                      {openTaskRowMenuId === taskId ? (
+                                                        <div className="project-note-row-dropdown" role="menu">
+                                                          <button
+                                                            type="button"
+                                                            role="menuitem"
+                                                            onClick={() => openTaskDetailsModal(task)}
+                                                          >
+                                                            View details
+                                                          </button>
+                                                          <button
+                                                            type="button"
+                                                            role="menuitem"
+                                                            onClick={() => {
+                                                              setOpenTaskRowMenuId("");
+                                                              openTaskEditorForRow(task);
+                                                            }}
+                                                            disabled={savingTask || deletingTasks}
+                                                          >
+                                                            Edit
+                                                          </button>
+                                                          <button
+                                                            type="button"
+                                                            role="menuitem"
+                                                            onClick={() => {
+                                                              setOpenTaskRowMenuId("");
+                                                              handleToggleTaskComplete(task);
+                                                            }}
+                                                            disabled={savingTask || deletingTasks}
+                                                          >
+                                                            {safeStatus === "done" ? "Reopen" : "Mark completed"}
+                                                          </button>
+                                                          <button
+                                                            type="button"
+                                                            role="menuitem"
+                                                            className="danger"
+                                                            onClick={() => handleRequestDeleteSingleTask(task)}
+                                                            disabled={savingTask || deletingTasks}
+                                                          >
+                                                            Delete
+                                                          </button>
+                                                        </div>
+                                                      ) : null}
+                                                    </div>
                                                   </td>
                                                 ) : null}
                                               </tr>
@@ -9921,26 +10608,6 @@ export function ProjectsPage({
                       <div className="project-detail-section-head">
                         <h4>Notes</h4>
                         <div className="project-detail-section-head-actions">
-                          {canManageProjectContent && selectedNoteIds.length > 0 ? (
-                            <>
-                              <button
-                                type="button"
-                                className="project-detail-action ghost"
-                                onClick={openEditSelectedNoteModal}
-                                disabled={selectedNotes.length !== 1 || savingNote || deletingNotes}
-                              >
-                                Edit selected
-                              </button>
-                              <button
-                                type="button"
-                                className="project-detail-action ghost danger"
-                                onClick={requestDeleteSelectedNotes}
-                                disabled={deletingNotes || savingNote}
-                              >
-                                Delete selected
-                              </button>
-                            </>
-                          ) : null}
                           {canManageProjectContent ? (
                             <button
                               type="button"
@@ -9951,12 +10618,88 @@ export function ProjectsPage({
                               Add note
                             </button>
                           ) : null}
+                          <div
+                            className="project-note-tools-menu"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="project-group-row-action project-note-tools-menu-btn"
+                              onClick={handleToggleNotesToolsMenu}
+                              aria-haspopup="menu"
+                              aria-expanded={showNotesToolsMenu}
+                              aria-label="Notes options"
+                            >
+                              <Icon name="more-vertical" size={15} />
+                            </button>
+                            {showNotesToolsMenu ? (
+                              <div className="project-note-tools-dropdown" role="menu">
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setShowNoteFilters((prev) => !prev);
+                                    setShowNotesToolsMenu(false);
+                                  }}
+                                  disabled={readableProjectNotes.length === 0}
+                                >
+                                  {showNoteFilters ? "Hide filters" : "Show filters"}
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setNoteSearchQuery("");
+                                    setNoteVisibilityFilter("all");
+                                    setShowNotesToolsMenu(false);
+                                  }}
+                                  disabled={!hasActiveNoteFilters}
+                                >
+                                  Clear filters
+                                </button>
+                                {canManageProjectContent ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => {
+                                        handleToggleSelectAllNotes();
+                                        setShowNotesToolsMenu(false);
+                                      }}
+                                      disabled={filteredProjectNotes.length === 0}
+                                    >
+                                      {allNotesSelected ? "Clear selected" : "Select all visible"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={openEditSelectedNoteModal}
+                                      disabled={selectedNotes.length !== 1 || savingNote || deletingNotes}
+                                    >
+                                      Edit selected
+                                    </button>
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="danger"
+                                      onClick={requestDeleteSelectedNotes}
+                                      disabled={selectedNotes.length === 0 || deletingNotes || savingNote}
+                                    >
+                                      Delete selected
+                                    </button>
+                                  </>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                       {projectNotesError ? (
                         <p className="project-detail-expense-error">{projectNotesError}</p>
                       ) : null}
-                      {projectNotes.length > 0 ? (
+                      {showNoteFilters && readableProjectNotes.length > 0 ? (
                         <div className="project-detail-filters">
                           <label className="project-detail-filter project-detail-filter--search">
                             <span>Search</span>
@@ -10001,10 +10744,10 @@ export function ProjectsPage({
                           <div className="loading-spinner"></div>
                           <span>Loading notes...</span>
                         </div>
-                      ) : projectNotes.length === 0 ? (
+                      ) : readableProjectNotes.length === 0 ? (
                         <div className="project-detail-empty">
                           <Icon name="notes" size={24} />
-                          <span>No notes yet.</span>
+                          <span>No notes available.</span>
                         </div>
                       ) : filteredProjectNotes.length === 0 ? (
                         <div className="project-detail-empty">
@@ -10013,25 +10756,6 @@ export function ProjectsPage({
                         </div>
                       ) : (
                         <>
-                          {canManageProjectContent ? (
-                            <div className="project-expenses-selection-note">
-                              {selectedNoteIds.length} selected
-                            </div>
-                          ) : null}
-                          <div className="project-expenses-selection-note">
-                            Showing {filteredProjectNotes.length} of {projectNotes.length} notes.
-                          </div>
-                          {canManageProjectContent ? (
-                            <label className="project-group-select-all">
-                              <input
-                                type="checkbox"
-                                checked={allNotesSelected}
-                                onChange={handleToggleSelectAllNotes}
-                                aria-label="Select all visible project notes"
-                              />
-                              <span>Select all visible notes</span>
-                            </label>
-                          ) : null}
                           <div className="project-grouped-board">
                             {groupedNoteRows.map((lane) => {
                               const laneNoteIds = lane.rows
@@ -10105,10 +10829,12 @@ export function ProjectsPage({
                                         {lane.rows.map((note) => {
                                           const noteId = String(note?.id ?? "");
                                           const isChecked = selectedNoteIds.includes(noteId);
-                                          const safeVisibility = String(note?.visibility || "project_team")
-                                            .trim()
-                                            .toLowerCase();
-                                          const visibilityIcon = safeVisibility === "admins_only" ? "shield" : "users";
+                                          const safeVisibility = normalizeNoteVisibilityKey(note?.visibility);
+                                          const visibilityIcon = getNoteVisibilityIcon(safeVisibility);
+                                          const visibilityLabel = getNoteVisibilityLabel(
+                                            safeVisibility,
+                                            note?.visible_member_ids
+                                          );
                                           const author =
                                             note?.author_name ||
                                             (note?.author_member_id ? `Member #${note.author_member_id}` : "—");
@@ -10117,13 +10843,18 @@ export function ProjectsPage({
                                             ? truncateProjectCellText(noteBodyRaw, 108)
                                             : "—";
                                           return (
-                                            <tr key={noteId || `${note?.title || "note"}-${note?.created_at || ""}`}>
+                                            <tr
+                                              key={noteId || `${note?.title || "note"}-${note?.created_at || ""}`}
+                                              className="project-note-row"
+                                              onClick={() => openNoteDetailsModal(note)}
+                                            >
                                               {canManageProjectContent ? (
                                                 <td className="projects-table-check">
                                                   <input
                                                     type="checkbox"
                                                     checked={isChecked}
                                                     onChange={() => handleToggleNoteSelection(noteId)}
+                                                    onClick={(event) => event.stopPropagation()}
                                                     aria-label={`Select note ${note?.title || noteId}`}
                                                   />
                                                 </td>
@@ -10147,23 +10878,58 @@ export function ProjectsPage({
                                               <td className="project-note-col-visibility">
                                                 <span
                                                   className={`project-note-visibility is-${safeVisibility.replace(/[^a-z_]+/g, "")}`}
-                                                  title={NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
-                                                  aria-label={NOTE_VISIBILITY_LABELS[safeVisibility] || "Project team"}
+                                                  title={visibilityLabel}
+                                                  aria-label={visibilityLabel}
                                                 >
                                                   <Icon name={visibilityIcon} size={12} />
                                                 </span>
                                               </td>
                                               {canManageProjectContent ? (
                                                 <td className="project-group-actions-col project-note-col-actions">
-                                                  <button
-                                                    type="button"
-                                                    className="project-group-row-action"
-                                                    aria-label={`Edit ${note?.title || "note"}`}
-                                                    onClick={() => openNoteEditorForRow(note)}
-                                                    disabled={savingNote || deletingNotes}
+                                                  <div
+                                                    className="project-note-row-menu"
+                                                    onClick={(event) => event.stopPropagation()}
                                                   >
-                                                    <Icon name="more-horizontal" size={15} />
-                                                  </button>
+                                                    <button
+                                                      type="button"
+                                                      className="project-group-row-action"
+                                                      aria-label={`Actions for ${note?.title || "note"}`}
+                                                      aria-haspopup="menu"
+                                                      aria-expanded={openNoteRowMenuId === noteId}
+                                                      onClick={(event) => handleToggleNoteRowMenu(noteId, event)}
+                                                      disabled={savingNote || deletingNotes}
+                                                    >
+                                                      <Icon name="more-vertical" size={15} />
+                                                    </button>
+                                                    {openNoteRowMenuId === noteId ? (
+                                                      <div className="project-note-row-dropdown" role="menu">
+                                                        <button
+                                                          type="button"
+                                                          role="menuitem"
+                                                          onClick={() => openNoteDetailsModal(note)}
+                                                        >
+                                                          View details
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          role="menuitem"
+                                                          onClick={() => openNoteEditorForRow(note)}
+                                                          disabled={savingNote || deletingNotes}
+                                                        >
+                                                          Edit
+                                                        </button>
+                                                        <button
+                                                          type="button"
+                                                          role="menuitem"
+                                                          className="danger"
+                                                          onClick={() => handleRequestDeleteSingleNote(note)}
+                                                          disabled={savingNote || deletingNotes}
+                                                        >
+                                                          Delete
+                                                        </button>
+                                                      </div>
+                                                    ) : null}
+                                                  </div>
                                                 </td>
                                               ) : null}
                                             </tr>
@@ -11998,6 +12764,77 @@ export function ProjectsPage({
       </DataModal>
 
       <DataModal
+        open={Boolean(activeTaskDetails)}
+        onClose={closeTaskDetailsModal}
+        title={activeTaskDetails?.title || "Task details"}
+        subtitle="Full task context and current delivery state."
+        icon="check-circle"
+        className="project-submodal"
+      >
+        <div className="project-note-details-modal">
+          <div className="project-note-details-meta">
+            <div>
+              <span>Status</span>
+              <strong>
+                {TASK_STATUS_LABELS[
+                  String(activeTaskDetails?.status || "open")
+                    .trim()
+                    .toLowerCase()
+                ] || toReadableLabel(String(activeTaskDetails?.status || "open"))}
+              </strong>
+            </div>
+            <div>
+              <span>Priority</span>
+              <strong>
+                {TASK_PRIORITY_LABELS[
+                  String(activeTaskDetails?.priority || "normal")
+                    .trim()
+                    .toLowerCase()
+                ] || toReadableLabel(String(activeTaskDetails?.priority || "normal"))}
+              </strong>
+            </div>
+            <div>
+              <span>Assignee</span>
+              <strong>
+                {activeTaskDetails?.assignee_name ||
+                  (activeTaskDetails?.assignee_member_id ? `Member #${activeTaskDetails.assignee_member_id}` : "Unassigned")}
+              </strong>
+            </div>
+            <div>
+              <span>Due date</span>
+              <strong>{formatDate(activeTaskDetails?.due_date)}</strong>
+            </div>
+            <div>
+              <span>Updated</span>
+              <strong>{formatDate(activeTaskDetails?.updated_at || activeTaskDetails?.created_at)}</strong>
+            </div>
+          </div>
+          <div className="project-note-details-body">
+            {String(activeTaskDetails?.details || "").trim() || "No details were provided for this task."}
+          </div>
+          <div className="data-modal-actions">
+            <button type="button" className="data-modal-btn" onClick={closeTaskDetailsModal}>
+              Close
+            </button>
+            {canManageProjectContent ? (
+              <button
+                type="button"
+                className="data-modal-btn data-modal-btn--primary"
+                onClick={() => {
+                  const task = activeTaskDetails;
+                  closeTaskDetailsModal();
+                  openTaskEditorForRow(task);
+                }}
+                disabled={!activeTaskDetails}
+              >
+                Edit task
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </DataModal>
+
+      <DataModal
         open={showNoteModal}
         onClose={closeNoteModal}
         title={editingNoteId ? "Edit Note" : "Add Note"}
@@ -12035,6 +12872,49 @@ export function ProjectsPage({
                 ))}
               </select>
             </label>
+            {noteForm.visibility === "selected_members" ? (
+              <label className="data-modal-field data-modal-field--full">
+                Members with access
+                <div className="note-visibility-member-list">
+                  {projectAssignableMembersLoading ? (
+                    <p className="note-visibility-member-empty">Loading members...</p>
+                  ) : noteVisibilityMemberOptions.length === 0 ? (
+                    <p className="note-visibility-member-empty">No members available yet.</p>
+                  ) : (
+                    noteVisibilityMemberOptions.map((member) => {
+                      const isChecked = selectedNoteVisibilityMemberIds.has(member.id);
+                      const memberRole = String(member?.role || "").trim();
+                      return (
+                        <label
+                          key={`note-visibility-member-${member.id}`}
+                          className={`note-visibility-member-row${isChecked ? " is-selected" : ""}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleToggleNoteVisibilityMember(member.id)}
+                            disabled={savingNote}
+                          />
+                          <span className="note-visibility-member-meta">
+                            <strong>{member.name}</strong>
+                            {memberRole ? <small>{toReadableLabel(memberRole, "Member")}</small> : null}
+                          </span>
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+                <small className="note-visibility-member-help">
+                  Selected members, the note owner, and org admins/superadmins can access this note.
+                </small>
+              </label>
+            ) : noteForm.visibility === "owner_only" ? (
+              <label className="data-modal-field data-modal-field--full">
+                <small className="note-visibility-member-help">
+                  Only the note owner and org admins/superadmins can access this note.
+                </small>
+              </label>
+            ) : null}
             <label className="data-modal-field data-modal-field--full">
               Note details
               <textarea
@@ -12055,6 +12935,59 @@ export function ProjectsPage({
             </button>
           </div>
         </form>
+      </DataModal>
+
+      <DataModal
+        open={Boolean(activeNoteDetails)}
+        onClose={closeNoteDetailsModal}
+        title={activeNoteDetails?.title || "Note details"}
+        subtitle="Full note content and visibility details."
+        icon="notes"
+        className="project-submodal"
+      >
+        <div className="project-note-details-modal">
+          <div className="project-note-details-meta">
+            <div>
+              <span>Visibility</span>
+              <strong>
+                {getNoteVisibilityLabel(activeNoteDetails?.visibility, activeNoteDetails?.visible_member_ids)}
+              </strong>
+            </div>
+            <div>
+              <span>Author</span>
+              <strong>
+                {activeNoteDetails?.author_name ||
+                  (activeNoteDetails?.author_member_id ? `Member #${activeNoteDetails.author_member_id}` : "—")}
+              </strong>
+            </div>
+            <div>
+              <span>Updated</span>
+              <strong>{formatDate(activeNoteDetails?.updated_at || activeNoteDetails?.created_at)}</strong>
+            </div>
+          </div>
+          <div className="project-note-details-body">
+            {String(activeNoteDetails?.body || "").trim() || "No details were provided for this note."}
+          </div>
+          <div className="data-modal-actions">
+            <button type="button" className="data-modal-btn" onClick={closeNoteDetailsModal}>
+              Close
+            </button>
+            {canManageProjectContent ? (
+              <button
+                type="button"
+                className="data-modal-btn data-modal-btn--primary"
+                onClick={() => {
+                  const note = activeNoteDetails;
+                  closeNoteDetailsModal();
+                  openNoteEditorForRow(note);
+                }}
+                disabled={!activeNoteDetails}
+              >
+                Edit note
+              </button>
+            ) : null}
+          </div>
+        </div>
       </DataModal>
 
       <DataModal

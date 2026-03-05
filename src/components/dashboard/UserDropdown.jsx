@@ -109,7 +109,6 @@ function UserDropdown({
   tenantRole,
   canInviteMembers = false,
   canManageWorkspace = false,
-  canOpenAdminConsole = false,
   themeMode = "light",
   onThemeModeChange,
   quietModeUntil = null,
@@ -117,7 +116,6 @@ function UserDropdown({
   onOpenInviteModal,
   onOpenProfileSettings,
   onOpenWorkspaceSettings,
-  onOpenAdminConsole,
   onOpenNotifications,
   onSwitchWorkspace,
   onOpenHelp,
@@ -249,15 +247,6 @@ function UserDropdown({
       description: "Open your full reminder inbox.",
       onClick: () => runAction(onOpenNotifications),
     },
-    canOpenAdminConsole
-      ? {
-          key: "admin",
-          icon: "shield",
-          title: "Admin console",
-          description: "Open roles, permissions, and admin controls.",
-          onClick: () => runAction(onOpenAdminConsole),
-        }
-      : null,
     {
       key: "switch",
       icon: "layers",

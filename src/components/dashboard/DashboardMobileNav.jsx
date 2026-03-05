@@ -10,7 +10,7 @@ const DASHBOARD_MOBILE_NAV_ITEMS = [
 ];
 
 const FINANCE_PAGE_PRIORITY = ["expenses", "contributions", "documents", "welfare", "payouts"];
-const MORE_PAGE_PRIORITY = ["settings", "notifications", "reports", "news", "admin", "meetings"];
+const MORE_PAGE_PRIORITY = ["settings", "notifications", "news", "meetings"];
 
 const resolveFirstAllowedPage = (allowedPages, candidates) => {
   if (!(allowedPages instanceof Set)) return candidates[0] || null;

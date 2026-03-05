@@ -10,13 +10,11 @@ const ALL_PAGES = [
   "projects-jpp",
   "projects-jgf",
   "expenses",
-  "reports",
   "news",
   "documents",
   "meetings",
   "members",
   "settings",
-  "admin",
 ];
 
 const DEFAULT_FEATURES = {
@@ -50,9 +48,6 @@ const applyFeatureAccess = (pages, features) => {
   }
   if (!features.expenses) {
     allowed.delete("expenses");
-  }
-  if (!features.reports) {
-    allowed.delete("reports");
   }
   if (!features.news) {
     allowed.delete("news");
@@ -104,7 +99,6 @@ export const getRoleAccess = ({ role, projectModules = [], features }) => {
       ensureSet([
         "overview",
         "notifications",
-        "reports",
         "expenses",
         "meetings",
         "documents",
