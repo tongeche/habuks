@@ -877,7 +877,7 @@ export function ProjectsPage({
   const [showProjectActionSheet, setShowProjectActionSheet] = useState(false);
   const [mobileDeleteArmed, setMobileDeleteArmed] = useState(false);
   const [isMobileProjectViewport, setIsMobileProjectViewport] = useState(() =>
-    typeof window !== "undefined" ? window.matchMedia("(max-width: 768px)").matches : false
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 720px)").matches : false
   );
   const [projectAssignableMembers, setProjectAssignableMembers] = useState([]);
   const [projectAssignableMembersLoading, setProjectAssignableMembersLoading] = useState(false);
@@ -1160,7 +1160,7 @@ export function ProjectsPage({
     if (typeof window === "undefined") {
       return undefined;
     }
-    const mediaQuery = window.matchMedia("(max-width: 768px)");
+    const mediaQuery = window.matchMedia("(max-width: 720px)");
     const applyMediaState = () => {
       setIsMobileProjectViewport(mediaQuery.matches);
     };
@@ -3136,7 +3136,7 @@ export function ProjectsPage({
         likelihood: toReadableLabel(fundingRiskLikelihood, "Medium"),
         impact: toReadableLabel(fundingRiskImpact, "Medium"),
         tone: toRiskTone(fundingRiskLikelihood, fundingRiskImpact),
-        owner: "Finance lead",
+        owner: "Records lead",
         mitigation:
           donorAskAmount !== null
             ? `Prioritize closure of the ${formatCurrency(donorAskAmount)} funding ask and phase non-critical spend.`
@@ -3189,7 +3189,7 @@ export function ProjectsPage({
       } else if (kpi.key === "budget_coverage") {
         dataSource = "Budget ledger and funding commitments";
         frequency = "Monthly";
-        verification = "Finance reconciliation";
+        verification = "Records reconciliation";
       } else if (kpi.key === "expense_compliance") {
         dataSource = "Expense register and receipt archive";
         frequency = "Monthly";
@@ -3618,6 +3618,15 @@ export function ProjectsPage({
     );
   }, [sortedProjectExpenses, selectedExpenseDetailId]);
 
+  const selectedExpenseDetailParsed = useMemo(
+    () =>
+      parseExpenseDescriptionForForm(
+        selectedExpenseDetail?.description,
+        selectedExpenseDetail?.category
+      ),
+    [selectedExpenseDetail?.description, selectedExpenseDetail?.category]
+  );
+
   const expenseCategoryUsage = useMemo(() => {
     const usage = new Map();
     projectExpenses.forEach((expense) => {
@@ -3765,6 +3774,9 @@ export function ProjectsPage({
         setSelectedExpenseIds((prev) =>
           prev.filter((expenseId) => !deletedIds.includes(String(expenseId)))
         );
+        if (selectedExpenseDetailId && deletedIds.includes(String(selectedExpenseDetailId))) {
+          setSelectedExpenseDetailId("");
+        }
       }
 
       if (failureCount === 0) {
@@ -6830,6 +6842,7 @@ export function ProjectsPage({
         icon="briefcase"
         className="project-submodal project-detail-modal"
         bodyClassName="project-detail-body"
+        hideHeader={isMobileProjectViewport}
       >
         {selectedProject && (
           <div className="project-detail-layout">
@@ -7306,93 +7319,138 @@ export function ProjectsPage({
                 {detailTab === "expenses" && (
                   <div className="project-detail-section project-detail-expenses">
                     <div className="project-detail-section-head">
-                      <h4>Expenses</h4>
-                      <div className="project-detail-section-head-actions">
-                        {canManageProjectContent && selectedExpenseIds.length > 0 ? (
-                          <>
-                            <button
-                              type="button"
-                              className="project-detail-action ghost"
-                              onClick={openEditSelectedExpenseModal}
-                              disabled={
-                                selectedExpenses.length !== 1 ||
-                                savingExpense ||
-                                deletingExpenses ||
-                                uploadingExpenseReceipt
-                              }
-                            >
-                              Edit selected
-                            </button>
-                            <button
-                              type="button"
-                              className="project-detail-action ghost"
-                              onClick={triggerSelectedExpenseReceiptPicker}
-                              disabled={
-                                selectedExpenses.length !== 1 ||
-                                savingExpense ||
-                                deletingExpenses ||
-                                uploadingExpenseReceipt
-                              }
-                            >
-                              {uploadingExpenseReceipt ? "Uploading..." : "Upload receipt"}
-                            </button>
-                            <button
-                              type="button"
-                              className="project-detail-action ghost danger"
-                              onClick={requestDeleteSelectedExpenses}
-                              disabled={deletingExpenses || savingExpense || uploadingExpenseReceipt}
-                            >
-                              Delete selected
-                            </button>
-                          </>
-                        ) : null}
-                        {canManageProjectContent ? (
-                          <input
-                            ref={expenseReceiptInputRef}
-                            type="file"
-                            className="project-documents-file-input"
-                            accept={PROJECT_EXPENSE_RECEIPT_ACCEPT}
-                            onChange={handleSelectedExpenseReceiptFileSelection}
-                            disabled={uploadingExpenseReceipt || savingExpense || deletingExpenses}
-                          />
-                        ) : null}
-                        <button
-                          type="button"
-                          className="project-detail-action ghost icon-only"
-                          onClick={handleExportVisibleExpensesCsv}
-                          disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
-                          title="Export shown expenses as CSV"
-                          aria-label="Export shown expenses as CSV"
-                        >
-                          <Icon name="download" size={16} />
-                        </button>
-                        {canManageProjectContent ? (
+                      <h4>Project Expenses</h4>
+                      {!isMobileProjectViewport ? (
+                        <div className="project-detail-section-head-actions">
+                          {canManageProjectContent && selectedExpenseIds.length > 0 ? (
+                            <>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={openEditSelectedExpenseModal}
+                                disabled={
+                                  selectedExpenses.length !== 1 ||
+                                  savingExpense ||
+                                  deletingExpenses ||
+                                  uploadingExpenseReceipt
+                                }
+                              >
+                                Edit selected
+                              </button>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={triggerSelectedExpenseReceiptPicker}
+                                disabled={
+                                  selectedExpenses.length !== 1 ||
+                                  savingExpense ||
+                                  deletingExpenses ||
+                                  uploadingExpenseReceipt
+                                }
+                              >
+                                {uploadingExpenseReceipt ? "Uploading..." : "Upload receipt"}
+                              </button>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost danger"
+                                onClick={requestDeleteSelectedExpenses}
+                                disabled={deletingExpenses || savingExpense || uploadingExpenseReceipt}
+                              >
+                                Delete selected
+                              </button>
+                            </>
+                          ) : null}
                           <button
                             type="button"
-                            className="project-detail-action"
-                            onClick={openExpenseModal}
+                            className="project-detail-action ghost icon-only"
+                            onClick={handleExportVisibleExpensesCsv}
                             disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                            title="Export shown expenses as CSV"
+                            aria-label="Export shown expenses as CSV"
                           >
-                            Add expense
+                            <Icon name="download" size={16} />
                           </button>
-                        ) : null}
-                      </div>
+                          {canManageProjectContent ? (
+                            <button
+                              type="button"
+                              className="project-detail-action"
+                              onClick={openExpenseModal}
+                              disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                            >
+                              Add expense
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
+                    {canManageProjectContent ? (
+                      <input
+                        ref={expenseReceiptInputRef}
+                        type="file"
+                        className="project-documents-file-input"
+                        accept={PROJECT_EXPENSE_RECEIPT_ACCEPT}
+                        onChange={handleSelectedExpenseReceiptFileSelection}
+                        disabled={uploadingExpenseReceipt || savingExpense || deletingExpenses}
+                      />
+                    ) : null}
                     {isMobileProjectViewport ? (
-                      <div className="project-mobile-finance-summary">
-                        <article>
-                          <span>Budget allocated</span>
-                          <strong>{formatCurrency(projectOverviewAnalytics.budgetAmount)}</strong>
-                        </article>
-                        <article>
-                          <span>Amount spent</span>
-                          <strong>{formatCurrency(projectOverviewAnalytics.spentAmount)}</strong>
-                        </article>
-                        <article>
-                          <span>Remaining</span>
-                          <strong>{formatCurrency(projectOverviewAnalytics.remainingAmount)}</strong>
-                        </article>
-                      </div>
+                      <>
+                        <div className="project-mobile-finance-summary">
+                          <article>
+                            <span>Budget allocated</span>
+                            <strong>{formatCurrency(projectOverviewAnalytics.budgetAmount)}</strong>
+                          </article>
+                          <article>
+                            <span>Amount spent</span>
+                            <strong>{formatCurrency(projectOverviewAnalytics.spentAmount)}</strong>
+                          </article>
+                          <article>
+                            <span>Remaining</span>
+                            <strong>{formatCurrency(projectOverviewAnalytics.remainingAmount)}</strong>
+                          </article>
+                        </div>
+                        {canManageProjectContent && selectedExpenseIds.length > 0 ? (
+                          <div className="project-expense-mobile-selection">
+                            <strong>
+                              {selectedExpenseIds.length} selected
+                            </strong>
+                            <div className="project-expense-mobile-selection-actions">
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={handleApproveSelectedExpenses}
+                                disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                              >
+                                Bulk approve
+                              </button>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={handleExportSelectedExpensesCsv}
+                                disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                              >
+                                Export
+                              </button>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost danger"
+                                onClick={requestDeleteSelectedExpenses}
+                                disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                              >
+                                Delete
+                              </button>
+                              <button
+                                type="button"
+                                className="project-detail-action ghost"
+                                onClick={handleClearExpenseSelection}
+                                disabled={savingExpense || deletingExpenses || uploadingExpenseReceipt}
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </>
                     ) : null}
                     {projectExpensesError ? (
                       <p className="project-detail-expense-error">{projectExpensesError}</p>
@@ -7406,129 +7464,195 @@ export function ProjectsPage({
                       <div className="project-detail-empty">
                         <Icon name="receipt" size={24} />
                         <span>No expenses recorded yet.</span>
+                        {isMobileProjectViewport ? (
+                          <p>Start tracking project spending.</p>
+                        ) : null}
+                        {isMobileProjectViewport && canManageProjectContent ? (
+                          <button type="button" className="project-detail-action" onClick={openExpenseModal}>
+                            Add Expense
+                          </button>
+                        ) : null}
                       </div>
                     ) : (
                       <>
-                        {canManageProjectContent ? (
-                          <div className="project-expenses-selection-note">
-                            {selectedExpenseIds.length} selected
+                        {isMobileProjectViewport ? (
+                          <div className="project-expense-mobile-list" role="list">
+                            {visibleProjectExpenses.map((expense) => {
+                              const expenseId = String(expense?.id ?? "");
+                              const isSelected = selectedExpenseIds.includes(expenseId);
+                              const categoryLabel = String(expense?.category || "Other").trim() || "Other";
+                              const categoryTone = getProjectExpenseCategoryTone(categoryLabel);
+                              const categoryIcon = getProjectExpenseCategoryIcon(categoryLabel);
+                              const parsed = parseExpenseDescriptionForForm(expense?.description, categoryLabel);
+                              const detailTitle =
+                                String(parsed.title || "").trim() || categoryLabel || `Expense #${expenseId || "-"}`;
+                              const vendorLabel = String(expense?.vendor || "").trim();
+                              const hasProof = hasExpenseProof(expense);
+                              const isApproved = Boolean(expense?.approved_by);
+                              return (
+                                <button
+                                  key={expenseId || `${detailTitle}-${expense?.expense_date || ""}`}
+                                  type="button"
+                                  className={`project-expense-mobile-item${isSelected ? " is-selected" : ""}`}
+                                  onClick={() => handleExpenseRowActivate(expense)}
+                                  onTouchStart={() => handleExpensePressStart(expenseId)}
+                                  onTouchEnd={handleExpensePressEnd}
+                                  onTouchCancel={handleExpensePressEnd}
+                                  onTouchMove={handleExpensePressEnd}
+                                  onContextMenu={(event) => event.preventDefault()}
+                                  aria-pressed={canManageProjectContent ? isSelected : undefined}
+                                >
+                                  <span className={`project-expense-mobile-item-icon tone-${categoryTone}`} aria-hidden="true">
+                                    <Icon name={categoryIcon} size={16} />
+                                  </span>
+                                  <span className="project-expense-mobile-item-main">
+                                    <strong>{truncateProjectCellText(detailTitle, 74)}</strong>
+                                    <span className="project-expense-mobile-item-sub">{categoryLabel}</span>
+                                    <span className="project-expense-mobile-item-meta">
+                                      {vendorLabel || "No vendor"} · {formatShortDate(expense?.expense_date || expense?.created_at)}
+                                    </span>
+                                  </span>
+                                  <span className="project-expense-mobile-item-right">
+                                    <strong>{formatCurrency(expense?.amount)}</strong>
+                                    <span className="project-expense-mobile-item-flags">
+                                      <span className={`project-expense-mobile-flag${hasProof ? " is-active" : ""}`}>
+                                        <Icon name="receipt" size={12} />
+                                        {hasProof ? "Proof" : "No proof"}
+                                      </span>
+                                      <span className={`project-expense-mobile-flag${isApproved ? " is-active" : ""}`}>
+                                        <Icon name="check-circle" size={12} />
+                                        {isApproved ? "Approved" : "Pending"}
+                                      </span>
+                                    </span>
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
-                        ) : null}
-                        {projectExpenses.length > recentProjectExpenses.length ? (
-                          <div className="project-expenses-selection-note">
-                            Showing {recentProjectExpenses.length} most recent expenses.
-                          </div>
-                        ) : null}
-                        <div className="projects-table-wrap project-expenses-table-wrap">
-                          <table className="projects-table-view project-expenses-table">
-                            <thead>
-                              <tr>
-                                {canManageProjectContent ? (
-                                  <th className="projects-table-check">
-                                    <input
-                                      type="checkbox"
-                                      checked={allExpensesSelected}
-                                      onChange={handleToggleSelectAllExpenses}
-                                      aria-label="Select all project expenses"
-                                    />
-                                  </th>
-                                ) : null}
-                                <th className="project-expense-col-detail">Expense details</th>
-                                <th className="project-expense-col-date">Date</th>
-                                <th className="project-expense-col-category">Category</th>
-                                <th className="project-expense-col-vendor">Vendor</th>
-                                <th className="project-expense-col-amount">Amount</th>
-                                <th className="project-expense-col-receipt">Receipt</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {recentProjectExpenses.map((expense) => {
-                                const expenseId = String(expense?.id ?? "");
-                                const isChecked = selectedExpenseIds.includes(expenseId);
-                                const categoryLabel = String(expense?.category || "Other").trim() || "Other";
-                                const categoryTone = getProjectExpenseCategoryTone(categoryLabel);
-                                const categoryIcon = getProjectExpenseCategoryIcon(categoryLabel);
-                                const detailTitle =
-                                  String(expense?.description || "").trim() ||
-                                  categoryLabel ||
-                                  `Expense #${expenseId || "-"}`;
-                                const detailTitleTrimmed = truncateProjectCellText(detailTitle, 82);
-                                return (
-                                  <tr
-                                    key={expenseId || `${detailTitle}-${expense?.expense_date || ""}`}
-                                    className="project-expense-row"
-                                  >
+                        ) : (
+                          <>
+                            {canManageProjectContent ? (
+                              <div className="project-expenses-selection-note">
+                                {selectedExpenseIds.length} selected
+                              </div>
+                            ) : null}
+                            {projectExpenses.length > recentProjectExpenses.length ? (
+                              <div className="project-expenses-selection-note">
+                                Showing {recentProjectExpenses.length} most recent expenses.
+                              </div>
+                            ) : null}
+                            <div className="projects-table-wrap project-expenses-table-wrap">
+                              <table className="projects-table-view project-expenses-table">
+                                <thead>
+                                  <tr>
                                     {canManageProjectContent ? (
-                                      <td className="projects-table-check">
+                                      <th className="projects-table-check">
                                         <input
                                           type="checkbox"
-                                          checked={isChecked}
-                                          onChange={() => handleToggleExpenseSelection(expenseId)}
-                                          aria-label={`Select expense ${detailTitle}`}
+                                          checked={allExpensesSelected}
+                                          onChange={handleToggleSelectAllExpenses}
+                                          aria-label="Select all project expenses"
                                         />
-                                      </td>
+                                      </th>
                                     ) : null}
-                                    <td className="project-expense-col-detail">
-                                      <div className="project-expense-main">
-                                        <div className="project-expense-detail">
-                                          <strong className="project-row-title" title={detailTitle}>
-                                            {detailTitleTrimmed}
-                                          </strong>
-                                        </div>
-                                      </div>
-                                    </td>
-                                    <td className="project-expense-date project-expense-col-date">{formatDate(expense?.expense_date)}</td>
-                                    <td className="project-expense-col-category">
-                                      <span
-                                        className={`project-expense-category-pill project-expense-tone-${categoryTone}`}
-                                      >
-                                        <span className="project-expense-category-pill-icon" aria-hidden="true">
-                                          <Icon name={categoryIcon} size={12} />
-                                        </span>
-                                        <span className="project-expense-category-pill-label">{categoryLabel}</span>
-                                      </span>
-                                    </td>
-                                    <td className="project-expense-vendor-cell project-expense-col-vendor">
-                                      <ProjectExpenseVendorCell
-                                        expense={expense}
-                                        partnerByName={expensePartnerByName}
-                                      />
-                                    </td>
-                                    <td className="projects-table-money project-expense-amount project-expense-col-amount">
-                                      {formatCurrency(expense?.amount)}
-                                    </td>
-                                    <td className="project-expense-col-receipt">
-                                      <div className="project-expense-receipt-cell">
-                                        {expense?.receipt_download_url ? (
-                                          <a
-                                            className="project-expense-receipt-link"
-                                            href={expense.receipt_download_url}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                          >
-                                            Open
-                                          </a>
-                                        ) : expense?.receipt_storage_missing ? (
-                                          <span className="projects-table-status hidden">
-                                            Missing file
-                                          </span>
-                                        ) : (
-                                          <span
-                                            className={`projects-table-status${
-                                              hasExpenseProof(expense) ? "" : " hidden"
-                                            }`}
-                                          >
-                                            {hasExpenseProof(expense) ? "Available" : "Missing"}
-                                          </span>
-                                        )}
-                                      </div>
-                                    </td>
+                                    <th className="project-expense-col-detail">Expense details</th>
+                                    <th className="project-expense-col-date">Date</th>
+                                    <th className="project-expense-col-category">Category</th>
+                                    <th className="project-expense-col-vendor">Vendor</th>
+                                    <th className="project-expense-col-amount">Amount</th>
+                                    <th className="project-expense-col-receipt">Receipt</th>
                                   </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
+                                </thead>
+                                <tbody>
+                                  {recentProjectExpenses.map((expense) => {
+                                    const expenseId = String(expense?.id ?? "");
+                                    const isChecked = selectedExpenseIds.includes(expenseId);
+                                    const categoryLabel = String(expense?.category || "Other").trim() || "Other";
+                                    const categoryTone = getProjectExpenseCategoryTone(categoryLabel);
+                                    const categoryIcon = getProjectExpenseCategoryIcon(categoryLabel);
+                                    const detailTitle =
+                                      String(expense?.description || "").trim() ||
+                                      categoryLabel ||
+                                      `Expense #${expenseId || "-"}`;
+                                    const detailTitleTrimmed = truncateProjectCellText(detailTitle, 82);
+                                    return (
+                                      <tr
+                                        key={expenseId || `${detailTitle}-${expense?.expense_date || ""}`}
+                                        className="project-expense-row"
+                                      >
+                                        {canManageProjectContent ? (
+                                          <td className="projects-table-check">
+                                            <input
+                                              type="checkbox"
+                                              checked={isChecked}
+                                              onChange={() => handleToggleExpenseSelection(expenseId)}
+                                              aria-label={`Select expense ${detailTitle}`}
+                                            />
+                                          </td>
+                                        ) : null}
+                                        <td className="project-expense-col-detail">
+                                          <div className="project-expense-main">
+                                            <div className="project-expense-detail">
+                                              <strong className="project-row-title" title={detailTitle}>
+                                                {detailTitleTrimmed}
+                                              </strong>
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td className="project-expense-date project-expense-col-date">{formatDate(expense?.expense_date)}</td>
+                                        <td className="project-expense-col-category">
+                                          <span
+                                            className={`project-expense-category-pill project-expense-tone-${categoryTone}`}
+                                          >
+                                            <span className="project-expense-category-pill-icon" aria-hidden="true">
+                                              <Icon name={categoryIcon} size={12} />
+                                            </span>
+                                            <span className="project-expense-category-pill-label">{categoryLabel}</span>
+                                          </span>
+                                        </td>
+                                        <td className="project-expense-vendor-cell project-expense-col-vendor">
+                                          <ProjectExpenseVendorCell
+                                            expense={expense}
+                                            partnerByName={expensePartnerByName}
+                                          />
+                                        </td>
+                                        <td className="projects-table-money project-expense-amount project-expense-col-amount">
+                                          {formatCurrency(expense?.amount)}
+                                        </td>
+                                        <td className="project-expense-col-receipt">
+                                          <div className="project-expense-receipt-cell">
+                                            {expense?.receipt_download_url ? (
+                                              <a
+                                                className="project-expense-receipt-link"
+                                                href={expense.receipt_download_url}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                              >
+                                                Open
+                                              </a>
+                                            ) : expense?.receipt_storage_missing ? (
+                                              <span className="projects-table-status hidden">
+                                                Missing file
+                                              </span>
+                                            ) : (
+                                              <span
+                                                className={`projects-table-status${
+                                                  hasExpenseProof(expense) ? "" : " hidden"
+                                                }`}
+                                              >
+                                                {hasExpenseProof(expense) ? "Available" : "Missing"}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -9202,13 +9326,117 @@ export function ProjectsPage({
       </DataModal>
 
       <DataModal
+        open={Boolean(selectedExpenseDetail)}
+        onClose={closeExpenseDetailModal}
+        title={
+          selectedExpenseDetail
+            ? selectedExpenseDetailParsed.title || String(selectedExpenseDetail?.category || "Expense")
+            : "Expense detail"
+        }
+        subtitle={selectedExpenseDetail ? formatDate(selectedExpenseDetail?.expense_date) : ""}
+        icon="receipt"
+        className="project-submodal"
+      >
+        {selectedExpenseDetail ? (
+          <div className="project-expense-mobile-detail">
+            <div className="project-expense-mobile-detail-grid">
+              <article>
+                <span>Category</span>
+                <strong>{String(selectedExpenseDetail?.category || "Other")}</strong>
+              </article>
+              <article>
+                <span>Amount</span>
+                <strong>{formatCurrency(selectedExpenseDetail?.amount)}</strong>
+              </article>
+              <article>
+                <span>Vendor</span>
+                <strong>{String(selectedExpenseDetail?.vendor || "No vendor")}</strong>
+              </article>
+              <article>
+                <span>Date</span>
+                <strong>{formatDate(selectedExpenseDetail?.expense_date)}</strong>
+              </article>
+            </div>
+            <div className="project-expense-mobile-detail-status">
+              <span
+                className={`project-expense-mobile-flag${
+                  hasExpenseProof(selectedExpenseDetail) ? " is-active" : ""
+                }`}
+              >
+                <Icon name="receipt" size={12} />
+                {hasExpenseProof(selectedExpenseDetail) ? "Proof attached" : "No proof yet"}
+              </span>
+              <span
+                className={`project-expense-mobile-flag${
+                  selectedExpenseDetail?.approved_by ? " is-active" : ""
+                }`}
+              >
+                <Icon name="check-circle" size={12} />
+                {selectedExpenseDetail?.approved_by ? "Approved" : "Pending approval"}
+              </span>
+            </div>
+            {selectedExpenseDetail?.payment_reference ? (
+              <p className="project-expense-mobile-detail-note">
+                Payment ref: <strong>{selectedExpenseDetail.payment_reference}</strong>
+              </p>
+            ) : null}
+            {selectedExpenseDetailParsed.notes ? (
+              <p className="project-expense-mobile-detail-note">
+                {selectedExpenseDetailParsed.notes}
+              </p>
+            ) : null}
+            <div className="data-modal-actions">
+              {selectedExpenseDetail?.receipt_download_url ? (
+                <a
+                  href={selectedExpenseDetail.receipt_download_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="data-modal-btn"
+                >
+                  View receipt
+                </a>
+              ) : null}
+              {canManageProjectContent ? (
+                <button
+                  type="button"
+                  className="data-modal-btn"
+                  onClick={() => {
+                    const expense = selectedExpenseDetail;
+                    closeExpenseDetailModal();
+                    openEditExpenseModal(expense);
+                  }}
+                >
+                  Edit expense
+                </button>
+              ) : null}
+              {canManageProjectContent ? (
+                <button
+                  type="button"
+                  className="data-modal-btn data-modal-btn--danger"
+                  onClick={() => {
+                    const expenseId = String(selectedExpenseDetail?.id || "").trim();
+                    if (!expenseId) return;
+                    setSelectedExpenseIds([expenseId]);
+                    closeExpenseDetailModal();
+                    setShowDeleteExpensesModal(true);
+                  }}
+                >
+                  Delete expense
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+      </DataModal>
+
+      <DataModal
         open={showExpenseModal}
         onClose={closeExpenseModal}
         title={editingExpenseId ? "Edit Expense" : "Add Expense"}
         subtitle={
           editingExpenseId
             ? "Update the selected expense entry."
-            : "Record a project expense to keep finances accurate."
+            : "Record a project expense to keep project records accurate."
         }
         icon="receipt"
         className="project-submodal"

@@ -780,9 +780,9 @@ function DashboardLayout({
         allowedPages.has("documents")
           ? {
               id: "search-finance-records",
-              label: "Finance records",
+              label: "Transaction records",
               description: "Open record transactions",
-              tokens: "documents document records finance transactions",
+              tokens: "documents document records transactions",
               onClick: () => setActivePage("documents"),
             }
           : null,

@@ -48,6 +48,12 @@ content.md
 migration.md
 todo.md
 overview-page-mobile-redesign.md
+/mobile-design/access-control-execution-checklist.md
+/mobile-design/access-control-enforcement-plan.md
+/mobile-design/AccessFlow.md
+/mobile-design/project-expensePage-mobile-design.md
+/mobile-design/projects-documents-tab-mobile-design.md
+/mobile-design/overview-page-mobile-redesign.md
 
 # Local Netlify folder
 .netlify

@@ -9,6 +9,7 @@ export default function DataModal({
   icon = "folder",
   className = "",
   bodyClassName = "",
+  hideHeader = false,
   children,
 }) {
   useEffect(() => {
@@ -35,24 +36,27 @@ export default function DataModal({
         className={`data-modal ${className}`.trim()}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="data-modal-title"
-        aria-describedby={subtitle ? "data-modal-subtitle" : undefined}
+        aria-labelledby={!hideHeader ? "data-modal-title" : undefined}
+        aria-describedby={!hideHeader && subtitle ? "data-modal-subtitle" : undefined}
+        aria-label={hideHeader ? title : undefined}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="data-modal-header">
-          <div className="data-modal-heading">
-            <span className="data-modal-icon">
-              <Icon name={icon} size={18} />
-            </span>
-            <div>
-              <h2 id="data-modal-title">{title}</h2>
-              {subtitle ? <p id="data-modal-subtitle">{subtitle}</p> : null}
+        {!hideHeader ? (
+          <div className="data-modal-header">
+            <div className="data-modal-heading">
+              <span className="data-modal-icon">
+                <Icon name={icon} size={18} />
+              </span>
+              <div>
+                <h2 id="data-modal-title">{title}</h2>
+                {subtitle ? <p id="data-modal-subtitle">{subtitle}</p> : null}
+              </div>
             </div>
+            <button className="data-modal-close" type="button" onClick={onClose} aria-label="Close">
+              ×
+            </button>
           </div>
-          <button className="data-modal-close" type="button" onClick={onClose} aria-label="Close">
-            ×
-          </button>
-        </div>
+        ) : null}
         <div className={`data-modal-body ${bodyClassName}`.trim()}>{children}</div>
       </div>
     </div>
