@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "../icons.jsx";
-import { signOut, createMagicLinkInvite, getProjects } from "../../lib/dataService.js";
+import {
+  signOut,
+  createMagicLinkInvite,
+  getProjects,
+  getInternalAdminAccess,
+} from "../../lib/dataService.js";
 import * as UserDropdownModule from "./UserDropdown.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import DataModal from "./DataModal.jsx";
@@ -50,6 +55,16 @@ const baseMenuItems = [
     accent: "#0f766e",
     accentBg: "#e6fffb",
     settingsRequest: "my-settings",
+  },
+  {
+    key: "internal-admin",
+    label: "Admin",
+    icon: "shield",
+    group: "management",
+    accent: "#b45309",
+    accentBg: "#ffedd5",
+    route: "/admin",
+    requiresInternalAdmin: true,
   },
   {
     key: "templates",
@@ -187,6 +202,7 @@ function DashboardLayout({
   const [showInstallInstructionsDrawer, setShowInstallInstructionsDrawer] = useState(false);
   const [installInstructionsDrawerOffsetY, setInstallInstructionsDrawerOffsetY] = useState(0);
   const [installToastMessage, setInstallToastMessage] = useState("");
+  const [canAccessInternalAdmin, setCanAccessInternalAdmin] = useState(false);
   const mobileSearchInputRef = useRef(null);
   const mobileSearchTouchStartRef = useRef(null);
   const mobileMoreTouchStartRef = useRef(null);
@@ -314,6 +330,25 @@ function DashboardLayout({
     wasInstalledRef.current = isInstalled;
   }, [isInstalled]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadInternalAdminAccess = async () => {
+      try {
+        const accessResult = await getInternalAdminAccess();
+        if (cancelled) return;
+        setCanAccessInternalAdmin(Boolean(accessResult?.allowed));
+      } catch (error) {
+        if (cancelled) return;
+        console.warn("Unable to verify internal admin access:", error);
+        setCanAccessInternalAdmin(false);
+      }
+    };
+    loadInternalAdminAccess();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.email]);
+
   const brandName = tenant?.name || "Habuks";
   const brandTagline = tenant?.tagline || "";
   const logoUrl = tenant?.logoUrl || "/assets/logo.png";
@@ -330,6 +365,12 @@ function DashboardLayout({
     .map((item) => {
       if (item.requiresWorkspaceManager && !canManageWorkspace) {
         return null;
+      }
+      if (item.requiresInternalAdmin && !canAccessInternalAdmin) {
+        return null;
+      }
+      if (item.route) {
+        return item;
       }
       if (item.subItems?.length) {
         const filteredSub = item.subItems.filter((sub) =>
@@ -805,6 +846,15 @@ function DashboardLayout({
           onClick: () => setActivePage("templates"),
         }
       : null,
+    canAccessInternalAdmin
+      ? {
+          key: "more-internal-admin",
+          label: "Admin panel",
+          description: "Open internal support workspace",
+          icon: "shield",
+          onClick: () => navigate("/admin"),
+        }
+      : null,
     canManageWorkspace
       ? {
           key: "more-records",
@@ -1015,6 +1065,11 @@ function DashboardLayout({
                             onClick={() => {
                               if (isCollapsed && hasSubItems) {
                                 setIsCollapsed(false);
+                              }
+                              if (item.route) {
+                                navigate(item.route);
+                                setSidebarOpen(false);
+                                return;
                               }
                               if (hasSubItems) {
                                 toggleSection(item.key);

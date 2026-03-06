@@ -24,6 +24,7 @@ import BlogPostPage from "./components/BlogPostPage.jsx";
 import ResourcesListPage from "./components/ResourcesListPage.jsx";
 import ResourcePage from "./components/ResourcePage.jsx";
 import Dashboard from "./components/dashboard/Dashboard.jsx";
+import InternalAdminPage from "./components/admin/InternalAdminPage.jsx";
 import StepsRenderPage from "./components/StepsRenderPage.jsx";
 import { startErrorReporter } from "./lib/errorReporter.js";
 
@@ -80,6 +81,7 @@ if (rootElement) {
           <Route path="/support" element={<SupportPage />} />
           <Route path="/select-tenant" element={<TenantSelectPage />} />
           <Route path="/dashboard/*" element={<Dashboard />} />
+          <Route path="/admin/*" element={<InternalAdminPage />} />
         </Routes>
       </BrowserRouter>
     </React.StrictMode>
