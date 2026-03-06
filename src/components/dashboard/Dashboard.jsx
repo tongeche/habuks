@@ -147,6 +147,42 @@ export default function Dashboard() {
       }),
     [tenantRole, user?.role, accessibleProjectModules, tenantFeatures]
   );
+  const workspaceClosureState = useMemo(() => {
+    const siteData =
+      tenantInfo?.site_data && typeof tenantInfo.site_data === "object" ? tenantInfo.site_data : {};
+    const closure =
+      siteData.workspace_closure && typeof siteData.workspace_closure === "object"
+        ? siteData.workspace_closure
+        : {};
+    return closure;
+  }, [tenantInfo?.site_data]);
+  const workspaceClosureStatus = String(workspaceClosureState?.status || "").trim().toLowerCase();
+  const isWorkspacePaused = workspaceClosureStatus === "paused";
+  const rawEffectiveRole = String(tenantRole || user?.role || "").trim().toLowerCase();
+  const normalizedEffectiveRole = rawEffectiveRole === "super_admin" ? "superadmin" : rawEffectiveRole;
+  const isSuperAdminRole = normalizedEffectiveRole === "superadmin";
+  const isAdminRoleForPause =
+    normalizedEffectiveRole === "admin" ||
+    normalizedEffectiveRole === "org_admin" ||
+    normalizedEffectiveRole === "organization_admin";
+  const normalizedUserEmail = String(user?.email || "").trim().toLowerCase();
+  const normalizedWorkspaceEmail = String(tenantInfo?.contact_email || "").trim().toLowerCase();
+  const isWorkspaceOwner =
+    Boolean(normalizedUserEmail) &&
+    Boolean(normalizedWorkspaceEmail) &&
+    normalizedUserEmail === normalizedWorkspaceEmail;
+  const canManagePausedWorkspace = isSuperAdminRole || (isAdminRoleForPause && isWorkspaceOwner);
+
+  const handleSetActivePage = (nextPage) => {
+    const normalizedPage = String(nextPage || "").trim().toLowerCase();
+    if (isWorkspacePaused && !canManagePausedWorkspace) {
+      return;
+    }
+    if (isWorkspacePaused && canManagePausedWorkspace && normalizedPage !== "settings") {
+      return;
+    }
+    setActivePage(nextPage);
+  };
 
   useEffect(() => {
     if (!user || !projectAccessLoaded) return;
@@ -161,6 +197,18 @@ export default function Dashboard() {
       setActivePage(access.defaultPage || "projects");
     }
   }, [activePage, access, user, projectAccessLoaded]);
+
+  useEffect(() => {
+    if (!isWorkspacePaused) return;
+    if (canManagePausedWorkspace && activePage !== "settings") {
+      setSettingsTabRequest("organization-settings:overview");
+      setActivePage("settings");
+      return;
+    }
+    if (!canManagePausedWorkspace && activePage !== "overview") {
+      setActivePage("overview");
+    }
+  }, [activePage, canManagePausedWorkspace, isWorkspacePaused]);
 
   if (loading) {
     return (
@@ -179,6 +227,52 @@ export default function Dashboard() {
     const safePage = access?.allowedPages?.has(activePage)
       ? activePage
       : access?.defaultPage || "overview";
+    if (isWorkspacePaused && (!canManagePausedWorkspace || safePage !== "settings")) {
+      const pauseExpiry = String(workspaceClosureState?.expires_at || "").trim();
+      const pauseExpiryTimestamp = Date.parse(pauseExpiry);
+      const pauseExpiryLabel = Number.isFinite(pauseExpiryTimestamp)
+        ? new Date(pauseExpiryTimestamp).toLocaleDateString("en-KE", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+          })
+        : null;
+
+      return (
+        <section className="empty-state">
+          <h3>Workspace is paused</h3>
+          <p>
+            {canManagePausedWorkspace
+              ? "This workspace is currently paused. Open organization settings to resume or finalize closure."
+              : "This workspace has been paused by the owner and is temporarily unavailable."}
+          </p>
+          {pauseExpiryLabel ? <p>Pause expires on {pauseExpiryLabel}.</p> : null}
+          <div className="project-detail-section-head-actions">
+            {canManagePausedWorkspace ? (
+              <button
+                type="button"
+                className="project-detail-action"
+                onClick={() => {
+                  setSettingsTabRequest("organization-settings:overview");
+                  setActivePage("settings");
+                }}
+              >
+                Manage workspace lifecycle
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="project-detail-action"
+                onClick={() => navigate("/select-tenant")}
+              >
+                Switch workspace
+              </button>
+            )}
+          </div>
+        </section>
+      );
+    }
+
     switch (safePage) {
       case "overview":
         return (
@@ -188,7 +282,7 @@ export default function Dashboard() {
             tenantBrand={tenantBrand}
             tenantFeatures={tenantFeatures}
             access={access}
-            setActivePage={setActivePage}
+            setActivePage={handleSetActivePage}
             tenantRole={tenantRole}
           />
         );
@@ -225,7 +319,7 @@ export default function Dashboard() {
             user={user}
             tenantRole={tenantRole}
             access={access}
-            setActivePage={setActivePage}
+            setActivePage={handleSetActivePage}
             tenantId={activeTenantId}
             tenantBrand={tenantBrand}
             onManageProject={(project) => {
@@ -268,7 +362,7 @@ export default function Dashboard() {
             initialType="expense"
             activePage="expenses"
             access={access}
-            setActivePage={setActivePage}
+            setActivePage={handleSetActivePage}
           />
         );
       case "notifications":
@@ -276,7 +370,7 @@ export default function Dashboard() {
           <NotificationsPage
             tenantId={activeTenantId}
             user={user}
-            setActivePage={setActivePage}
+            setActivePage={handleSetActivePage}
           />
         );
       case "news":
@@ -305,7 +399,7 @@ export default function Dashboard() {
             user={user}
             tenantRole={tenantRole}
             access={access}
-            setActivePage={setActivePage}
+            setActivePage={handleSetActivePage}
           />
         );
       case "settings":
@@ -318,17 +412,18 @@ export default function Dashboard() {
             tenantRole={tenantRole}
             requestedTab={settingsTabRequest}
             onTenantUpdated={setTenantInfo}
-            setActivePage={setActivePage}
+            setActivePage={handleSetActivePage}
           />
         );
       case "templates":
         return (
           <TemplatesPage
             user={user}
+            tenantRole={tenantRole}
             tenantId={activeTenantId}
             tenant={tenantInfo}
             onTenantUpdated={setTenantInfo}
-            setActivePage={setActivePage}
+            setActivePage={handleSetActivePage}
           />
         );
       default:
@@ -339,7 +434,7 @@ export default function Dashboard() {
             tenantBrand={tenantBrand}
             tenantFeatures={tenantFeatures}
             access={access}
-            setActivePage={setActivePage}
+            setActivePage={handleSetActivePage}
             tenantRole={tenantRole}
           />
         );
@@ -350,7 +445,7 @@ export default function Dashboard() {
     <TenantCurrencyProvider tenant={tenantInfo}>
       <DashboardLayout
         activePage={activePage}
-        setActivePage={setActivePage}
+        setActivePage={handleSetActivePage}
         user={user}
         access={access}
         tenant={dashboardTenant}

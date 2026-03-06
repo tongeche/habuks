@@ -22,19 +22,16 @@ const getLandingData = () => {
 function LandingPage() {
   const data = useMemo(getLandingData, []);
   const steps = Array.isArray(data?.steps) ? data.steps : [];
-  const [showPricing, setShowPricing] = useState(false);
   const [scrollToPricing, setScrollToPricing] = useState(false);
 
   // Callback for when pricing link is clicked
   const handleShowPricing = () => {
-    setShowPricing(true);
     setScrollToPricing(true);
   };
 
-  // Scroll to pricing after it's rendered
+  // Scroll to pricing when requested from the header nav
   useEffect(() => {
-    if (scrollToPricing && showPricing) {
-      // Use setTimeout to ensure DOM is fully updated after React render
+    if (scrollToPricing) {
       const timer = setTimeout(() => {
         const pricingEl = document.getElementById("pricing");
         if (pricingEl) {
@@ -44,7 +41,7 @@ function LandingPage() {
       }, 150);
       return () => clearTimeout(timer);
     }
-  }, [scrollToPricing, showPricing]);
+  }, [scrollToPricing]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -112,8 +109,8 @@ function LandingPage() {
         <StatsFeatureSection data={data} />
         <HostedSiteSection data={data} />
         <FaqSection data={data} />
-        
-        {showPricing && <PricingSection data={data} />}
+
+        <PricingSection data={data} />
 
         <CtaBanner data={data} />
       </main>

@@ -29173,6 +29173,139 @@
   line-height: 1.2;
 }
 
+.organization-workspace-closure-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.organization-workspace-closure-copy {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.organization-workspace-closure-status {
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.organization-workspace-closure-status p {
+  margin: 0;
+  color: #475569;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.organization-workspace-closure-status strong {
+  color: #0f172a;
+}
+
+.organization-workspace-closure-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.organization-workspace-paused-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.72rem;
+}
+
+.organization-workspace-paused-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid #dbe4f0;
+  background: #f8fafc;
+  color: #1d4ed8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.organization-workspace-paused-panel h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.15rem;
+}
+
+.organization-workspace-paused-panel p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.organization-workspace-paused-panel .organization-workspace-paused-meta {
+  font-size: 0.84rem;
+}
+
+.organization-workspace-paused-panel .organization-workspace-paused-meta strong {
+  color: #334155;
+}
+
+.organization-workspace-paused-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.workspace-closure-select-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.workspace-closure-select-option {
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #f8fafc;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  padding: 0.65rem 0.72rem;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.workspace-closure-select-option.is-selected {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+}
+
+.workspace-closure-select-option input {
+  margin-top: 0.14rem;
+}
+
+.workspace-closure-select-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.workspace-closure-select-copy strong {
+  color: #0f172a;
+  font-size: 0.84rem;
+  line-height: 1.2;
+}
+
+.workspace-closure-select-copy small {
+  color: #64748b;
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
 .org-shell-checklist--status li {
   align-items: flex-start;
 }
@@ -29330,6 +29463,10 @@
 
   .org-shell-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workspace-closure-select-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -30512,6 +30649,7 @@
 .dashboard-layout.is-dark .org-shell-detail-grid strong,
 .dashboard-layout.is-dark .organization-overview-status-percent,
 .dashboard-layout.is-dark .organization-overview-action-copy small,
+.dashboard-layout.is-dark .organization-workspace-closure-copy,
 .dashboard-layout.is-dark .org-shell-muted,
 .dashboard-layout.is-dark .org-shell-empty,
 .dashboard-layout.is-dark .organization-overview-profile-grid p,
@@ -30522,6 +30660,7 @@
 
 .dashboard-layout.is-dark .organization-overview-trend-breakdown span,
 .dashboard-layout.is-dark .organization-overview-action-icon,
+.dashboard-layout.is-dark .organization-workspace-closure-status,
 .dashboard-layout.is-dark .org-shell-checklist li,
 .dashboard-layout.is-dark .org-shell-meeting-item,
 .dashboard-layout.is-dark .org-modal-toggle-field {
@@ -30539,6 +30678,7 @@
 .dashboard-layout.is-dark .org-shell-checklist li,
 .dashboard-layout.is-dark .org-shell-checklist li p,
 .dashboard-layout.is-dark .org-shell-meeting-item p,
+.dashboard-layout.is-dark .organization-workspace-closure-status p,
 .dashboard-layout.is-dark .org-shell-meeting-item span {
   color: var(--dashboard-text-secondary);
 }
@@ -30550,8 +30690,41 @@
 }
 
 .dashboard-layout.is-dark .org-shell-checklist--status li strong,
-.dashboard-layout.is-dark .org-shell-meeting-item h4 {
+.dashboard-layout.is-dark .org-shell-meeting-item h4,
+.dashboard-layout.is-dark .organization-workspace-closure-status strong,
+.dashboard-layout.is-dark .workspace-closure-select-copy strong {
   color: var(--dashboard-text-primary);
+}
+
+.dashboard-layout.is-dark .workspace-closure-select-option {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: linear-gradient(180deg, rgba(8, 18, 34, 0.94) 0%, rgba(5, 13, 26, 0.96) 100%);
+}
+
+.dashboard-layout.is-dark .workspace-closure-select-option.is-selected {
+  border-color: rgba(45, 212, 191, 0.44);
+  background:
+    radial-gradient(circle at top right, rgba(20, 184, 166, 0.16), transparent 62%),
+    linear-gradient(180deg, rgba(8, 18, 34, 0.94) 0%, rgba(5, 13, 26, 0.96) 100%);
+}
+
+.dashboard-layout.is-dark .workspace-closure-select-copy small {
+  color: var(--dashboard-text-muted);
+}
+
+.dashboard-layout.is-dark .organization-workspace-paused-icon {
+  border-color: rgba(71, 85, 105, 0.72);
+  background: rgba(8, 20, 38, 0.82);
+  color: #bfdbfe;
+}
+
+.dashboard-layout.is-dark .organization-workspace-paused-panel h4,
+.dashboard-layout.is-dark .organization-workspace-paused-panel .organization-workspace-paused-meta strong {
+  color: var(--dashboard-text-primary);
+}
+
+.dashboard-layout.is-dark .organization-workspace-paused-panel p {
+  color: var(--dashboard-text-muted);
 }
 
 .dashboard-layout.is-dark .org-shell-status-badge.is-active,

@@ -91,6 +91,7 @@ export default function SettingsPage({
           tenantId ? (
             <OrganizationPage
               user={user}
+              tenantRole={tenantRole}
               tenantId={tenantId}
               tenant={tenant}
               requestedTab={requestedOrganizationTab}

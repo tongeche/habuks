@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import SiteHeader from "./SiteHeader.jsx";
 import SiteFooter from "./SiteFooter.jsx";
 import { supabase, isSupabaseConfigured } from "../lib/supabase.js";
 import { createTenant } from "../lib/dataService.js";
+import { getSubscriptionPlan, normalizePlanId } from "../lib/subscriptionPlans.js";
 
 const getLandingData = () => {
   if (typeof window !== "undefined" && window.landingData) {
@@ -22,6 +23,7 @@ const slugify = (value) =>
 export default function TenantSignupPage() {
   const data = useMemo(getLandingData, []);
   const navigate = useNavigate();
+  const location = useLocation();
   const [formData, setFormData] = useState({
     name: "",
     slug: "",
@@ -35,6 +37,14 @@ export default function TenantSignupPage() {
   // Track whether the user already has an active session
   const [existingUser, setExistingUser] = useState(null);
   const [sessionChecked, setSessionChecked] = useState(false);
+  const selectedPlanId = useMemo(() => {
+    const params = new URLSearchParams(location.search || "");
+    return normalizePlanId(params.get("plan"), "starter");
+  }, [location.search]);
+  const selectedPlan = useMemo(
+    () => getSubscriptionPlan(selectedPlanId, "starter"),
+    [selectedPlanId]
+  );
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase) {
@@ -191,6 +201,7 @@ export default function TenantSignupPage() {
       const tenant = await createTenant({
         name,
         slug,
+        subscription_plan: selectedPlanId,
         tagline: "",
         contact_email: adminEmail,
         contact_phone: null,
@@ -258,6 +269,9 @@ export default function TenantSignupPage() {
             </div>
             <div className="tenant-signup-card">
               <h2>Workspace details</h2>
+              <p className="tenant-helper">
+                Selected plan: <strong>{selectedPlan.name}</strong>
+              </p>
               {sessionChecked && existingUser ? (
                 <p className="tenant-helper">
                   Signed in as <strong>{existingUser.email}</strong>. Just fill in your workspace

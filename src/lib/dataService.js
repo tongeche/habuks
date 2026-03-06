@@ -78,6 +78,15 @@ export async function getMembersWithTotalWelfare(tenantId) {
 }
 import { normalizeCurrencyCode } from "./currency.js";
 import { supabase, isSupabaseConfigured } from "./supabase.js";
+import {
+  DEFAULT_SUBSCRIPTION_PLAN_ID,
+  buildSubscriptionMetadata,
+  getPlanFeatureSet,
+  getPlanLimitSet,
+  getSubscriptionPlan,
+  normalizePlanId,
+  resolveTenantSubscriptionPlanId,
+} from "./subscriptionPlans.js";
 
 let supabaseFallbackEnabled = false;
 
@@ -112,6 +121,20 @@ const isMissingRelationError = (error, relationName = "") => {
   }
   if (!relation) return true;
   return message.includes(relation);
+};
+
+const isMissingFunctionError = (error, functionName = "") => {
+  if (!error) return false;
+  const code = String(error?.code || "");
+  const message = String(error?.message || error?.details || "").toLowerCase();
+  const normalizedFunctionName = String(functionName || "").toLowerCase();
+  if (code !== "42883" && !message.includes("function") && !message.includes("does not exist")) {
+    return false;
+  }
+  if (!normalizedFunctionName) {
+    return true;
+  }
+  return message.includes(normalizedFunctionName);
 };
 
 const markSupabaseUnavailable = (error) => {
@@ -283,6 +306,138 @@ export async function getMemberContributions(memberId, tenantId) {
 }
 
 /**
+ * Get all contributions for a tenant
+ */
+export async function getTenantContributions(tenantId) {
+  if (!isSupabaseConfigured || !supabase || !tenantId) return [];
+
+  const selectVariants = [
+    "id, tenant_id, member_id, amount, date, cycle_number, status, notes, description, created_at, updated_at",
+    "id, tenant_id, member_id, amount, date, cycle_number, status, notes, created_at, updated_at",
+    "id, tenant_id, member_id, amount, date, cycle_number, status, created_at, updated_at",
+    "id, tenant_id, member_id, amount, date, cycle_number, created_at, updated_at",
+    "*",
+  ];
+
+  let data = null;
+  let error = null;
+  for (const columns of selectVariants) {
+    let query = supabase
+      .from("contributions")
+      .select(columns)
+      .order("date", { ascending: false });
+    query = applyTenantFilter(query, tenantId);
+    const result = await query;
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+    if (
+      !(isMissingColumnError(error, "description") ||
+        isMissingColumnError(error, "notes") ||
+        isMissingColumnError(error, "updated_at"))
+    ) {
+      break;
+    }
+  }
+
+  if (error) {
+    if (isMissingRelationError(error, "contributions")) {
+      return [];
+    }
+    console.error("Error fetching tenant contributions:", error);
+    return [];
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Create contribution record for a tenant
+ */
+export async function createContributionRecord(payload = {}, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const effectiveTenantId = normalizeOptional(tenantId);
+  if (!effectiveTenantId) {
+    throw new Error("Tenant is required.");
+  }
+  await checkTenantLimit(effectiveTenantId, "financial_records", { incrementBy: 1 });
+
+  const memberId = Number.parseInt(String(payload?.member_id || payload?.memberId || ""), 10);
+  if (!Number.isInteger(memberId) || memberId <= 0) {
+    throw new Error("A valid member is required for contributions.");
+  }
+
+  const amount = Number(payload?.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Contribution amount must be greater than zero.");
+  }
+
+  const cycleNumberRaw = Number.parseInt(
+    String(payload?.cycle_number || payload?.cycleNumber || ""),
+    10
+  );
+  const cycleNumber = Number.isInteger(cycleNumberRaw) && cycleNumberRaw > 0 ? cycleNumberRaw : null;
+  const date = normalizeOptional(payload?.date) || new Date().toISOString().slice(0, 10);
+
+  const basePayload = {
+    tenant_id: effectiveTenantId,
+    member_id: memberId,
+    amount: Math.abs(amount),
+    date,
+    status: normalizeOptional(payload?.status) || "posted",
+    notes: normalizeOptional(payload?.notes || payload?.note || payload?.description),
+  };
+  if (cycleNumber !== null) {
+    basePayload.cycle_number = cycleNumber;
+  }
+
+  const insertVariants = [
+    basePayload,
+    { ...basePayload, notes: undefined },
+    Object.fromEntries(Object.entries(basePayload).filter(([key]) => key !== "status")),
+    {
+      tenant_id: effectiveTenantId,
+      member_id: memberId,
+      amount: Math.abs(amount),
+      date,
+      ...(cycleNumber !== null ? { cycle_number: cycleNumber } : {}),
+    },
+  ];
+
+  let data = null;
+  let error = null;
+  for (const variant of insertVariants) {
+    const normalizedVariant = Object.fromEntries(
+      Object.entries(variant).filter(([, value]) => value !== undefined)
+    );
+    const result = await supabase.from("contributions").insert(normalizedVariant).select("*").single();
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+    if (
+      !(isMissingColumnError(error, "status") ||
+        isMissingColumnError(error, "notes") ||
+        isMissingColumnError(error, "tenant_id"))
+    ) {
+      break;
+    }
+  }
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+/**
  * Get contribution split transactions for a specific member
  */
 export async function getContributionSplits(memberId, tenantId) {
@@ -326,6 +481,138 @@ export async function getPayoutSchedule(tenantId) {
   }
 
   return data || [];
+}
+
+/**
+ * Get all payouts for a tenant
+ */
+export async function getTenantPayouts(tenantId) {
+  if (!isSupabaseConfigured || !supabase || !tenantId) return [];
+
+  const selectVariants = [
+    "id, tenant_id, member_id, amount, date, cycle_number, status, notes, description, created_at, updated_at",
+    "id, tenant_id, member_id, amount, date, cycle_number, status, notes, created_at, updated_at",
+    "id, tenant_id, member_id, amount, date, cycle_number, status, created_at, updated_at",
+    "id, tenant_id, member_id, amount, date, cycle_number, created_at, updated_at",
+    "*",
+  ];
+
+  let data = null;
+  let error = null;
+  for (const columns of selectVariants) {
+    let query = supabase
+      .from("payouts")
+      .select(columns)
+      .order("date", { ascending: false });
+    query = applyTenantFilter(query, tenantId);
+    const result = await query;
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+    if (
+      !(isMissingColumnError(error, "description") ||
+        isMissingColumnError(error, "notes") ||
+        isMissingColumnError(error, "updated_at"))
+    ) {
+      break;
+    }
+  }
+
+  if (error) {
+    if (isMissingRelationError(error, "payouts")) {
+      return [];
+    }
+    console.error("Error fetching tenant payouts:", error);
+    return [];
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Create payout record for a tenant
+ */
+export async function createPayoutRecord(payload = {}, tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const effectiveTenantId = normalizeOptional(tenantId);
+  if (!effectiveTenantId) {
+    throw new Error("Tenant is required.");
+  }
+  await checkTenantLimit(effectiveTenantId, "financial_records", { incrementBy: 1 });
+
+  const memberId = Number.parseInt(String(payload?.member_id || payload?.memberId || ""), 10);
+  if (!Number.isInteger(memberId) || memberId <= 0) {
+    throw new Error("A valid member is required for payouts.");
+  }
+
+  const amount = Number(payload?.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Payout amount must be greater than zero.");
+  }
+
+  const cycleNumberRaw = Number.parseInt(
+    String(payload?.cycle_number || payload?.cycleNumber || ""),
+    10
+  );
+  const cycleNumber = Number.isInteger(cycleNumberRaw) && cycleNumberRaw > 0 ? cycleNumberRaw : null;
+  const date = normalizeOptional(payload?.date) || new Date().toISOString().slice(0, 10);
+
+  const basePayload = {
+    tenant_id: effectiveTenantId,
+    member_id: memberId,
+    amount: Math.abs(amount),
+    date,
+    status: normalizeOptional(payload?.status) || "approved",
+    notes: normalizeOptional(payload?.notes || payload?.note || payload?.description),
+  };
+  if (cycleNumber !== null) {
+    basePayload.cycle_number = cycleNumber;
+  }
+
+  const insertVariants = [
+    basePayload,
+    { ...basePayload, notes: undefined },
+    Object.fromEntries(Object.entries(basePayload).filter(([key]) => key !== "status")),
+    {
+      tenant_id: effectiveTenantId,
+      member_id: memberId,
+      amount: Math.abs(amount),
+      date,
+      ...(cycleNumber !== null ? { cycle_number: cycleNumber } : {}),
+    },
+  ];
+
+  let data = null;
+  let error = null;
+  for (const variant of insertVariants) {
+    const normalizedVariant = Object.fromEntries(
+      Object.entries(variant).filter(([, value]) => value !== undefined)
+    );
+    const result = await supabase.from("payouts").insert(normalizedVariant).select("*").single();
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+    if (
+      !(isMissingColumnError(error, "status") ||
+        isMissingColumnError(error, "notes") ||
+        isMissingColumnError(error, "tenant_id"))
+    ) {
+      break;
+    }
+  }
+
+  if (error) {
+    throw error;
+  }
+
+  return data;
 }
 
 /**
@@ -879,6 +1166,11 @@ export async function createIgaProject(payload = {}, tenantId) {
     tenant_id: tenantId ?? normalizeOptional(payload?.tenant_id),
     is_visible: payload?.is_visible ?? true,
   };
+  const effectiveTenantId = normalizeOptional(insertPayload.tenant_id);
+  if (effectiveTenantId) {
+    await checkTenantLimit(effectiveTenantId, "projects", { incrementBy: 1 });
+  }
+  insertPayload.tenant_id = effectiveTenantId;
 
   if (!insertPayload.short_description && insertPayload.description) {
     insertPayload.short_description = insertPayload.description;
@@ -899,6 +1191,21 @@ export async function createIgaProject(payload = {}, tenantId) {
       throw new Error("You do not have permission to create projects.");
     }
     throw new Error("Failed to create project");
+  }
+
+  try {
+    await createAuditLogEvent({
+      tenant_id: effectiveTenantId,
+      action: "project_created",
+      entity: "iga_projects",
+      entity_id: String(data?.id || ""),
+      metadata: {
+        name: data?.name || name,
+        module_key: moduleKey,
+      },
+    });
+  } catch (auditError) {
+    console.warn("Failed to write project_created audit event:", auditError);
   }
 
   return {
@@ -4083,8 +4390,14 @@ export async function uploadOrganizationActivityPoster(file, tenantId, options =
     throw new Error("Poster file is too large. Maximum allowed size is 8 MB.");
   }
 
+  const effectiveTenantId = normalizeOptional(tenantId);
+  if (effectiveTenantId) {
+    await checkTenantFeature(effectiveTenantId, "file_uploads");
+    await checkTenantLimit(effectiveTenantId, "storage_bytes", { additionalBytes: fileSize });
+  }
+
   const safeExtension = extension || (mimeType.startsWith("image/") ? "jpg" : "bin");
-  const tenantSegment = sanitizeStorageSegment(tenantId, "global");
+  const tenantSegment = sanitizeStorageSegment(effectiveTenantId || tenantId, "global");
   const safeBaseName = sanitizeDocumentName(file?.name, "activity-poster");
   const suffix = Math.random().toString(36).slice(2, 10);
   const timestamp = Date.now();
@@ -4244,6 +4557,10 @@ export async function uploadProjectDocument(projectRef, file, options = {}, tena
     throw new Error("File is too large. Maximum allowed size is 25 MB.");
   }
 
+  await checkTenantFeature(effectiveTenantId, "file_uploads");
+  await checkTenantLimit(effectiveTenantId, "documents", { incrementBy: 1 });
+  await checkTenantLimit(effectiveTenantId, "storage_bytes", { additionalBytes: fileSize });
+
   const safeExtension = extension || (mimeType.startsWith("image/") ? "jpg" : "bin");
   const tenantSegment = sanitizeStorageSegment(effectiveTenantId, "global");
   const safeBaseName = sanitizeDocumentName(file?.name);
@@ -4309,6 +4626,22 @@ export async function uploadProjectDocument(projectRef, file, options = {}, tena
     .createSignedUrl(filePath, 60 * 60);
   if (signedError) {
     console.warn("Error creating signed URL for uploaded project document:", signedError);
+  }
+
+  try {
+    await createAuditLogEvent({
+      tenant_id: effectiveTenantId,
+      action: "document_uploaded",
+      entity: "project_documents",
+      entity_id: String(data?.id || ""),
+      metadata: {
+        project_id: projectId,
+        name: data?.name || file?.name || "Document",
+        file_ext: safeExtension,
+      },
+    });
+  } catch (auditError) {
+    console.warn("Failed to write document_uploaded audit event for project document:", auditError);
   }
 
   return {
@@ -4440,7 +4773,21 @@ export async function createProjectMediaAssets(projectId, files = [], tenantId) 
     return { gallery: [], coverUrl: null };
   }
 
-  const tenantSegment = sanitizeStorageSegment(tenantId, "global");
+  const effectiveTenantId = await resolveTenantIdForProject(parsedProjectId, tenantId);
+  if (effectiveTenantId) {
+    await checkTenantFeature(effectiveTenantId, "file_uploads");
+    const totalFileBytes = files.reduce((sum, file) => {
+      const size = Number(file?.size || 0);
+      return sum + (Number.isFinite(size) && size > 0 ? size : 0);
+    }, 0);
+    if (totalFileBytes > 0) {
+      await checkTenantLimit(effectiveTenantId, "storage_bytes", {
+        additionalBytes: totalFileBytes,
+      });
+    }
+  }
+
+  const tenantSegment = sanitizeStorageSegment(effectiveTenantId || tenantId, "global");
   const folder = `tenants/${tenantSegment}/projects/${parsedProjectId}/media`;
 
   let nextDisplayOrder = 0;
@@ -4450,7 +4797,7 @@ export async function createProjectMediaAssets(projectId, files = [], tenantId) 
     .eq("project_id", parsedProjectId)
     .order("display_order", { ascending: false })
     .limit(1);
-  orderQuery = applyTenantFilter(orderQuery, tenantId);
+  orderQuery = applyTenantFilter(orderQuery, effectiveTenantId || tenantId);
   const { data: existingRows } = await orderQuery;
   if (existingRows?.length) {
     nextDisplayOrder = Number(existingRows[0]?.display_order ?? -1) + 1;
@@ -4479,7 +4826,7 @@ export async function createProjectMediaAssets(projectId, files = [], tenantId) 
     caption: deriveCaptionFromFileName(file.originalName),
     is_primary: index === 0 && nextDisplayOrder === 0,
     display_order: nextDisplayOrder + index,
-    tenant_id: tenantId ?? null,
+    tenant_id: effectiveTenantId ?? tenantId ?? null,
   }));
 
   const { data: galleryRows, error: galleryError } = await supabase
@@ -4506,7 +4853,7 @@ export async function createProjectMediaAssets(projectId, files = [], tenantId) 
       .from("iga_projects")
       .update({ image_url: coverUrl })
       .eq("id", parsedProjectId);
-    updateQuery = applyTenantFilter(updateQuery, tenantId);
+    updateQuery = applyTenantFilter(updateQuery, effectiveTenantId || tenantId);
     const { error: coverError } = await updateQuery;
     if (coverError) {
       console.error("Error updating project cover image:", coverError);
@@ -4570,6 +4917,10 @@ export async function createProjectExpense(projectRef, payload, tenantId) {
   }
 
   const projectId = await resolveProjectId(projectRef, tenantId);
+  const effectiveTenantId = await resolveTenantIdForProject(projectId, tenantId);
+  if (effectiveTenantId) {
+    await checkTenantLimit(effectiveTenantId, "financial_records", { incrementBy: 1 });
+  }
   const paymentReference = normalizeOptional(payload.payment_reference ?? payload.paymentReference);
   const explicitReceiptFlag =
     "receipt" in payload ? Boolean(payload.receipt) : Boolean(payload.receipt_available);
@@ -4590,7 +4941,7 @@ export async function createProjectExpense(projectRef, payload, tenantId) {
     receipt,
     approved_by: payload.approved_by ?? null,
     created_by: payload.created_by ?? null,
-    tenant_id: tenantId ?? null,
+    tenant_id: effectiveTenantId ?? null,
   };
   if (paymentReference !== null) {
     insertPayload.payment_reference = paymentReference;
@@ -4638,8 +4989,25 @@ export async function createProjectExpense(projectRef, payload, tenantId) {
   }
 
   await ensureProjectExpenseCategoryDefinition(projectId, payload?.category, tenantId);
+  const createdExpense = data?.[0] || null;
 
-  return data?.[0] || null;
+  try {
+    await createAuditLogEvent({
+      tenant_id: effectiveTenantId,
+      action: "expense_added",
+      entity: "project_expenses",
+      entity_id: String(createdExpense?.id || ""),
+      metadata: {
+        project_id: projectId,
+        category: normalizeOptional(payload?.category),
+        amount: Number(payload?.amount),
+      },
+    });
+  } catch (auditError) {
+    console.warn("Failed to write expense_added audit event:", auditError);
+  }
+
+  return createdExpense;
 }
 
 export async function updateProjectExpense(expenseId, payload, tenantId) {
@@ -4818,6 +5186,9 @@ export async function uploadProjectExpenseReceipt(expenseId, file, tenantId) {
     throw new Error("Project tenant is missing. Assign this project to a tenant, then try again.");
   }
 
+  await checkTenantFeature(effectiveTenantId, "file_uploads");
+  await checkTenantLimit(effectiveTenantId, "storage_bytes", { additionalBytes: fileSize });
+
   const safeExtension = extension || (mimeType.startsWith("image/") ? "jpg" : "pdf");
   const tenantSegment = sanitizeStorageSegment(effectiveTenantId, "global");
   const safeBaseName = sanitizeDocumentName(file?.name, "receipt");
@@ -4922,6 +5293,10 @@ export async function createProjectSale(projectRef, payload, tenantId) {
   }
 
   const projectId = await resolveProjectId(projectRef, tenantId);
+  const effectiveTenantId = await resolveTenantIdForProject(projectId, tenantId);
+  if (effectiveTenantId) {
+    await checkTenantLimit(effectiveTenantId, "financial_records", { incrementBy: 1 });
+  }
 
   const insertPayload = {
     project_id: projectId,
@@ -4939,7 +5314,7 @@ export async function createProjectSale(projectRef, payload, tenantId) {
     payment_method: normalizeOptional(payload.payment_method),
     notes: normalizeOptional(payload.notes),
     created_by: payload.created_by ?? null,
-    tenant_id: tenantId ?? null,
+    tenant_id: effectiveTenantId ?? null,
   };
 
   const { data, error } = await supabase
@@ -6097,6 +6472,10 @@ export async function uploadOrganizationDocument(file, options = {}, tenantId) {
     throw new Error("File is too large. Maximum allowed size is 25 MB.");
   }
 
+  await checkTenantFeature(effectiveTenantId, "file_uploads");
+  await checkTenantLimit(effectiveTenantId, "documents", { incrementBy: 1 });
+  await checkTenantLimit(effectiveTenantId, "storage_bytes", { additionalBytes: fileSize });
+
   const safeExtension = extension || (mimeType.startsWith("image/") ? "jpg" : "bin");
   const tenantSegment = sanitizeStorageSegment(effectiveTenantId, "global");
   const safeBaseName = sanitizeDocumentName(file?.name || options?.name || "document");
@@ -6189,6 +6568,22 @@ export async function uploadOrganizationDocument(file, options = {}, tenantId) {
     .createSignedUrl(filePath, 60 * 60);
   if (signedError) {
     console.warn("Error creating signed URL for uploaded org document:", signedError);
+  }
+
+  try {
+    await createAuditLogEvent({
+      tenant_id: effectiveTenantId,
+      action: "document_uploaded",
+      entity: "documents",
+      entity_id: String(data?.id || ""),
+      metadata: {
+        name: documentName,
+        type: documentType,
+        file_ext: safeExtension,
+      },
+    });
+  } catch (auditError) {
+    console.warn("Failed to write document_uploaded audit event for organization document:", auditError);
   }
 
   return {
@@ -7640,6 +8035,379 @@ function applyTenantFilter(query, tenantId) {
   return query.eq("tenant_id", tenantId);
 }
 
+export async function createAuditLogEvent(payload = {}) {
+  if (!shouldUseSupabase()) {
+    return null;
+  }
+
+  const action = normalizeOptional(payload?.action);
+  const entity = normalizeOptional(payload?.entity);
+  if (!action || !entity) {
+    return null;
+  }
+
+  const tenantId = normalizeOptional(payload?.tenant_id ?? payload?.tenantId);
+  const entityId = normalizeOptional(payload?.entity_id ?? payload?.entityId);
+  const metadata =
+    payload?.metadata && typeof payload.metadata === "object" && !Array.isArray(payload.metadata)
+      ? payload.metadata
+      : {};
+
+  const { data, error } = await supabase.rpc("log_audit_event", {
+    p_tenant_id: tenantId,
+    p_action: action,
+    p_entity: entity,
+    p_entity_id: entityId,
+    p_metadata: metadata,
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "audit_logs") ||
+      isMissingFunctionError(error, "log_audit_event")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+
+  return data || null;
+}
+
+const PLAN_FEATURE_LABELS = {
+  members_management: "Members management",
+  finance_tracking: "Finance tracking",
+  projects_management: "Projects",
+  tasks: "Tasks",
+  partner_directory: "Partner directory",
+  document_generator: "Document generator",
+  file_uploads: "File uploads",
+  reports: "Reports",
+  csv_import_export: "CSV import/export",
+  audit_logs: "Audit logs",
+  automation: "Automation",
+  api_access: "API access",
+  member_invites: "Member invites",
+};
+
+const PLAN_LIMIT_LABELS = {
+  members: "members",
+  projects: "projects",
+  partners: "partners",
+  financial_records: "financial records",
+  documents: "documents",
+  storage_bytes: "storage",
+};
+
+const toObject = (value) =>
+  value && typeof value === "object" && !Array.isArray(value) ? value : {};
+
+const normalizePositiveWholeNumber = (value, fallback = 0) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback;
+  return Math.floor(numeric);
+};
+
+const isUnlimitedPlanLimit = (value) => {
+  if (value === null || value === undefined) return true;
+  const numeric = Number(value);
+  return !Number.isFinite(numeric) || numeric < 0;
+};
+
+const formatPlanLimit = (limitKey, value) => {
+  if (isUnlimitedPlanLimit(value)) return "Unlimited";
+  const numeric = Number(value);
+  if (limitKey === "storage_bytes") {
+    const mb = numeric / (1024 * 1024);
+    if (mb >= 1024) {
+      return `${(mb / 1024).toFixed(0)} GB`;
+    }
+    return `${mb.toFixed(0)} MB`;
+  }
+  return numeric.toLocaleString("en-US");
+};
+
+const buildPlanAccessError = (message, code, details = null) => {
+  const error = new Error(message);
+  error.code = code;
+  if (details && typeof details === "object") {
+    error.details = details;
+  }
+  return error;
+};
+
+async function getTenantPlanContext(tenantId) {
+  const fallbackPlan = getSubscriptionPlan(DEFAULT_SUBSCRIPTION_PLAN_ID);
+  const safeTenantId = normalizeOptional(tenantId);
+
+  if (!isSupabaseConfigured || !supabase || !safeTenantId) {
+    return {
+      tenantId: safeTenantId || null,
+      tenant: null,
+      planId: fallbackPlan.id,
+      plan: fallbackPlan,
+      features: getPlanFeatureSet(fallbackPlan.id),
+      limits: getPlanLimitSet(fallbackPlan.id),
+      siteData: {},
+    };
+  }
+
+  const { data: tenant, error } = await supabase
+    .from("tenants")
+    .select("id, site_data")
+    .eq("id", safeTenantId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  const resolvedPlanId = resolveTenantSubscriptionPlanId(
+    tenant || {},
+    DEFAULT_SUBSCRIPTION_PLAN_ID
+  );
+  const plan = getSubscriptionPlan(resolvedPlanId, DEFAULT_SUBSCRIPTION_PLAN_ID);
+  return {
+    tenantId: safeTenantId,
+    tenant: tenant || null,
+    planId: plan.id,
+    plan,
+    features: getPlanFeatureSet(plan.id, DEFAULT_SUBSCRIPTION_PLAN_ID),
+    limits: getPlanLimitSet(plan.id, DEFAULT_SUBSCRIPTION_PLAN_ID),
+    siteData: toObject(tenant?.site_data),
+  };
+}
+
+const countPartnersInSiteData = (siteData) => {
+  const root = toObject(siteData);
+  const profile = toObject(root.organization_profile);
+  const seen = new Set();
+  const source = [
+    ...(Array.isArray(root.partners) ? root.partners : []),
+    ...(Array.isArray(profile.partners) ? profile.partners : []),
+  ];
+  source.forEach((partner, index) => {
+    const row = toObject(partner);
+    const key =
+      String(row.id || "").trim().toLowerCase() ||
+      String(row.name || "").trim().toLowerCase() ||
+      `partner-${index}`;
+    seen.add(key);
+  });
+  return seen.size;
+};
+
+async function countRowsForTenant(tableName, tenantId, filter = null) {
+  let query = supabase.from(tableName).select("id", { count: "exact", head: true });
+  query = applyTenantFilter(query, tenantId);
+  if (typeof filter === "function") {
+    query = filter(query);
+  }
+  const { count, error } = await query;
+  if (error) {
+    if (isMissingRelationError(error, tableName)) {
+      return 0;
+    }
+    throw error;
+  }
+  return Number(count || 0);
+}
+
+async function sumColumnForTenant(tableName, columnName, tenantId, filter = null) {
+  let query = supabase.from(tableName).select(`id, ${columnName}`);
+  query = applyTenantFilter(query, tenantId);
+  if (typeof filter === "function") {
+    query = filter(query);
+  }
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingRelationError(error, tableName) || isMissingColumnError(error, columnName)) {
+      return 0;
+    }
+    throw error;
+  }
+
+  return (Array.isArray(data) ? data : []).reduce((total, row) => {
+    const next = Number(row?.[columnName]);
+    return total + (Number.isFinite(next) && next > 0 ? next : 0);
+  }, 0);
+}
+
+async function getTenantUsageValue(tenantContext, limitKey) {
+  const tenantId = tenantContext?.tenantId || null;
+  if (!tenantId || !isSupabaseConfigured || !supabase) {
+    return 0;
+  }
+
+  switch (limitKey) {
+    case "members":
+      return countRowsForTenant("tenant_members", tenantId, (query) =>
+        query.in("status", ["active", "pending"])
+      );
+    case "projects":
+      return countRowsForTenant("iga_projects", tenantId);
+    case "partners":
+      return countPartnersInSiteData(tenantContext?.siteData);
+    case "documents": {
+      const [projectDocuments, organizationDocuments] = await Promise.all([
+        countRowsForTenant("project_documents", tenantId, (query) => query.is("archived_at", null)),
+        countRowsForTenant("documents", tenantId),
+      ]);
+      return projectDocuments + organizationDocuments;
+    }
+    case "financial_records": {
+      const [projectExpenses, projectSales, welfareTransactions, contributions, payouts] =
+        await Promise.all([
+          countRowsForTenant("project_expenses", tenantId),
+          countRowsForTenant("project_sales", tenantId),
+          countRowsForTenant("welfare_transactions", tenantId),
+          countRowsForTenant("contributions", tenantId),
+          countRowsForTenant("payouts", tenantId),
+        ]);
+      return projectExpenses + projectSales + welfareTransactions + contributions + payouts;
+    }
+    case "storage_bytes": {
+      const [projectDocumentBytes, organizationDocumentBytes, receiptBytes] = await Promise.all([
+        sumColumnForTenant("project_documents", "file_size_bytes", tenantId, (query) =>
+          query.is("archived_at", null)
+        ),
+        sumColumnForTenant("documents", "file_size_bytes", tenantId),
+        sumColumnForTenant("project_expenses", "receipt_file_size_bytes", tenantId),
+      ]);
+      return projectDocumentBytes + organizationDocumentBytes + receiptBytes;
+    }
+    default:
+      return 0;
+  }
+}
+
+export async function checkTenantFeature(tenantId, featureKey) {
+  const normalizedFeatureKey = String(featureKey || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (!normalizedFeatureKey || !tenantId) {
+    return { allowed: true };
+  }
+
+  const tenantContext = await getTenantPlanContext(tenantId);
+  const isEnabled = Boolean(tenantContext.features?.[normalizedFeatureKey]);
+  if (isEnabled) {
+    return {
+      allowed: true,
+      planId: tenantContext.planId,
+      plan: tenantContext.plan,
+      featureKey: normalizedFeatureKey,
+    };
+  }
+
+  const featureLabel =
+    PLAN_FEATURE_LABELS[normalizedFeatureKey] ||
+    normalizedFeatureKey.replace(/_/g, " ");
+  throw buildPlanAccessError(
+    `${featureLabel} is not available on the ${tenantContext.plan.name} plan. Upgrade your plan to continue.`,
+    `PLAN_FEATURE_${normalizedFeatureKey.toUpperCase()}_UNAVAILABLE`,
+    {
+      tenantId,
+      planId: tenantContext.planId,
+      featureKey: normalizedFeatureKey,
+    }
+  );
+}
+
+export async function checkTenantLimit(tenantId, limitKey, options = {}) {
+  const normalizedLimitKey = String(limitKey || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (!normalizedLimitKey || !tenantId) {
+    return { allowed: true };
+  }
+
+  const tenantContext = await getTenantPlanContext(tenantId);
+  const rawLimit = tenantContext.limits?.[normalizedLimitKey];
+  if (isUnlimitedPlanLimit(rawLimit)) {
+    return {
+      allowed: true,
+      planId: tenantContext.planId,
+      plan: tenantContext.plan,
+      limitKey: normalizedLimitKey,
+      limit: null,
+      usage: null,
+      projectedUsage: null,
+    };
+  }
+
+  const numericLimit = Number(rawLimit);
+  const usage = await getTenantUsageValue(tenantContext, normalizedLimitKey);
+  const additionalUsage =
+    normalizedLimitKey === "storage_bytes"
+      ? normalizePositiveWholeNumber(
+          options?.additionalBytes ?? options?.fileSizeBytes ?? options?.incrementBy,
+          0
+        )
+      : normalizePositiveWholeNumber(options?.incrementBy, 1);
+  const projectedUsage = usage + additionalUsage;
+
+  if (projectedUsage > numericLimit) {
+    const limitLabel = PLAN_LIMIT_LABELS[normalizedLimitKey] || normalizedLimitKey.replace(/_/g, " ");
+    throw buildPlanAccessError(
+      `You reached the ${limitLabel} limit (${formatPlanLimit(
+        normalizedLimitKey,
+        numericLimit
+      )}) for the ${tenantContext.plan.name} plan. Upgrade your plan to continue.`,
+      `PLAN_LIMIT_${normalizedLimitKey.toUpperCase()}_REACHED`,
+      {
+        tenantId,
+        planId: tenantContext.planId,
+        limitKey: normalizedLimitKey,
+        limit: numericLimit,
+        usage,
+        projectedUsage,
+      }
+    );
+  }
+
+  return {
+    allowed: true,
+    planId: tenantContext.planId,
+    plan: tenantContext.plan,
+    limitKey: normalizedLimitKey,
+    limit: numericLimit,
+    usage,
+    projectedUsage,
+  };
+}
+
+async function resolveTenantIdForProject(projectId, fallbackTenantId = null) {
+  const normalizedFallback = normalizeOptional(fallbackTenantId);
+  const parsedProjectId = Number.parseInt(String(projectId || ""), 10);
+  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    return normalizedFallback;
+  }
+
+  if (!isSupabaseConfigured || !supabase) {
+    return normalizedFallback;
+  }
+
+  const { data, error } = await supabase
+    .from("iga_projects")
+    .select("tenant_id")
+    .eq("id", parsedProjectId)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Unable to resolve tenant from project:", error);
+    return normalizedFallback;
+  }
+
+  return normalizeOptional(data?.tenant_id) || normalizedFallback;
+}
+
 function generateInviteCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const length = 12;
@@ -8428,6 +9196,10 @@ export async function createMagicLinkInvite(payload) {
   const projectAccessScope = normalizeInviteProjectScope(payload.project_access_scope);
   const projectIds =
     projectAccessScope === "selected" ? normalizeInviteProjectIds(payload.project_ids) : [];
+  const effectiveTenantId = normalizeOptional(payload?.tenant_id);
+  if (effectiveTenantId) {
+    await checkTenantFeature(effectiveTenantId, "member_invites");
+  }
 
   const insertPayload = {
     email: normalizeOptional(payload.email),
@@ -8436,7 +9208,7 @@ export async function createMagicLinkInvite(payload) {
     status: "pending",
     invite_number: inviteNumber,
     created_by: payload.created_by || null,
-    tenant_id: normalizeOptional(payload.tenant_id),
+    tenant_id: effectiveTenantId,
     expires_at: expiresAt,
     notes: normalizeOptional(payload.notes),
     project_access_scope: projectAccessScope,
@@ -8509,6 +9281,10 @@ export async function createProjectMagicLinkInvite(payload) {
   }
 
   const role = normalizeOptional(payload?.role) || "member";
+  const tenantId = await resolveTenantIdForProject(parsedProjectId, payload?.tenant_id || null);
+  if (tenantId) {
+    await checkTenantFeature(tenantId, "member_invites");
+  }
 
   const { data, error } = await supabase.rpc("create_project_magic_link_invite", {
     p_project_id: parsedProjectId,
@@ -8892,6 +9668,11 @@ export async function createWelfareTransaction(payload, tenantId) {
     throw new Error("Supabase not configured");
   }
 
+  const effectiveTenantId = normalizeOptional(tenantId);
+  if (effectiveTenantId) {
+    await checkTenantLimit(effectiveTenantId, "financial_records", { incrementBy: 1 });
+  }
+
   const insertPayload = {
     welfare_account_id: normalizeOptional(payload.welfare_account_id),
     cycle_id: normalizeOptional(payload.cycle_id),
@@ -8901,7 +9682,7 @@ export async function createWelfareTransaction(payload, tenantId) {
     date: payload.date,
     description: normalizeOptional(payload.description),
     status: normalizeOptional(payload.status) || "Completed",
-    tenant_id: tenantId ?? null,
+    tenant_id: effectiveTenantId ?? null,
   };
 
   const { data, error } = await supabase
@@ -9272,6 +10053,20 @@ export async function createTenant(payload) {
     throw new Error("Tenant name and slug are required");
   }
 
+  const rawSiteData = toObject(payload?.site_data);
+  const existingSubscription = toObject(rawSiteData.subscription);
+  const selectedPlanId = normalizePlanId(
+    payload?.subscription_plan || payload?.plan || existingSubscription?.plan,
+    DEFAULT_SUBSCRIPTION_PLAN_ID
+  );
+  const siteData = {
+    ...rawSiteData,
+    subscription: buildSubscriptionMetadata(selectedPlanId, existingSubscription, {
+      source: payload?.subscription_plan || payload?.plan ? "selection" : "default",
+      status: "active",
+    }),
+  };
+
   const insertPayload = {
     name: normalizeTenantWorkspaceName(name),
     slug: String(slug).toLowerCase(),
@@ -9281,7 +10076,7 @@ export async function createTenant(payload) {
     contact_phone: normalizeOptional(payload?.contact_phone),
     location: normalizeOptional(payload?.location),
     logo_url: normalizeOptional(payload?.logo_url),
-    site_data: payload?.site_data ?? null,
+    site_data: siteData,
     is_public: payload?.is_public ?? true,
   };
 
@@ -9516,6 +10311,243 @@ export async function getTenantById(tenantId) {
   return data || null;
 }
 
+const normalizeAdminLimit = (value, fallback = 100, max = 500) => {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+};
+
+const normalizeAdminOffset = (value, fallback = 0) => {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isInteger(parsed) || parsed < 0) return fallback;
+  return parsed;
+};
+
+export async function getInternalAdminAccess() {
+  if (!shouldUseSupabase()) {
+    return { allowed: false, role: null, email: null };
+  }
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { allowed: false, role: null, email: null };
+  }
+
+  const normalizedEmail = String(user?.email || "")
+    .trim()
+    .toLowerCase();
+  if (!normalizedEmail) {
+    return { allowed: false, role: null, email: null };
+  }
+
+  const { data, error } = await supabase
+    .from("admin_users")
+    .select("id, email, role")
+    .ilike("email", normalizedEmail)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRelationError(error, "admin_users")) {
+      return { allowed: false, role: null, email: normalizedEmail };
+    }
+    throw error;
+  }
+
+  return {
+    allowed: Boolean(data?.id),
+    role: normalizeOptional(data?.role),
+    email: normalizeOptional(data?.email) || normalizedEmail,
+  };
+}
+
+export async function getAdminTenants(options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  const { data, error } = await supabase.rpc("admin_list_tenants", {
+    p_search: normalizeOptional(options?.search),
+    p_limit: normalizeAdminLimit(options?.limit, 120, 500),
+    p_offset: normalizeAdminOffset(options?.offset, 0),
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingRelationError(error, "tenants") ||
+      isMissingFunctionError(error, "admin_list_tenants")
+    ) {
+      return [];
+    }
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getAdminTenantOverview(tenantId) {
+  if (!shouldUseSupabase()) {
+    return null;
+  }
+
+  const safeTenantId = normalizeOptional(tenantId);
+  if (!safeTenantId) {
+    return null;
+  }
+
+  const { data, error } = await supabase.rpc("admin_get_tenant_overview", {
+    p_tenant_id: safeTenantId,
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingRelationError(error, "tenants") ||
+      isMissingFunctionError(error, "admin_get_tenant_overview")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    return null;
+  }
+  return data[0] || null;
+}
+
+export async function getAdminTenantMembers(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  const safeTenantId = normalizeOptional(tenantId);
+  if (!safeTenantId) {
+    return [];
+  }
+
+  const { data, error } = await supabase.rpc("admin_get_tenant_members", {
+    p_tenant_id: safeTenantId,
+    p_limit: normalizeAdminLimit(options?.limit, 200, 1000),
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingRelationError(error, "tenant_members") ||
+      isMissingFunctionError(error, "admin_get_tenant_members")
+    ) {
+      return [];
+    }
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getAdminTenantProjects(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  const safeTenantId = normalizeOptional(tenantId);
+  if (!safeTenantId) {
+    return [];
+  }
+
+  const { data, error } = await supabase.rpc("admin_get_tenant_projects", {
+    p_tenant_id: safeTenantId,
+    p_limit: normalizeAdminLimit(options?.limit, 120, 1000),
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingRelationError(error, "iga_projects") ||
+      isMissingFunctionError(error, "admin_get_tenant_projects")
+    ) {
+      return [];
+    }
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getAdminTenantTransactions(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  const safeTenantId = normalizeOptional(tenantId);
+  if (!safeTenantId) {
+    return [];
+  }
+
+  const { data, error } = await supabase.rpc("admin_get_tenant_transactions", {
+    p_tenant_id: safeTenantId,
+    p_limit: normalizeAdminLimit(options?.limit, 120, 2000),
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingFunctionError(error, "admin_get_tenant_transactions")
+    ) {
+      return [];
+    }
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function getAdminActivityLogs(options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  const { data, error } = await supabase.rpc("admin_get_activity_logs", {
+    p_tenant_id: normalizeOptional(options?.tenant_id ?? options?.tenantId),
+    p_limit: normalizeAdminLimit(options?.limit, 200, 2000),
+    p_offset: normalizeAdminOffset(options?.offset, 0),
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingRelationError(error, "audit_logs") ||
+      isMissingFunctionError(error, "admin_get_activity_logs")
+    ) {
+      return [];
+    }
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+const ADMIN_ACTING_TENANT_STORAGE_KEY = "admin-acting-tenant-id";
+
+export function getAdminActingTenantId() {
+  if (typeof window === "undefined") return null;
+  return normalizeOptional(window.localStorage.getItem(ADMIN_ACTING_TENANT_STORAGE_KEY));
+}
+
+export function setAdminActingTenantId(tenantId) {
+  if (typeof window === "undefined") return;
+  const normalizedTenantId = normalizeOptional(tenantId);
+  if (!normalizedTenantId) {
+    window.localStorage.removeItem(ADMIN_ACTING_TENANT_STORAGE_KEY);
+    return;
+  }
+  window.localStorage.setItem(ADMIN_ACTING_TENANT_STORAGE_KEY, normalizedTenantId);
+}
+
 export async function updateTenant(tenantId, payload) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase not configured");
@@ -9551,7 +10583,22 @@ export async function updateTenant(tenantId, payload) {
     updatePayload.logo_url = normalizeOptional(payload?.logo_url);
   }
   if (Object.prototype.hasOwnProperty.call(payload || {}, "site_data")) {
-    updatePayload.site_data = payload?.site_data ?? null;
+    const existingTenant = await getTenantById(tenantId);
+    const existingSiteData = toObject(existingTenant?.site_data);
+    const nextSiteData = toObject(payload?.site_data);
+    const existingSubscription = toObject(existingSiteData.subscription);
+    const nextSubscription = toObject(nextSiteData.subscription);
+    const selectedPlanId = normalizePlanId(
+      payload?.subscription_plan || nextSubscription?.plan || existingSubscription?.plan,
+      DEFAULT_SUBSCRIPTION_PLAN_ID
+    );
+    updatePayload.site_data = {
+      ...nextSiteData,
+      subscription: buildSubscriptionMetadata(selectedPlanId, {
+        ...existingSubscription,
+        ...nextSubscription,
+      }),
+    };
   }
   if (Object.prototype.hasOwnProperty.call(payload || {}, "is_public")) {
     updatePayload.is_public = payload?.is_public ?? true;
@@ -9571,6 +10618,63 @@ export async function updateTenant(tenantId, payload) {
   return data;
 }
 
+export async function deleteTenantWorkspace(tenantId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const cleanTenantId = normalizeOptional(tenantId);
+  if (!cleanTenantId) {
+    throw new Error("Tenant ID is required");
+  }
+
+  const { data, error } = await supabase
+    .from("tenants")
+    .delete()
+    .eq("id", cleanTenantId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data || { id: cleanTenantId };
+}
+
+export async function deleteOwnMemberProfile(memberId) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase not configured");
+  }
+
+  const parsedMemberId = Number.parseInt(String(memberId || ""), 10);
+  if (!Number.isInteger(parsedMemberId) || parsedMemberId <= 0) {
+    throw new Error("Member ID is required");
+  }
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user?.id) {
+    throw new Error("Authenticated user not found.");
+  }
+
+  const { data, error } = await supabase
+    .from("members")
+    .delete()
+    .eq("id", parsedMemberId)
+    .eq("auth_id", user.id)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return Boolean(data?.id);
+}
+
 export async function createTenantMembership({ tenantId, memberId, role = "member" }) {
   if (!shouldUseSupabase()) {
     return null;
@@ -9579,6 +10683,21 @@ export async function createTenantMembership({ tenantId, memberId, role = "membe
   if (!tenantId || !memberId) {
     throw new Error("Tenant and member are required");
   }
+
+  const existingQuery = await supabase
+    .from("tenant_members")
+    .select("id, tenant_id, member_id, role, status, created_at, updated_at")
+    .eq("tenant_id", tenantId)
+    .eq("member_id", memberId)
+    .maybeSingle();
+  if (existingQuery.error && String(existingQuery.error?.code || "") !== "PGRST116") {
+    throw existingQuery.error;
+  }
+  if (existingQuery.data) {
+    return existingQuery.data;
+  }
+
+  await checkTenantLimit(tenantId, "members", { incrementBy: 1 });
 
   const insertPayload = {
     tenant_id: tenantId,
@@ -9599,6 +10718,21 @@ export async function createTenantMembership({ tenantId, memberId, role = "membe
       return null;
     }
     throw error;
+  }
+
+  try {
+    await createAuditLogEvent({
+      tenant_id: tenantId,
+      action: "member_created",
+      entity: "tenant_members",
+      entity_id: String(data?.id || ""),
+      metadata: {
+        member_id: memberId,
+        role,
+      },
+    });
+  } catch (auditError) {
+    console.warn("Failed to write member_created audit event:", auditError);
   }
 
   return data;

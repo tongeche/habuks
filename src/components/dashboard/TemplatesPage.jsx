@@ -2,6 +2,7 @@ import OrganizationPage from "./OrganizationPage.jsx";
 
 export default function TemplatesPage({
   user,
+  tenantRole,
   tenantId,
   tenant,
   onTenantUpdated,
@@ -10,6 +11,7 @@ export default function TemplatesPage({
   return (
     <OrganizationPage
       user={user}
+      tenantRole={tenantRole}
       tenantId={tenantId}
       tenant={tenant}
       requestedTab="templates"

@@ -2,89 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
 import { useTenantCurrency } from "./TenantCurrencyContext.jsx";
-
-const recordsSeed = [
-  {
-    id: "r1",
-    name: "Agnes Otieno",
-    note: "Member contribution",
-    project: "Core Savings",
-    type: "contribution",
-    status: "paid",
-    date: "2026-02-20",
-    amount: 5000,
-  },
-  {
-    id: "r2",
-    name: "Brian Mwangi",
-    note: "Member contribution",
-    project: "Core Savings",
-    type: "contribution",
-    status: "paid",
-    date: "2026-02-18",
-    amount: 2000,
-  },
-  {
-    id: "r3",
-    name: "School support payout",
-    note: "Welfare disbursement",
-    project: "Welfare Fund",
-    type: "payout",
-    status: "approved",
-    date: "2026-02-16",
-    amount: -12000,
-  },
-  {
-    id: "r4",
-    name: "Feed purchase",
-    note: "Project expense",
-    project: "JPP Poultry",
-    type: "expense",
-    status: "posted",
-    date: "2026-02-15",
-    amount: -6500,
-  },
-  {
-    id: "r5",
-    name: "Market sales",
-    note: "IGA revenue",
-    project: "JGF Groundnuts",
-    type: "welfare",
-    status: "received",
-    date: "2026-02-13",
-    amount: 18500,
-  },
-  {
-    id: "r6",
-    name: "Office stationery",
-    note: "Admin expense",
-    project: "General Ops",
-    type: "expense",
-    status: "pending",
-    date: "2026-02-11",
-    amount: -1800,
-  },
-  {
-    id: "r7",
-    name: "Charles Kamau",
-    note: "Member contribution",
-    project: "Core Savings",
-    type: "contribution",
-    status: "pending",
-    date: "2026-02-10",
-    amount: 3000,
-  },
-  {
-    id: "r8",
-    name: "Medical support payout",
-    note: "Welfare request",
-    project: "Welfare Fund",
-    type: "payout",
-    status: "scheduled",
-    date: "2026-02-08",
-    amount: -9000,
-  },
-];
+import {
+  createContributionRecord,
+  createPayoutRecord,
+  createProjectExpense,
+  createWelfareTransaction,
+  getMembersAdmin,
+  getProjectExpensesForProjects,
+  getProjectSalesForProjects,
+  getProjectsWithMembership,
+  getTenantContributions,
+  getTenantPayouts,
+  getWelfareTransactionsAdmin,
+} from "../../lib/dataService.js";
 
 const typeLabels = {
   all: "All records",
@@ -100,9 +30,9 @@ const periodLabels = {
   "90d": "Last 90 days",
 };
 
-const statusOptions = ["pending", "paid", "posted", "approved", "received", "scheduled"];
-const outflowTypes = new Set(["expense", "payout"]);
+const statusOptions = ["pending", "paid", "posted", "approved", "received", "scheduled", "completed"];
 const financePageKeys = new Set(["contributions", "expenses", "documents", "welfare", "payouts"]);
+const adminRoles = new Set(["admin", "superadmin", "supervisor"]);
 
 const getDefaultFormType = (initialType) =>
   initialType && initialType !== "all" ? initialType : "contribution";
@@ -136,21 +66,83 @@ const formatDate = (dateStr) =>
     year: "numeric",
   });
 
+const normalizeLookup = (value) => String(value || "").trim().toLowerCase();
+
+const toIsoDate = (value) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString().slice(0, 10);
+};
+
+const toPositiveAmount = (value) => Math.abs(Number(value) || 0);
+const isMockRecordId = (value) => String(value || "").startsWith("mock-");
+
+const formatProductLabel = (value) => {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "";
+  return normalized
+    .split("_")
+    .map((segment) => {
+      if (!segment) return segment;
+      return segment.charAt(0).toUpperCase() + segment.slice(1);
+    })
+    .join(" ");
+};
+
 export function FinanceRecordsPage({
+  user = null,
+  tenantId = null,
   initialType = "all",
   activePage = "",
 }) {
   const { formatCurrency, formatFieldLabel } = useTenantCurrency();
-  const [records, setRecords] = useState(recordsSeed);
+  const [records, setRecords] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingError, setLoadingError] = useState("");
+  const [refreshTick, setRefreshTick] = useState(0);
   const [typeFilter, setTypeFilter] = useState(initialType);
   const [period, setPeriod] = useState("30d");
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
   const [showAddRecordModal, setShowAddRecordModal] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [formError, setFormError] = useState("");
   const [addRecordForm, setAddRecordForm] = useState(() => createInitialForm(initialType));
   const showMobileFab = financePageKeys.has(String(activePage || "").trim().toLowerCase());
   const formatAmount = (value) =>
     formatCurrency(Math.abs(Number(value) || 0), { maximumFractionDigits: 0 });
+
+  const canViewAllProjects = adminRoles.has(normalizeLookup(user?.role));
+
+  const memberLookup = useMemo(() => {
+    const lookup = new Map();
+    members.forEach((member) => {
+      const keys = [member?.id, member?.name, member?.email, member?.phone_number];
+      keys.forEach((key) => {
+        const normalized = normalizeLookup(key);
+        if (normalized) {
+          lookup.set(normalized, member);
+        }
+      });
+    });
+    return lookup;
+  }, [members]);
+
+  const projectLookup = useMemo(() => {
+    const lookup = new Map();
+    projects.forEach((project) => {
+      const keys = [project?.id, project?.name, project?.code, project?.module_key];
+      keys.forEach((key) => {
+        const normalized = normalizeLookup(key);
+        if (normalized) {
+          lookup.set(normalized, project);
+        }
+      });
+    });
+    return lookup;
+  }, [projects]);
 
   useEffect(() => {
     setTypeFilter(initialType || "all");
@@ -160,10 +152,212 @@ export function FinanceRecordsPage({
     }));
   }, [initialType]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadFinanceRecords = async () => {
+      if (!tenantId || !user?.id) {
+        if (!isMounted) return;
+        setProjects([]);
+        setMembers([]);
+        setRecords([]);
+        setLoading(false);
+        setLoadingError("Workspace context is missing.");
+        return;
+      }
+
+      setLoading(true);
+      setLoadingError("");
+
+      try {
+        const [projectRows, memberRows] = await Promise.all([
+          getProjectsWithMembership(user.id, tenantId),
+          getMembersAdmin(tenantId).catch(() => []),
+        ]);
+
+        if (!isMounted) return;
+
+        const visibleProjects = (projectRows || []).filter((project) => {
+          if (canViewAllProjects) return true;
+          return Boolean(project?.membership) || project?.project_leader === user.id;
+        });
+        const sortedProjects = [...visibleProjects].sort((left, right) =>
+          String(left?.name || "").localeCompare(String(right?.name || ""))
+        );
+        const projectNameById = new Map(
+          sortedProjects
+            .filter((project) => project?.id)
+            .map((project) => [String(project.id), String(project?.name || "").trim() || "Project"])
+        );
+        const memberNameById = new Map(
+          (memberRows || [])
+            .filter((member) => member?.id)
+            .map((member) => [String(member.id), String(member?.name || "").trim() || "Member"])
+        );
+        const projectIds = sortedProjects.map((project) => project?.id).filter(Boolean);
+
+        const [
+          contributionRows,
+          payoutRows,
+          welfareRows,
+          expenseRows,
+          saleRows,
+        ] = await Promise.all([
+          getTenantContributions(tenantId),
+          getTenantPayouts(tenantId),
+          getWelfareTransactionsAdmin(tenantId),
+          projectIds.length ? getProjectExpensesForProjects(projectIds, tenantId) : Promise.resolve([]),
+          projectIds.length ? getProjectSalesForProjects(projectIds, tenantId) : Promise.resolve([]),
+        ]);
+
+        if (!isMounted) return;
+
+        const contributionRecords = (contributionRows || []).map((row) => {
+          const amount = toPositiveAmount(row?.amount);
+          const date = toIsoDate(row?.date || row?.created_at || row?.updated_at) || getTodayIso();
+          const memberId = normalizeLookup(row?.member_id);
+          const fallbackLabel = row?.id ? `Contribution #${row.id}` : "Contribution";
+          return {
+            id: `contribution-${row?.id ?? Math.random()}`,
+            name: memberNameById.get(memberId) || fallbackLabel,
+            note: String(row?.notes || row?.description || "Member contribution"),
+            project: "Core Savings",
+            type: "contribution",
+            status: normalizeLookup(row?.status) || "paid",
+            date,
+            amount,
+          };
+        });
+
+        const payoutRecords = (payoutRows || []).map((row) => {
+          const amount = -toPositiveAmount(row?.amount);
+          const date = toIsoDate(row?.date || row?.created_at || row?.updated_at) || getTodayIso();
+          const memberId = normalizeLookup(row?.member_id);
+          const fallbackLabel = row?.id ? `Payout #${row.id}` : "Payout";
+          return {
+            id: `payout-${row?.id ?? Math.random()}`,
+            name: memberNameById.get(memberId) || fallbackLabel,
+            note: String(row?.notes || row?.description || "Welfare payout"),
+            project: "Welfare Fund",
+            type: "payout",
+            status: normalizeLookup(row?.status) || "approved",
+            date,
+            amount,
+          };
+        });
+
+        const welfareRecords = (welfareRows || []).map((row) => {
+          const numericAmount = Number(row?.amount) || 0;
+          const transactionType = normalizeLookup(row?.transaction_type);
+          const isOutflow =
+            transactionType === "disbursement" || transactionType === "payout" || numericAmount < 0;
+          const amount = isOutflow ? -toPositiveAmount(numericAmount) : toPositiveAmount(numericAmount);
+          const date = toIsoDate(row?.date || row?.created_at || row?.updated_at) || getTodayIso();
+          const memberName =
+            String(row?.member?.name || "").trim() ||
+            memberNameById.get(normalizeLookup(row?.member_id)) ||
+            "";
+          return {
+            id: `welfare-${row?.id ?? Math.random()}`,
+            name: memberName || "Welfare transaction",
+            note: String(row?.description || (isOutflow ? "Welfare disbursement" : "Welfare contribution")),
+            project: "Welfare Fund",
+            type: isOutflow ? "payout" : "welfare",
+            status: normalizeLookup(row?.status) || (isOutflow ? "approved" : "received"),
+            date,
+            amount,
+          };
+        });
+
+        const expenseRecords = (expenseRows || [])
+          .filter((row) => !isMockRecordId(row?.id))
+          .map((row) => {
+          const amount = -toPositiveAmount(row?.amount);
+          const date = toIsoDate(row?.expense_date || row?.created_at || row?.updated_at) || getTodayIso();
+          const projectName = projectNameById.get(String(row?.project_id || "")) || "Project expense";
+          const category = String(row?.category || "").trim();
+          const vendor = String(row?.vendor || "").trim();
+          const note = [category, vendor].filter(Boolean).join(" · ") || "Project expense";
+          return {
+            id: `expense-${row?.id ?? Math.random()}`,
+            name: String(row?.description || "").trim() || category || "Project expense",
+            note,
+            project: projectName,
+            type: "expense",
+            status: normalizeLookup(row?.status) || "posted",
+            date,
+            amount,
+          };
+          });
+
+        const saleRecords = (saleRows || [])
+          .filter((row) => !isMockRecordId(row?.id))
+          .map((row) => {
+          const amount = toPositiveAmount(row?.total_amount ?? row?.amount);
+          const date = toIsoDate(row?.sale_date || row?.created_at || row?.updated_at) || getTodayIso();
+          const projectName = projectNameById.get(String(row?.project_id || "")) || "Project sale";
+          const productLabel = formatProductLabel(row?.product_type);
+          const customerType = formatProductLabel(row?.customer_type);
+          const note = [productLabel, customerType].filter(Boolean).join(" · ") || "Project revenue";
+          return {
+            id: `sale-${row?.id ?? Math.random()}`,
+            name: String(row?.customer_name || "").trim() || productLabel || "Project sale",
+            note,
+            project: projectName,
+            type: "welfare",
+            status: normalizeLookup(row?.payment_status) || "received",
+            date,
+            amount,
+          };
+          });
+
+        const merged = [
+          ...contributionRecords,
+          ...payoutRecords,
+          ...welfareRecords,
+          ...expenseRecords,
+          ...saleRecords,
+        ].sort((left, right) => {
+          const leftTime = new Date(left?.date || 0).getTime();
+          const rightTime = new Date(right?.date || 0).getTime();
+          return rightTime - leftTime;
+        });
+
+        setProjects(sortedProjects);
+        setMembers(memberRows || []);
+        setRecords(merged);
+      } catch (error) {
+        console.error("Error loading finance records:", error);
+        if (!isMounted) return;
+        setProjects([]);
+        setMembers([]);
+        setRecords([]);
+        setLoadingError(error?.message || "Failed to load records.");
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadFinanceRecords();
+    return () => {
+      isMounted = false;
+    };
+  }, [tenantId, user?.id, user?.role, canViewAllProjects, refreshTick]);
+
   const projectOptions = useMemo(() => {
-    const unique = Array.from(new Set(records.map((item) => item.project)));
-    return ["all", ...unique];
-  }, [records]);
+    const set = new Set();
+    projects.forEach((project) => {
+      const name = String(project?.name || "").trim();
+      if (name) set.add(name);
+    });
+    records.forEach((item) => {
+      const project = String(item?.project || "").trim();
+      if (project) set.add(project);
+    });
+    return ["all", ...Array.from(set)];
+  }, [projects, records]);
 
   const scopedRecords = useMemo(
     () => records.filter((item) => isInsidePeriod(item.date, period)),
@@ -203,7 +397,10 @@ export function FinanceRecordsPage({
   );
 
   const handleOpenAddRecord = () => {
-    setAddRecordForm(createInitialForm(initialType, projectFilter));
+    const suggestedProject =
+      projectFilter && projectFilter !== "all" ? projectFilter : String(projects[0]?.name || "");
+    setFormError("");
+    setAddRecordForm(createInitialForm(initialType, suggestedProject));
     setShowAddRecordModal(true);
   };
 
@@ -211,31 +408,111 @@ export function FinanceRecordsPage({
     setAddRecordForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleAddRecordSubmit = (event) => {
+  const findMemberByInput = (value) => {
+    const normalized = normalizeLookup(value);
+    if (!normalized) return null;
+    return memberLookup.get(normalized) || null;
+  };
+
+  const findProjectByInput = (value) => {
+    const normalized = normalizeLookup(value);
+    if (!normalized) return null;
+    return projectLookup.get(normalized) || null;
+  };
+
+  const handleAddRecordSubmit = async (event) => {
     event.preventDefault();
+    setFormError("");
     const normalizedName = addRecordForm.name.trim();
     const normalizedProject = addRecordForm.project.trim();
+    const normalizedNote = addRecordForm.note.trim();
     const amountValue = Number(addRecordForm.amount);
-    if (!normalizedName || !normalizedProject || !addRecordForm.date || !Number.isFinite(amountValue) || amountValue <= 0) {
+    if (
+      !normalizedName ||
+      !addRecordForm.date ||
+      !Number.isFinite(amountValue) ||
+      amountValue <= 0
+    ) {
+      setFormError("Fill all required fields with valid values.");
+      return;
+    }
+    if (addRecordForm.type === "expense" && !normalizedProject) {
+      setFormError("Project is required for expense records.");
       return;
     }
 
-    const nextRecord = {
-      id: `r-${Date.now()}`,
-      name: normalizedName,
-      note: addRecordForm.note.trim() || "Manual record entry",
-      project: normalizedProject,
-      type: addRecordForm.type,
-      status: addRecordForm.status,
-      date: addRecordForm.date,
-      amount: outflowTypes.has(addRecordForm.type) ? -Math.abs(amountValue) : Math.abs(amountValue),
-    };
-
-    setRecords((prev) => [nextRecord, ...prev]);
-    setTypeFilter(addRecordForm.type);
-    setProjectFilter("all");
-    setSearch("");
-    setShowAddRecordModal(false);
+    try {
+      setIsSaving(true);
+      if (addRecordForm.type === "expense") {
+        const selectedProject = findProjectByInput(normalizedProject);
+        if (!selectedProject?.id) {
+          throw new Error("Select a valid existing project for this expense.");
+        }
+        await createProjectExpense(
+          selectedProject.id,
+          {
+            expense_date: addRecordForm.date,
+            category: normalizedName,
+            amount: toPositiveAmount(amountValue),
+            description: normalizedNote || normalizedName,
+            receipt: false,
+          },
+          tenantId
+        );
+      } else if (addRecordForm.type === "contribution") {
+        const selectedMember = findMemberByInput(normalizedName);
+        if (!selectedMember?.id) {
+          throw new Error("Select a valid member name for contribution records.");
+        }
+        await createContributionRecord(
+          {
+            member_id: selectedMember.id,
+            amount: toPositiveAmount(amountValue),
+            date: addRecordForm.date,
+            status: addRecordForm.status || "paid",
+            notes: normalizedNote || "Member contribution",
+          },
+          tenantId
+        );
+      } else if (addRecordForm.type === "payout") {
+        const selectedMember = findMemberByInput(normalizedName);
+        if (!selectedMember?.id) {
+          throw new Error("Select a valid member name for payout records.");
+        }
+        await createPayoutRecord(
+          {
+            member_id: selectedMember.id,
+            amount: toPositiveAmount(amountValue),
+            date: addRecordForm.date,
+            status: addRecordForm.status || "approved",
+            notes: normalizedNote || "Welfare payout",
+          },
+          tenantId
+        );
+      } else if (addRecordForm.type === "welfare") {
+        const selectedMember = findMemberByInput(normalizedName);
+        await createWelfareTransaction(
+          {
+            member_id: selectedMember?.id || null,
+            amount: toPositiveAmount(amountValue),
+            transaction_type: "contribution",
+            status: addRecordForm.status || "Completed",
+            date: addRecordForm.date,
+            description: normalizedNote || normalizedName,
+          },
+          tenantId
+        );
+      }
+      setTypeFilter(addRecordForm.type);
+      setProjectFilter("all");
+      setSearch("");
+      setShowAddRecordModal(false);
+      setRefreshTick((value) => value + 1);
+    } catch (error) {
+      setFormError(error?.message || "Failed to save record.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -245,6 +522,7 @@ export function FinanceRecordsPage({
           activePage === "expenses" ? " finance-records-page--expenses" : ""
         }${showMobileFab ? " finance-records-page--mobile-action" : ""}`}
       >
+        {loadingError ? <p className="data-modal-feedback data-modal-feedback--error">{loadingError}</p> : null}
         <div className="finance-records-stats">
           <article className="finance-stat-card">
             <p>Total inflow</p>
@@ -307,6 +585,7 @@ export function FinanceRecordsPage({
               type="button"
               className="finance-toolbar-btn finance-toolbar-btn--primary finance-toolbar-btn--add"
               onClick={handleOpenAddRecord}
+              disabled={loading || !tenantId}
             >
               + Add record
             </button>
@@ -328,7 +607,11 @@ export function FinanceRecordsPage({
             </div>
 
             <div className="finance-records-table-body">
-              {filteredRecords.length ? (
+              {loading ? (
+                <div className="finance-records-empty">
+                  <span>Loading records...</span>
+                </div>
+              ) : filteredRecords.length ? (
                 filteredRecords.map((item) => (
                   <article className="finance-record-row" key={item.id}>
                     <div className="finance-record-main">
@@ -410,6 +693,7 @@ export function FinanceRecordsPage({
         icon="receipt"
       >
         <form className="data-modal-form" onSubmit={handleAddRecordSubmit}>
+          {formError ? <p className="data-modal-feedback data-modal-feedback--error">{formError}</p> : null}
           <div className="data-modal-grid">
             <label className="data-modal-field">
               Record type
@@ -440,8 +724,9 @@ export function FinanceRecordsPage({
               Record name
               <input
                 type="text"
+                list="finance-record-member-options"
                 required
-                placeholder="e.g. Grace Wanjiku contribution"
+                placeholder="e.g. Grace Wanjiku or Feed purchase"
                 value={addRecordForm.name}
                 onChange={(event) => handleFormChange("name", event.target.value)}
               />
@@ -451,7 +736,7 @@ export function FinanceRecordsPage({
               <input
                 type="text"
                 list="finance-record-project-options"
-                required
+                required={addRecordForm.type === "expense"}
                 placeholder="e.g. Core Savings"
                 value={addRecordForm.project}
                 onChange={(event) => handleFormChange("project", event.target.value)}
@@ -511,11 +796,20 @@ export function FinanceRecordsPage({
             >
               Cancel
             </button>
-            <button type="submit" className="data-modal-btn data-modal-btn--primary">
-              Save record
+            <button
+              type="submit"
+              className="data-modal-btn data-modal-btn--primary"
+              disabled={isSaving || loading}
+            >
+              {isSaving ? "Saving..." : "Save record"}
             </button>
           </div>
         </form>
+        <datalist id="finance-record-member-options">
+          {members.map((member) => (
+            <option key={member.id} value={member.name} />
+          ))}
+        </datalist>
       </DataModal>
       {showMobileFab ? (
         <button
@@ -523,6 +817,7 @@ export function FinanceRecordsPage({
           className="dashboard-page-fab"
           onClick={handleOpenAddRecord}
           aria-label="Add record transaction"
+          disabled={loading || !tenantId}
         >
           <Icon name="plus" size={20} />
         </button>

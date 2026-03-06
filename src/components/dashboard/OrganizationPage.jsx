@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   createOrganizationActivity,
   createMemberAdmin,
@@ -12,14 +13,23 @@ import {
   getMembersAdmin,
   getOrganizationTemplateDownloadUrl,
   getOrganizationTemplates,
+  getProjectExpensesForProjects,
+  getProjectSalesForProjects,
   getProjectsWithMembership,
+  getTenantContributions,
   getTenantProjectMediaLibrary,
+  getTenantPayouts,
+  getTenantMemberships,
   getTenantById,
+  getWelfareTransactionsAdmin,
   leaveProject,
   renameOrganizationDocument,
+  signOut,
   uploadBirdPhoto,
   uploadOrganizationDocument,
   uploadMemberAvatar,
+  deleteOwnMemberProfile,
+  deleteTenantWorkspace,
   updateOrganizationActivity,
   updateMemberAdmin,
   setIgaProjectVisibility,
@@ -301,6 +311,51 @@ const PARTNER_IMPORT_ALIASES = {
   notes: ["notes", "note", "remarks"],
   logo_url: ["logo_url", "logo", "logo_link", "logo_uri"],
 };
+const WORKSPACE_EXPORT_OPTIONS = [
+  {
+    key: "organization_profile",
+    label: "Organization profile",
+    description: "Workspace profile, contact details, and website metadata.",
+  },
+  {
+    key: "members",
+    label: "Members",
+    description: "Directory, role, and status data for workspace members.",
+  },
+  {
+    key: "projects",
+    label: "Projects",
+    description: "Project records and metadata accessible in this workspace.",
+  },
+  {
+    key: "records",
+    label: "Records",
+    description: "Organization files and document registry.",
+  },
+  {
+    key: "activities",
+    label: "Activities",
+    description: "Meetings and governance activity logs.",
+  },
+  {
+    key: "partners",
+    label: "Partners",
+    description: "Partner directory and linked project references.",
+  },
+  {
+    key: "templates",
+    label: "Templates",
+    description: "Organization template definitions and metadata.",
+  },
+  {
+    key: "finance_records",
+    label: "Finance records",
+    description: "Contributions, payouts, welfare transactions, expenses, and sales.",
+  },
+];
+const WORKSPACE_EXPORT_OPTION_KEYS = new Set(WORKSPACE_EXPORT_OPTIONS.map((option) => option.key));
+const DEFAULT_WORKSPACE_EXPORT_SELECTION = WORKSPACE_EXPORT_OPTIONS.map((option) => option.key);
+const WORKSPACE_DELETE_CONFIRM_TEXT = "DELETE";
 
 const normalizeOptional = (value) => {
   const text = String(value ?? "").trim();
@@ -399,6 +454,197 @@ const escapeCsvValue = (value) => {
   const text = String(value ?? "");
   if (!/[",\n]/.test(text)) return text;
   return `"${text.replace(/"/g, '""')}"`;
+};
+
+const toCsvCellValue = (value) => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const buildCsvFromRows = (rows) => {
+  const normalizedRows = Array.isArray(rows) ? rows.filter((row) => row && typeof row === "object") : [];
+  if (!normalizedRows.length) return "";
+  const headers = Array.from(
+    normalizedRows.reduce((set, row) => {
+      Object.keys(row).forEach((key) => set.add(key));
+      return set;
+    }, new Set())
+  );
+  if (!headers.length) return "";
+  const lines = [headers.map((header) => escapeCsvValue(header)).join(",")];
+  normalizedRows.forEach((row) => {
+    const values = headers.map((header) => escapeCsvValue(toCsvCellValue(row[header])));
+    lines.push(values.join(","));
+  });
+  return lines.join("\n");
+};
+
+const sanitizeZipPathSegment = (value, fallback = "file") => {
+  const sanitized = String(value || "")
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]+/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/^\.+/, "")
+    .replace(/\.+$/, "");
+  return sanitized || fallback;
+};
+
+const sanitizeZipRelativePath = (value, fallback = "file.bin") => {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  const parts = raw
+    .split("/")
+    .map((part) => sanitizeZipPathSegment(part, "file"))
+    .filter(Boolean);
+  return parts.length ? parts.join("/") : fallback;
+};
+
+const ZIP_CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+    }
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+const computeCrc32 = (bytes) => {
+  let crc = 0xffffffff;
+  for (let index = 0; index < bytes.length; index += 1) {
+    crc = ZIP_CRC32_TABLE[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+};
+
+const createZipHeader = (size, writer) => {
+  const bytes = new Uint8Array(size);
+  const view = new DataView(bytes.buffer);
+  writer(view);
+  return bytes;
+};
+
+const getZipDosDateTime = (value = new Date()) => {
+  const year = Math.max(value.getFullYear(), 1980);
+  const month = Math.min(Math.max(value.getMonth() + 1, 1), 12);
+  const day = Math.min(Math.max(value.getDate(), 1), 31);
+  const hours = Math.min(Math.max(value.getHours(), 0), 23);
+  const minutes = Math.min(Math.max(value.getMinutes(), 0), 59);
+  const seconds = Math.floor(Math.min(Math.max(value.getSeconds(), 0), 59) / 2);
+  return {
+    date: ((year - 1980) << 9) | (month << 5) | day,
+    time: (hours << 11) | (minutes << 5) | seconds,
+  };
+};
+
+const buildZipBlobFromTextFiles = (files = []) => {
+  const textEncoder = new TextEncoder();
+  const normalizedFiles = (Array.isArray(files) ? files : [])
+    .map((file, index) => {
+      const fileName = sanitizeZipRelativePath(
+        file?.name || `file-${index + 1}.json`,
+        `file-${index + 1}.json`
+      );
+      if (!fileName) return null;
+      let contentBytes = null;
+      if (file?.bytes instanceof Uint8Array) {
+        contentBytes = file.bytes;
+      } else if (file?.bytes instanceof ArrayBuffer) {
+        contentBytes = new Uint8Array(file.bytes);
+      } else if (ArrayBuffer.isView(file?.bytes)) {
+        contentBytes = new Uint8Array(file.bytes.buffer, file.bytes.byteOffset, file.bytes.byteLength);
+      } else {
+        contentBytes = textEncoder.encode(String(file?.content || ""));
+      }
+      return {
+        fileName,
+        fileNameBytes: textEncoder.encode(fileName),
+        contentBytes,
+      };
+    })
+    .filter(Boolean);
+
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+
+  normalizedFiles.forEach((entry) => {
+    const crc32 = computeCrc32(entry.contentBytes);
+    const { date, time } = getZipDosDateTime();
+
+    const localHeader = createZipHeader(30, (view) => {
+      view.setUint32(0, 0x04034b50, true);
+      view.setUint16(4, 20, true);
+      view.setUint16(6, 0, true);
+      view.setUint16(8, 0, true);
+      view.setUint16(10, time, true);
+      view.setUint16(12, date, true);
+      view.setUint32(14, crc32, true);
+      view.setUint32(18, entry.contentBytes.length, true);
+      view.setUint32(22, entry.contentBytes.length, true);
+      view.setUint16(26, entry.fileNameBytes.length, true);
+      view.setUint16(28, 0, true);
+    });
+
+    const centralHeader = createZipHeader(46, (view) => {
+      view.setUint32(0, 0x02014b50, true);
+      view.setUint16(4, 20, true);
+      view.setUint16(6, 20, true);
+      view.setUint16(8, 0, true);
+      view.setUint16(10, 0, true);
+      view.setUint16(12, time, true);
+      view.setUint16(14, date, true);
+      view.setUint32(16, crc32, true);
+      view.setUint32(20, entry.contentBytes.length, true);
+      view.setUint32(24, entry.contentBytes.length, true);
+      view.setUint16(28, entry.fileNameBytes.length, true);
+      view.setUint16(30, 0, true);
+      view.setUint16(32, 0, true);
+      view.setUint16(34, 0, true);
+      view.setUint16(36, 0, true);
+      view.setUint32(38, 0, true);
+      view.setUint32(42, offset, true);
+    });
+
+    localParts.push(localHeader, entry.fileNameBytes, entry.contentBytes);
+    centralParts.push(centralHeader, entry.fileNameBytes);
+    offset += localHeader.length + entry.fileNameBytes.length + entry.contentBytes.length;
+  });
+
+  const centralDirectorySize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const endOfCentralDirectory = createZipHeader(22, (view) => {
+    view.setUint32(0, 0x06054b50, true);
+    view.setUint16(4, 0, true);
+    view.setUint16(6, 0, true);
+    view.setUint16(8, normalizedFiles.length, true);
+    view.setUint16(10, normalizedFiles.length, true);
+    view.setUint32(12, centralDirectorySize, true);
+    view.setUint32(16, offset, true);
+    view.setUint16(20, 0, true);
+  });
+
+  return new Blob([...localParts, ...centralParts, endOfCentralDirectory], {
+    type: "application/zip",
+  });
+};
+
+const downloadBlobAsFile = (blob, filename) => {
+  const downloadUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = downloadUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(downloadUrl);
 };
 
 const isDuplicateDatabaseError = (error) => {
@@ -1067,6 +1313,7 @@ const toDisplayLabel = (value, fallback = "Unknown") => {
 
 function OrganizationPage({
   user,
+  tenantRole,
   tenantId,
   tenant,
   requestedTab = "overview",
@@ -1074,6 +1321,7 @@ function OrganizationPage({
   onTenantUpdated,
   setActivePage
 }) {
+  const navigate = useNavigate();
   const { currencyCode } = useTenantCurrency();
   const [activeTab, setActiveTab] = useState("overview");
   const [isMobileOrganizationViewport, setIsMobileOrganizationViewport] = useState(() =>
@@ -1187,6 +1435,15 @@ function OrganizationPage({
   const [savingPartner, setSavingPartner] = useState(false);
   const [importingPartners, setImportingPartners] = useState(false);
   const [showDeletePartnerModal, setShowDeletePartnerModal] = useState(false);
+  const [showWorkspaceClosureChoiceModal, setShowWorkspaceClosureChoiceModal] = useState(false);
+  const [showWorkspaceClosureModal, setShowWorkspaceClosureModal] = useState(false);
+  const [workspaceClosureMode, setWorkspaceClosureMode] = useState("pause");
+  const [workspaceClosureSelections, setWorkspaceClosureSelections] = useState(
+    DEFAULT_WORKSPACE_EXPORT_SELECTION
+  );
+  const [workspaceClosureConfirmValue, setWorkspaceClosureConfirmValue] = useState("");
+  const [workspaceClosureError, setWorkspaceClosureError] = useState("");
+  const [processingWorkspaceClosure, setProcessingWorkspaceClosure] = useState(false);
 
   const formatCurrency = (value) => {
     const parsed = Number(value);
@@ -1422,6 +1679,57 @@ function OrganizationPage({
   useEffect(() => {
     loadWorkspace();
   }, [loadWorkspace]);
+
+  const rawRole = String(tenantRole || user?.role || "").trim().toLowerCase();
+  const normalizedUserRole = rawRole === "super_admin" ? "superadmin" : rawRole;
+  const normalizedUserEmail = String(user?.email || "").trim().toLowerCase();
+  const normalizedTenantContactEmail = String(
+    tenantRecord?.contact_email || tenant?.contact_email || ""
+  )
+    .trim()
+    .toLowerCase();
+  const isWorkspaceOwner = Boolean(
+    normalizedUserEmail && normalizedTenantContactEmail && normalizedUserEmail === normalizedTenantContactEmail
+  );
+  const isSuperAdminRole = normalizedUserRole === "superadmin";
+  const isAdminRole =
+    normalizedUserRole === "admin" ||
+    normalizedUserRole === "org_admin" ||
+    normalizedUserRole === "organization_admin";
+  const canManageWorkspaceClosure = isSuperAdminRole || (isAdminRole && isWorkspaceOwner);
+
+  const workspaceClosureState = useMemo(() => {
+    const siteData = safeObject(tenantRecord?.site_data);
+    return safeObject(siteData.workspace_closure);
+  }, [tenantRecord?.site_data]);
+  const workspaceClosureStatus = String(workspaceClosureState?.status || "").trim().toLowerCase();
+  const isWorkspacePaused = workspaceClosureStatus === "paused";
+  const workspacePauseExpiry = String(workspaceClosureState?.expires_at || "").trim();
+  const workspacePauseExpiryTime = Date.parse(workspacePauseExpiry);
+  const isWorkspacePauseExpired =
+    Number.isFinite(workspacePauseExpiryTime) && workspacePauseExpiryTime <= Date.now();
+  const workspacePauseSelectedSections = useMemo(() => {
+    const raw = asArray(workspaceClosureState?.export_sections)
+      .map((value) => String(value || "").trim())
+      .filter((value) => WORKSPACE_EXPORT_OPTION_KEYS.has(value));
+    return raw.length ? raw : DEFAULT_WORKSPACE_EXPORT_SELECTION;
+  }, [workspaceClosureState?.export_sections]);
+  const workspacePauseDaysRemaining = useMemo(() => {
+    if (!Number.isFinite(workspacePauseExpiryTime)) return null;
+    const diff = workspacePauseExpiryTime - Date.now();
+    if (diff <= 0) return 0;
+    return Math.ceil(diff / (24 * 60 * 60 * 1000));
+  }, [workspacePauseExpiryTime]);
+  const isOrganizationWorkspaceLocked = isWorkspacePaused;
+  const workspacePauseExpiryLabel = Number.isFinite(workspacePauseExpiryTime)
+    ? formatDate(workspacePauseExpiry)
+    : "";
+  const workspaceSelectedExportLabels = useMemo(() => {
+    const selected = isWorkspacePaused ? workspacePauseSelectedSections : workspaceClosureSelections;
+    return WORKSPACE_EXPORT_OPTIONS.filter((option) => selected.includes(option.key)).map(
+      (option) => option.label
+    );
+  }, [isWorkspacePaused, workspacePauseSelectedSections, workspaceClosureSelections]);
 
   const partners = useMemo(
     () => getOrganizationPartners(tenantRecord?.site_data),
@@ -4217,6 +4525,393 @@ function OrganizationPage({
     });
   }, []);
 
+  const openWorkspaceClosureModalWithMode = (mode, selectedSections = DEFAULT_WORKSPACE_EXPORT_SELECTION) => {
+    const safeMode = mode === "delete" ? "delete" : "pause";
+    const normalizedSelections = Array.from(
+      new Set(
+        asArray(selectedSections)
+          .map((value) => String(value || "").trim())
+          .filter((value) => WORKSPACE_EXPORT_OPTION_KEYS.has(value))
+      )
+    );
+    setWorkspaceClosureMode(safeMode);
+    setWorkspaceClosureSelections(
+      normalizedSelections.length ? normalizedSelections : DEFAULT_WORKSPACE_EXPORT_SELECTION
+    );
+    setWorkspaceClosureConfirmValue("");
+    setWorkspaceClosureError("");
+    setShowWorkspaceClosureModal(true);
+  };
+
+  const openWorkspacePauseFlow = () => {
+    openWorkspaceClosureModalWithMode("pause", workspacePauseSelectedSections);
+  };
+
+  const openWorkspaceDeleteFlow = () => {
+    openWorkspaceClosureModalWithMode("delete", DEFAULT_WORKSPACE_EXPORT_SELECTION);
+  };
+
+  const openWorkspaceDeleteFromPauseFlow = () => {
+    openWorkspaceClosureModalWithMode("delete", workspacePauseSelectedSections);
+  };
+
+  const closeWorkspaceClosureModal = () => {
+    if (processingWorkspaceClosure) return;
+    setShowWorkspaceClosureModal(false);
+    setWorkspaceClosureConfirmValue("");
+    setWorkspaceClosureError("");
+  };
+
+  const toggleWorkspaceClosureSelection = (key) => {
+    const normalizedKey = String(key || "").trim();
+    if (!WORKSPACE_EXPORT_OPTION_KEYS.has(normalizedKey)) return;
+    setWorkspaceClosureSelections((prev) => {
+      if (prev.includes(normalizedKey)) {
+        const next = prev.filter((item) => item !== normalizedKey);
+        return next.length ? next : [normalizedKey];
+      }
+      return [...prev, normalizedKey];
+    });
+  };
+
+  const buildWorkspaceExportPayload = async (selectedSections) => {
+    const selected = new Set(
+      asArray(selectedSections)
+        .map((value) => String(value || "").trim())
+        .filter((value) => WORKSPACE_EXPORT_OPTION_KEYS.has(value))
+    );
+    const timestamp = new Date().toISOString();
+    const payload = {
+      manifest: {
+        generated_at: timestamp,
+        tenant_id: tenantId,
+        tenant_slug: tenantRecord?.slug || null,
+        tenant_name: tenantRecord?.name || null,
+        exported_sections: Array.from(selected),
+      },
+    };
+
+    if (selected.has("organization_profile")) {
+      payload.organization_profile = {
+        tenant: tenantRecord || null,
+      };
+    }
+    if (selected.has("members")) {
+      payload.members = members;
+    }
+    if (selected.has("projects")) {
+      payload.projects = projects;
+    }
+    if (selected.has("records")) {
+      payload.records = documents;
+    }
+    if (selected.has("activities")) {
+      payload.activities = meetings;
+    }
+    if (selected.has("partners")) {
+      payload.partners = partners;
+    }
+    if (selected.has("templates")) {
+      payload.templates = organizationTemplates;
+    }
+    if (selected.has("finance_records")) {
+      const projectIds = projects
+        .map((project) => Number.parseInt(String(project?.id || ""), 10))
+        .filter((projectId) => Number.isInteger(projectId) && projectId > 0);
+      const [contributions, payouts, welfareTransactions, projectExpenses, projectSales] =
+        await Promise.all([
+          getTenantContributions(tenantId),
+          getTenantPayouts(tenantId),
+          getWelfareTransactionsAdmin(tenantId),
+          projectIds.length ? getProjectExpensesForProjects(projectIds, tenantId) : Promise.resolve([]),
+          projectIds.length ? getProjectSalesForProjects(projectIds, tenantId) : Promise.resolve([]),
+        ]);
+      payload.finance_records = {
+        contributions: Array.isArray(contributions) ? contributions : [],
+        payouts: Array.isArray(payouts) ? payouts : [],
+        welfare_transactions: Array.isArray(welfareTransactions) ? welfareTransactions : [],
+        project_expenses: Array.isArray(projectExpenses) ? projectExpenses : [],
+        project_sales: Array.isArray(projectSales) ? projectSales : [],
+      };
+    }
+
+    return payload;
+  };
+
+  const downloadWorkspaceExportZip = async (selectedSections, reasonLabel = "workspace-export") => {
+    const selected = new Set(
+      asArray(selectedSections)
+        .map((value) => String(value || "").trim())
+        .filter((value) => WORKSPACE_EXPORT_OPTION_KEYS.has(value))
+    );
+    const exportPayload = await buildWorkspaceExportPayload(selectedSections);
+    const files = [];
+    const attachmentErrors = [];
+    const dateLabel = new Date().toISOString().slice(0, 10);
+
+    const pushTextFile = (name, content) => {
+      files.push({
+        name: sanitizeZipRelativePath(name),
+        content: String(content || ""),
+      });
+    };
+
+    const appendSectionExports = (sectionKey, sectionValue) => {
+      pushTextFile(`${sectionKey}.json`, JSON.stringify(sectionValue, null, 2));
+
+      if (Array.isArray(sectionValue)) {
+        const csv = buildCsvFromRows(sectionValue);
+        if (csv) pushTextFile(`${sectionKey}.csv`, csv);
+        return;
+      }
+
+      if (!sectionValue || typeof sectionValue !== "object") {
+        return;
+      }
+
+      Object.entries(sectionValue).forEach(([childKey, childValue]) => {
+        if (!Array.isArray(childValue)) return;
+        const csv = buildCsvFromRows(childValue);
+        const folder = sanitizeZipPathSegment(sectionKey, "section");
+        const fileBase = sanitizeZipPathSegment(childKey, "rows");
+        pushTextFile(`${folder}/${fileBase}.json`, JSON.stringify(childValue, null, 2));
+        if (csv) {
+          pushTextFile(`${folder}/${fileBase}.csv`, csv);
+        }
+      });
+    };
+
+    const downloadBinaryFile = async (url, zipPath, sourceLabel) => {
+      const cleanUrl = String(url || "").trim();
+      if (!cleanUrl) return;
+      try {
+        const response = await fetch(cleanUrl);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        files.push({
+          name: sanitizeZipRelativePath(zipPath),
+          bytes,
+        });
+      } catch (error) {
+        attachmentErrors.push(`${sourceLabel}: ${error?.message || "download failed"}`);
+      }
+    };
+
+    Object.entries(exportPayload).forEach(([sectionKey, sectionValue]) => {
+      appendSectionExports(sectionKey, sectionValue);
+    });
+
+    if (selected.has("records")) {
+      for (let index = 0; index < documents.length; index += 1) {
+        const document = documents[index];
+        const documentUrl = getDocumentDownloadUrl(document);
+        const nameCandidate =
+          getDocumentName(document) ||
+          String(document?.file_path || "").split("/").pop() ||
+          `record-${index + 1}`;
+        const extension = getFileExtension(nameCandidate);
+        const fallbackExtension =
+          extension !== "file"
+            ? extension
+            : getFileExtension(document?.file_path || document?.mime_type || document?.file_url || "");
+        const baseName =
+          extension !== "file"
+            ? nameCandidate
+            : `${sanitizeZipPathSegment(nameCandidate, `record-${index + 1}`)}.${
+                fallbackExtension && fallbackExtension !== "file" ? fallbackExtension : "bin"
+              }`;
+        await downloadBinaryFile(
+          documentUrl,
+          `records/files/${sanitizeZipPathSegment(baseName, `record-${index + 1}.bin`)}`,
+          `Record ${index + 1}`
+        );
+      }
+    }
+
+    if (selected.has("templates")) {
+      for (let index = 0; index < organizationTemplates.length; index += 1) {
+        const template = organizationTemplates[index];
+        const templateName = String(template?.name || "").trim() || `template-${index + 1}`;
+        const path = String(template?.file_path || "").trim();
+        if (!path) {
+          attachmentErrors.push(`Template "${templateName}": missing file path.`);
+          continue;
+        }
+        let signedUrl = "";
+        try {
+          signedUrl = (await getOrganizationTemplateDownloadUrl(path)) || "";
+        } catch (error) {
+          attachmentErrors.push(`Template "${templateName}": ${error?.message || "failed to sign URL"}`);
+          continue;
+        }
+        const pathFileName = path.split("/").pop() || "";
+        const extension = getFileExtension(pathFileName);
+        const finalName =
+          extension !== "file"
+            ? `${sanitizeZipPathSegment(templateName, `template-${index + 1}`)}.${extension}`
+            : sanitizeZipPathSegment(templateName, `template-${index + 1}`);
+        await downloadBinaryFile(
+          signedUrl,
+          `templates/files/${finalName}`,
+          `Template "${templateName}"`
+        );
+      }
+    }
+
+    if (attachmentErrors.length) {
+      pushTextFile("attachments-errors.txt", attachmentErrors.join("\n"));
+    }
+
+    pushTextFile(
+      "README.txt",
+      [
+        `Workspace export generated on ${new Date().toISOString()}`,
+        "",
+        "Included:",
+        "- JSON snapshots for each selected section.",
+        "- CSV files for list/table data.",
+        "- Attached files for records and templates when URLs are accessible.",
+        "",
+        attachmentErrors.length
+          ? `Attachment download issues: ${attachmentErrors.length} (see attachments-errors.txt)`
+          : "Attachment download issues: none",
+      ].join("\n")
+    );
+
+    const zipBlob = buildZipBlobFromTextFiles(files);
+    const safeWorkspaceName = toFilenameSlug(tenantRecord?.slug || tenantRecord?.name || "workspace");
+    const fileName = `${safeWorkspaceName}-${reasonLabel}-${dateLabel}.zip`;
+    downloadBlobAsFile(zipBlob, fileName);
+    return fileName;
+  };
+
+  const updateWorkspaceClosureState = async (nextClosureState, nextIsPublic = tenantRecord?.is_public) => {
+    if (!tenantId) {
+      throw new Error("Tenant context is missing.");
+    }
+    const existingSiteData = safeObject(tenantRecord?.site_data);
+    const nextSiteData = {
+      ...existingSiteData,
+    };
+    if (nextClosureState && typeof nextClosureState === "object") {
+      nextSiteData.workspace_closure = nextClosureState;
+    } else {
+      delete nextSiteData.workspace_closure;
+    }
+    const updatedTenant = await updateTenant(tenantId, {
+      site_data: nextSiteData,
+      is_public: nextIsPublic ?? true,
+    });
+    setTenantRecord(updatedTenant);
+    onTenantUpdated?.(updatedTenant);
+    return updatedTenant;
+  };
+
+  const handleResumeWorkspace = async () => {
+    if (!canManageWorkspaceClosure || processingWorkspaceClosure || !tenantId) return;
+    setProcessingWorkspaceClosure(true);
+    setWorkspaceClosureError("");
+    try {
+      const previousIsPublic =
+        workspaceClosureState?.previous_is_public === false ? false : true;
+      await updateWorkspaceClosureState(null, previousIsPublic);
+      setNotice({
+        type: "success",
+        message: "Workspace pause removed. Workspace is active again.",
+      });
+    } catch (error) {
+      const message = error?.message || "Failed to resume workspace.";
+      setWorkspaceClosureError(message);
+      setNotice({
+        type: "error",
+        message,
+      });
+    } finally {
+      setProcessingWorkspaceClosure(false);
+    }
+  };
+
+  const handleSubmitWorkspaceClosure = async (event) => {
+    event.preventDefault();
+    if (!canManageWorkspaceClosure) {
+      setWorkspaceClosureError("Only the workspace owner can perform this action.");
+      return;
+    }
+    if (!tenantId) {
+      setWorkspaceClosureError("Workspace context is missing.");
+      return;
+    }
+    if (!workspaceClosureSelections.length) {
+      setWorkspaceClosureError("Select at least one data section to include in export.");
+      return;
+    }
+    if (
+      workspaceClosureMode === "delete" &&
+      String(workspaceClosureConfirmValue || "").trim().toUpperCase() !== WORKSPACE_DELETE_CONFIRM_TEXT
+    ) {
+      setWorkspaceClosureError(`Type "${WORKSPACE_DELETE_CONFIRM_TEXT}" to confirm permanent deletion.`);
+      return;
+    }
+    if (workspaceClosureMode === "delete" && isWorkspacePaused && !isWorkspacePauseExpired) {
+      setWorkspaceClosureError("Workspace can only be deleted after the 30-day pause period expires.");
+      return;
+    }
+
+    setProcessingWorkspaceClosure(true);
+    setWorkspaceClosureError("");
+
+    try {
+      if (workspaceClosureMode === "pause") {
+        const now = new Date();
+        const expiry = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+        await updateWorkspaceClosureState(
+          {
+            status: "paused",
+            mode: "pause_then_delete",
+            requested_at: now.toISOString(),
+            expires_at: expiry.toISOString(),
+            export_sections: workspaceClosureSelections,
+            requested_by_member_id: user?.id || null,
+            requested_by_email: user?.email || null,
+            previous_is_public: tenantRecord?.is_public !== false,
+          },
+          false
+        );
+        setShowWorkspaceClosureModal(false);
+        setNotice({
+          type: "warning",
+          message:
+            "Workspace paused for 30 days. After expiry you can download your selected data and permanently delete workspace + account.",
+        });
+        return;
+      }
+
+      await downloadWorkspaceExportZip(
+        workspaceClosureSelections,
+        isWorkspacePaused ? "workspace-final-export" : "workspace-immediate-export"
+      );
+      await deleteTenantWorkspace(tenantId);
+
+      try {
+        const memberships = await getTenantMemberships(user?.id);
+        if (!Array.isArray(memberships) || memberships.length === 0) {
+          await deleteOwnMemberProfile(user?.id);
+        }
+      } catch (profileDeleteError) {
+        console.warn("Workspace deleted but member profile cleanup failed:", profileDeleteError);
+      }
+
+      await signOut();
+      navigate("/login");
+    } catch (error) {
+      setWorkspaceClosureError(error?.message || "Failed to complete workspace closure.");
+    } finally {
+      setProcessingWorkspaceClosure(false);
+    }
+  };
+
   const memberAllSelected =
     memberRowIds.length > 0 && memberRowIds.every((id) => selectedMemberIds.includes(id));
   const documentAllSelected =
@@ -4575,6 +5270,166 @@ function OrganizationPage({
               </div>
             </article>
           </div>
+
+          {canManageWorkspaceClosure ? (
+            <div className="project-overview-panel-grid project-overview-panel-grid--secondary">
+              <article className="project-overview-panel organization-workspace-closure-panel">
+                <div className="project-overview-panel-head">
+                  <h5>Workspace lifecycle</h5>
+                  <span
+                    className={`org-shell-status-badge ${
+                      isWorkspacePaused ? "is-pending" : "is-active"
+                    }`}
+                  >
+                    {isWorkspacePaused ? "Paused" : "Active"}
+                  </span>
+                </div>
+
+                {!isWorkspacePaused ? (
+                  <p className="organization-workspace-closure-copy">
+                    Pause this workspace for 30 days or delete immediately. Both flows let you export selected
+                    data as a ZIP before final removal.
+                  </p>
+                ) : (
+                  <div className="organization-workspace-closure-status">
+                    <p>
+                      <strong>Pause expiry:</strong>{" "}
+                      {workspacePauseExpiryLabel || "—"}
+                    </p>
+                    <p>
+                      <strong>Days remaining:</strong>{" "}
+                      {workspacePauseDaysRemaining === null
+                        ? "—"
+                        : workspacePauseDaysRemaining === 0
+                          ? "Expired"
+                          : `${workspacePauseDaysRemaining} day${
+                              workspacePauseDaysRemaining === 1 ? "" : "s"
+                            }`}
+                    </p>
+                    <p>
+                      <strong>Selected export sections:</strong>{" "}
+                      {workspaceSelectedExportLabels.length
+                        ? workspaceSelectedExportLabels.join(", ")
+                        : "None"}
+                    </p>
+                  </div>
+                )}
+
+                <div className="organization-workspace-closure-actions">
+                  {!isWorkspacePaused ? (
+                    <>
+                      <button
+                        type="button"
+                        className="project-detail-action"
+                        onClick={() => setShowWorkspaceClosureChoiceModal(true)}
+                      >
+                        Close workspace
+                      </button>
+                      <button
+                        type="button"
+                        className="project-detail-action ghost"
+                        onClick={openWorkspacePauseFlow}
+                      >
+                        Pause only
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="project-detail-action"
+                        onClick={openWorkspaceDeleteFromPauseFlow}
+                        disabled={!isWorkspacePauseExpired || processingWorkspaceClosure}
+                      >
+                        {isWorkspacePauseExpired
+                          ? "Export ZIP and delete workspace"
+                          : `Delete after ${workspacePauseDaysRemaining || 0} day${
+                              workspacePauseDaysRemaining === 1 ? "" : "s"
+                            }`}
+                      </button>
+                      <button
+                        type="button"
+                        className="project-detail-action ghost"
+                        onClick={handleResumeWorkspace}
+                        disabled={processingWorkspaceClosure}
+                      >
+                        {processingWorkspaceClosure ? "Resuming..." : "Resume workspace"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </article>
+            </div>
+          ) : null}
+        </div>
+      </article>
+    );
+  };
+
+  const renderPausedWorkspacePanel = () => {
+    const isOwnerManager = canManageWorkspaceClosure;
+    const hasExpiryDate = Boolean(workspacePauseExpiryLabel);
+    return (
+      <article className="org-shell-panel org-shell-panel--overview organization-workspace-paused-panel">
+        <div className="organization-workspace-paused-icon" aria-hidden="true">
+          <Icon name="clock-alert" size={18} />
+        </div>
+        <h4>Workspace is paused</h4>
+        <p>
+          {isOwnerManager
+            ? "All workspace operations are locked. Resume this workspace or finalize closure from here."
+            : "This workspace has been paused by the owner and is temporarily unavailable."}
+        </p>
+        {hasExpiryDate ? (
+          <p className="organization-workspace-paused-meta">
+            Pause expiry: <strong>{workspacePauseExpiryLabel}</strong>
+            {workspacePauseDaysRemaining !== null
+              ? workspacePauseDaysRemaining === 0
+                ? " (expired)"
+                : ` (${workspacePauseDaysRemaining} day${workspacePauseDaysRemaining === 1 ? "" : "s"} left)`
+              : ""}
+          </p>
+        ) : null}
+        {workspaceClosureError ? (
+          <p className="data-modal-feedback data-modal-feedback--error">{workspaceClosureError}</p>
+        ) : null}
+        <div className="organization-workspace-paused-actions">
+          {isOwnerManager ? (
+            <>
+              <button
+                type="button"
+                className="project-detail-action"
+                onClick={handleResumeWorkspace}
+                disabled={processingWorkspaceClosure}
+              >
+                {processingWorkspaceClosure ? "Resuming..." : "Resume workspace"}
+              </button>
+              <button
+                type="button"
+                className="project-detail-action ghost"
+                onClick={() =>
+                  isWorkspacePauseExpired ? openWorkspaceDeleteFromPauseFlow() : openWorkspacePauseFlow()
+                }
+                disabled={processingWorkspaceClosure}
+              >
+                {isWorkspacePauseExpired ? "Finalize closure" : "View closure settings"}
+              </button>
+            </>
+          ) : null}
+          <button
+            type="button"
+            className="project-detail-action ghost"
+            onClick={() => navigate("/select-tenant")}
+          >
+            Switch workspace
+          </button>
+          <button
+            type="button"
+            className="project-detail-action ghost"
+            onClick={() => navigate("/get-started")}
+          >
+            Start another trial
+          </button>
         </div>
       </article>
     );
@@ -5784,37 +6639,42 @@ function OrganizationPage({
           <div>
             <h2>Organization Profile</h2>
             <p>
-              Manage the whole organization workspace: profile, members, records, activities, and
-              partner relationships.
+              {isOrganizationWorkspaceLocked
+                ? "Workspace is paused. Organization settings are temporarily locked."
+                : "Manage the whole organization workspace: profile, members, records, activities, and partner relationships."}
             </p>
           </div>
-          <div className="org-shell-header-actions">
-            <button
-              type="button"
-              className="project-detail-action ghost"
-              onClick={() => loadWorkspace({ silent: true })}
-              disabled={refreshing || loading}
-            >
-              {refreshing ? "Refreshing..." : "Refresh"}
-            </button>
-            <button type="button" className="project-detail-action" onClick={openOrgEditor}>
-              Edit organization
-            </button>
-          </div>
+          {!isOrganizationWorkspaceLocked ? (
+            <div className="org-shell-header-actions">
+              <button
+                type="button"
+                className="project-detail-action ghost"
+                onClick={() => loadWorkspace({ silent: true })}
+                disabled={refreshing || loading}
+              >
+                {refreshing ? "Refreshing..." : "Refresh"}
+              </button>
+              <button type="button" className="project-detail-action" onClick={openOrgEditor}>
+                Edit organization
+              </button>
+            </div>
+          ) : null}
         </header>
 
-        <div className="org-shell-tabs" role="tablist" aria-label="Organization sections">
-          {ORG_TABS.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              className={`org-shell-tab${activeTab === tab.key ? " active" : ""}`}
-              onClick={() => setActiveTab(tab.key)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        {!isOrganizationWorkspaceLocked ? (
+          <div className="org-shell-tabs" role="tablist" aria-label="Organization sections">
+            {ORG_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                className={`org-shell-tab${activeTab === tab.key ? " active" : ""}`}
+                onClick={() => setActiveTab(tab.key)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         {notice ? (
           <div className={`projects-notice projects-notice--${notice.type || "success"}`}>
@@ -5831,19 +6691,123 @@ function OrganizationPage({
           </div>
         ) : (
           <>
-            {activeTab === "overview" ? renderOverviewTab() : null}
-            {activeTab === "members" ? renderMembersTab() : null}
-            {activeTab === "documents"
+            {isOrganizationWorkspaceLocked ? renderPausedWorkspacePanel() : null}
+            {!isOrganizationWorkspaceLocked && activeTab === "overview" ? renderOverviewTab() : null}
+            {!isOrganizationWorkspaceLocked && activeTab === "members" ? renderMembersTab() : null}
+            {!isOrganizationWorkspaceLocked && activeTab === "documents"
               ? isMobileOrganizationViewport
                 ? renderRecordsMobileTab()
                 : renderDocumentsTab()
               : null}
-            {activeTab === "activities" ? renderActivitiesTab() : null}
-            {activeTab === "partners" ? renderPartnersTab() : null}
-            {activeTab === "templates" ? renderTemplatesTab() : null}
+            {!isOrganizationWorkspaceLocked && activeTab === "activities" ? renderActivitiesTab() : null}
+            {!isOrganizationWorkspaceLocked && activeTab === "partners" ? renderPartnersTab() : null}
+            {!isOrganizationWorkspaceLocked && activeTab === "templates" ? renderTemplatesTab() : null}
           </>
         )}
       </section>
+
+      <ChoiceModal
+        open={showWorkspaceClosureChoiceModal}
+        onClose={() => setShowWorkspaceClosureChoiceModal(false)}
+        title="Close workspace"
+        message="Choose how you want to close this workspace."
+        option1Label="Pause 30 days"
+        option1Icon="clock"
+        option1Description="Hide workspace now and keep it recoverable for 30 days."
+        onOption1Click={openWorkspacePauseFlow}
+        option2Label="Delete now"
+        option2Icon="trash"
+        option2Description="Export selected data now and permanently remove workspace."
+        onOption2Click={openWorkspaceDeleteFlow}
+      />
+
+      <DataModal
+        open={showWorkspaceClosureModal}
+        onClose={closeWorkspaceClosureModal}
+        title={workspaceClosureMode === "delete" ? "Delete workspace" : "Pause workspace"}
+        subtitle={
+          workspaceClosureMode === "delete"
+            ? "Export selected sections as ZIP before permanent deletion."
+            : "Pause for 30 days. You can resume any time before expiry."
+        }
+        icon={workspaceClosureMode === "delete" ? "alert" : "clock"}
+      >
+        <form className="data-modal-form" onSubmit={handleSubmitWorkspaceClosure}>
+          {workspaceClosureError ? (
+            <p className="data-modal-feedback data-modal-feedback--error">{workspaceClosureError}</p>
+          ) : null}
+
+          <div className="workspace-closure-select-grid">
+            {WORKSPACE_EXPORT_OPTIONS.map((option) => {
+              const checked = workspaceClosureSelections.includes(option.key);
+              return (
+                <label
+                  key={`workspace-export-option-${option.key}`}
+                  className={`workspace-closure-select-option${checked ? " is-selected" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleWorkspaceClosureSelection(option.key)}
+                    disabled={processingWorkspaceClosure}
+                  />
+                  <div className="workspace-closure-select-copy">
+                    <strong>{option.label}</strong>
+                    <small>{option.description}</small>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+
+          <p className="data-modal-hint">
+            {workspaceClosureSelections.length} section
+            {workspaceClosureSelections.length === 1 ? "" : "s"} selected for ZIP export.
+          </p>
+
+          {workspaceClosureMode === "delete" ? (
+            <label className="data-modal-field data-modal-field--full">
+              Type <strong>{WORKSPACE_DELETE_CONFIRM_TEXT}</strong> to confirm permanent deletion
+              <input
+                type="text"
+                value={workspaceClosureConfirmValue}
+                onChange={(event) => setWorkspaceClosureConfirmValue(event.target.value)}
+                disabled={processingWorkspaceClosure}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={WORKSPACE_DELETE_CONFIRM_TEXT}
+                required
+              />
+            </label>
+          ) : null}
+
+          <div className="data-modal-actions">
+            <button
+              type="button"
+              className="data-modal-btn"
+              onClick={closeWorkspaceClosureModal}
+              disabled={processingWorkspaceClosure}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className={`data-modal-btn ${
+                workspaceClosureMode === "delete" ? "data-modal-btn--danger" : "data-modal-btn--primary"
+              }`}
+              disabled={processingWorkspaceClosure}
+            >
+              {workspaceClosureMode === "delete"
+                ? processingWorkspaceClosure
+                  ? "Deleting..."
+                  : "Export ZIP and delete"
+                : processingWorkspaceClosure
+                  ? "Pausing..."
+                  : "Pause for 30 days"}
+            </button>
+          </div>
+        </form>
+      </DataModal>
 
       <DataModal
         open={showOrgModal}

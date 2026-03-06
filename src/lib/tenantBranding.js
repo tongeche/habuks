@@ -1,3 +1,5 @@
+import { getPlanFeatureSet, resolveTenantSubscriptionPlanId } from "./subscriptionPlans.js";
+
 const DEFAULT_THEME = {
   sidebar: "#0b1226",
   sidebarAlt: "#14203a",
@@ -104,10 +106,21 @@ export function buildTenantThemeVars(tenant, baseData = {}) {
 export function buildTenantFeatures(tenant, baseData = {}) {
   const overrides = toObject(tenant?.site_data);
   const baseFeatures = toObject(baseData.features);
+  const subscriptionFeatures = getPlanFeatureSet(
+    resolveTenantSubscriptionPlanId(tenant, "starter"),
+    "starter"
+  );
   const overrideFeatures = toObject(overrides.features);
-  return {
+  const merged = {
     ...DEFAULT_FEATURES,
     ...baseFeatures,
+    ...subscriptionFeatures,
     ...overrideFeatures,
   };
+  Object.entries(subscriptionFeatures).forEach(([featureKey, isEnabled]) => {
+    if (isEnabled === false) {
+      merged[featureKey] = false;
+    }
+  });
+  return merged;
 }

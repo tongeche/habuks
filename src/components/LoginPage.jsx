@@ -98,7 +98,7 @@ export default function LoginPage() {
       try {
         const member = await getCurrentMember();
         if (!member) {
-          navigate("/signup");
+          navigate("/get-started");
           return;
         }
 
@@ -195,7 +195,7 @@ export default function LoginPage() {
         }
 
         // No workspace found — send to workspace creation
-        navigate("/signup");
+        navigate("/get-started");
         return;
       } catch (resolveErr) {
         console.warn("Login: could not resolve tenant, falling back:", resolveErr);

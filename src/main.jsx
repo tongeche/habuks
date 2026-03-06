@@ -7,6 +7,7 @@ import LandingPage from "./components/LandingPage.jsx";
 import WelcomePage from "./components/WelcomePage.jsx";
 import LoginPage from "./components/LoginPage.jsx";
 import SignupPage from "./components/SignupPage.jsx";
+import TenantSignupPage from "./components/TenantSignupPage.jsx";
 import InvitePage from "./components/InvitePage.jsx";
 import ResetPasswordPage from "./components/ResetPasswordPage.jsx";
 import AboutPage from "./components/AboutPage.jsx";
@@ -68,7 +69,7 @@ if (rootElement) {
           <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
           <Route path="/register" element={<Navigate to="/invite" replace />} />
           <Route path="/join" element={<Navigate to="/invite" replace />} />
-          <Route path="/get-started" element={<Navigate to="/signup" replace />} />
+          <Route path="/get-started" element={<TenantSignupPage />} />
           <Route path="/request-demo" element={<RequestDemoPage />} />
           <Route path="/demo" element={<DemoPage />} />
           <Route path="/demo/landing" element={<DemoLandingPage />} />

@@ -7,13 +7,31 @@ export default function PricingSection({ data }) {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)+/g, "");
+  const buildPlanCtaHref = (href, planName) => {
+    const rawHref = String(href || "#").trim();
+    if (!rawHref) return "#";
+    if (!rawHref.startsWith("/get-started")) {
+      return rawHref;
+    }
+    const planId = slugify(planName);
+    if (!planId) return rawHref;
+
+    const [pathAndQuery, hash = ""] = rawHref.split("#");
+    const [path, rawQuery = ""] = pathAndQuery.split("?");
+    const params = new URLSearchParams(rawQuery);
+    if (!params.has("plan")) {
+      params.set("plan", planId);
+    }
+    const query = params.toString();
+    return `${path}${query ? `?${query}` : ""}${hash ? `#${hash}` : ""}`;
+  };
 
   if (!section.title && !section.description && !plans.length) {
     return null;
   }
 
   return (
-    <section className="pricing" id={id} data-animate="fade-up">
+    <section className="pricing" id={id}>
       <div className="container">
         <div className="pricing-header">
           {section.kicker ? (
@@ -44,7 +62,10 @@ export default function PricingSection({ data }) {
                   {plan.priceNote ? <span className="pricing-note">{plan.priceNote}</span> : null}
                 </div>
                 {plan.cta?.label ? (
-                  <a className="pricing-cta" href={plan.cta.href ?? "#"}>
+                  <a
+                    className="pricing-cta"
+                    href={buildPlanCtaHref(plan.cta.href ?? "#", plan.name)}
+                  >
                     {plan.cta.label}
                   </a>
                 ) : null}
