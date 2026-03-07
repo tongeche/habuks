@@ -130,13 +130,13 @@ window.landingData = () => ({
     { label: "Pricing", href: "#pricing" }
   ],
   cta: [
-    { label: "Request a demo", href: "/request-demo", style: "outline" },
+    { label: "Get started", href: "/get-started", style: "outline" },
     { label: "Start free trial", href: "/get-started", style: "primary" }
   ],
   heroSecondaryLink: null,
   header: {
     topEmails: [],
-    donate: { label: "Request demo", href: "/request-demo" },
+    donate: { label: "Get started", href: "/get-started" },
     menuLabel: "Menu",
     nav: [
       { label: "Features", href: "#modules" },
@@ -396,14 +396,17 @@ window.landingData = () => ({
     {
       title: "Create and launch a project with guided steps",
       description: "Use the built-in form flow to capture project details before execution begins.",
-      tag: "Live demo",
-      demo: "new-project",
+      tag: "Project setup",
       icon: "folder",
       highlights: [
         "Define project identity, dates, and operational summary.",
         "Prepare structure for budgeting, members, and media.",
         "Start clean with a repeatable creation workflow."
-      ]
+      ],
+      image: {
+        src: "/assets/tenant-website-projects.png",
+        alt: "Project setup workflow in Habuks."
+      }
     }
   ],
   security: {
@@ -476,8 +479,8 @@ window.landingData = () => ({
       }
     ],
     cta: {
-      label: "Request a demo",
-      href: "/request-demo"
+      label: "Get started",
+      href: "/get-started"
     },
     image: {
       src: "/assets/free-website-screenshot.png",

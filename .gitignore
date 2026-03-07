@@ -3,25 +3,32 @@ node_modules/
 .pnp/
 .pnp.js
 
-# Build outputs
+# Build and cache outputs
 dist/
 build/
 .vite/
+coverage/
+.nyc_output/
+*.tsbuildinfo
 
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Logs
+# Runtime logs
+logs/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-*.log
+pnpm-debug.log*
 
-# Editor directories and files
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+*.crt
+
+# Editor and IDE metadata
 .idea/
 .vscode/
 *.swp
@@ -34,36 +41,27 @@ yarn-error.log*
 ._*
 Thumbs.db
 
-# Testing
-coverage/
+# Deployment tooling local state
+.netlify/
+.vercel/
+.supabase/
+supabase/.temp/
+supabase/functions/.env*
 
-# Misc
-*.local
-
-# Project notes/drafts
+# Internal planning and support docs (not deployment artifacts)
 brand.txt
 about.txt
 poltry_brief.txt
 content.md
 migration.md
-/mobile-design/todo.md
-overview-page-mobile-redesign.md
-/mobile-design/access-control-execution-checklist.md
-/mobile-design/access-control-enforcement-plan.md
-/mobile-design/AccessFlow.md
-/mobile-design/project-expensePage-mobile-design.md
-/mobile-design/projects-documents-tab-mobile-design.md
-/mobile-design/overview-page-mobile-redesign.md
-/mobile-design/projects-document-mobile-redesign.md
-/mobile-design/project-tasks-tab-mobile.md
+pwd-install.md
+mobile-design/
 
-
-# Local Netlify folder
-.netlify
+# Keep root markdown clean: only repository README stays tracked
+/*.md
+!/README.md
 
 # Local template upload staging files
 template-uploads/organization-templates/*
 !template-uploads/organization-templates/.gitkeep
 !template-uploads/organization-templates/README.md
-
-

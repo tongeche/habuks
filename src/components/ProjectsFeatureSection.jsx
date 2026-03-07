@@ -9,7 +9,7 @@ export default function ProjectsFeatureSection({ data }) {
     description:
       "Plan, track, and report on income-generating activities with clarity — assign owners, log expenses, and see outcomes at a glance.",
     ctas: [
-      { label: "Request a demo", href: "/request-demo", style: "outline" },
+      { label: "Get started", href: "/get-started", style: "outline" },
       { label: "See projects", href: "#modules", style: "primary" },
     ],
     images: [

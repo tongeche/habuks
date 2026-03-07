@@ -12,9 +12,6 @@ import InvitePage from "./components/InvitePage.jsx";
 import ResetPasswordPage from "./components/ResetPasswordPage.jsx";
 import AboutPage from "./components/AboutPage.jsx";
 import TenantSelectPage from "./components/TenantSelectPage.jsx";
-import DemoPage from "./components/DemoPage.jsx";
-import DemoLandingPage from "./components/DemoLandingPage.jsx";
-import RequestDemoPage from "./components/RequestDemoPage.jsx";
 import SupportPage from "./components/SupportPage.jsx";
 import PrivacyPolicyPage from "./components/PrivacyPolicyPage.jsx";
 import CookiePolicyPage from "./components/CookiePolicyPage.jsx";
@@ -25,7 +22,6 @@ import ResourcesListPage from "./components/ResourcesListPage.jsx";
 import ResourcePage from "./components/ResourcePage.jsx";
 import Dashboard from "./components/dashboard/Dashboard.jsx";
 import InternalAdminPage from "./components/admin/InternalAdminPage.jsx";
-import StepsRenderPage from "./components/StepsRenderPage.jsx";
 import { startErrorReporter } from "./lib/errorReporter.js";
 
 // Import Supabase test functions for console testing
@@ -71,10 +67,10 @@ if (rootElement) {
           <Route path="/register" element={<Navigate to="/invite" replace />} />
           <Route path="/join" element={<Navigate to="/invite" replace />} />
           <Route path="/get-started" element={<TenantSignupPage />} />
-          <Route path="/request-demo" element={<RequestDemoPage />} />
-          <Route path="/demo" element={<DemoPage />} />
-          <Route path="/demo/landing" element={<DemoLandingPage />} />
-          <Route path="/demo/steps-render" element={<StepsRenderPage />} />
+          <Route path="/request-demo" element={<Navigate to="/get-started" replace />} />
+          <Route path="/demo" element={<Navigate to="/get-started" replace />} />
+          <Route path="/demo/landing" element={<Navigate to="/get-started" replace />} />
+          <Route path="/demo/steps-render" element={<Navigate to="/get-started" replace />} />
           <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
           <Route path="/cookie-policy" element={<CookiePolicyPage />} />
           <Route path="/gtc" element={<GTCPage />} />

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import NewProjectFormDemo from "./steps-demos/NewProjectFormDemo.jsx";
 
 const STEP_LABELS = [
   "Quick setup",
@@ -41,13 +40,6 @@ export default function StepsCarousel({ steps }) {
   const [isPaused, setIsPaused] = useState(false);
   const [isInView, setIsInView] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
-
-  const explicitDemoIndex = useMemo(
-    () => safeSteps.findIndex((step) => step?.demo === "new-project"),
-    [safeSteps]
-  );
-  const hasExplicitDemo = explicitDemoIndex >= 0;
-  const fallbackDemoIndex = Math.max(0, Math.min(2, safeSteps.length - 1));
 
   const goToSlide = useCallback(
     (targetIndex) => {
@@ -124,9 +116,6 @@ export default function StepsCarousel({ steps }) {
           style={{ transform: `translate3d(-${activeIndex * 100}%, 0, 0)` }}
         >
           {safeSteps.map((step, index) => {
-            const isDemoStep = hasExplicitDemo
-              ? step?.demo === "new-project"
-              : index === fallbackDemoIndex;
             const label = (typeof step?.tag === "string" && step.tag.trim()) || STEP_LABELS[index] || "Workflow";
             const highlights = Array.isArray(step?.highlights) ? step.highlights.filter(Boolean) : STEP_HIGHLIGHTS[index] || [];
             const isMediaRight = step?.layout === "media-right";
@@ -139,10 +128,8 @@ export default function StepsCarousel({ steps }) {
                 aria-label={`${step.title || `Step ${index + 1}`}`}
               >
                 <div className={`steps-feature-card${isMediaRight ? " steps-feature-card--media-right" : ""}`}>
-                  <div className={`steps-feature-media${isDemoStep ? " is-demo" : ""}`}>
-                    {isDemoStep ? (
-                      <NewProjectFormDemo className="steps-feature-demo" mode="pause-offscreen" blend />
-                    ) : step.image?.src ? (
+                  <div className="steps-feature-media">
+                    {step.image?.src ? (
                       <img src={step.image.src} alt={step.image.alt ?? ""} loading="lazy" />
                     ) : (
                       <div className="step-media-placeholder" aria-hidden="true"></div>

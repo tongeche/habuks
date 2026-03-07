@@ -1,7 +1,7 @@
 {
-  "name": "Jongol Foundation",
-  "short_name": "Jongol",
-  "description": "Community-led livelihoods, food security, and sustainable enterprise in Homa Bay County, Kenya.",
+  "name": "Habuks",
+  "short_name": "Habuks",
+  "description": "Habuks is a multi-tenant operations platform for collectives, self-help groups, and community organizations.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

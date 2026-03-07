@@ -326,12 +326,12 @@ window.siteData = () => ({
   ],
   tenantCta: { label: "Donate / Join / Partner", href: "#get-involved" },
   cta: [
-    { label: "Request a demo", href: "#contact", style: "primary" },
+    { label: "Contact us", href: "#contact", style: "primary" },
     { label: "View features", href: "#what-we-do", style: "ghost" }
   ],
   header: {
     topEmails: ["hello@habuks.com"],
-    donate: { label: "Request Demo", href: "#contact" },
+    donate: { label: "Contact", href: "#contact" },
     menuLabel: "Menu",
     nav: [
       { label: "Home", href: "#top" },

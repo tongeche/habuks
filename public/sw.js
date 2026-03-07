@@ -1,4 +1,4 @@
-const CACHE_NAME = "habuks-runtime-v5";
+const CACHE_NAME = "habuks-runtime-v6";
 const CORE_ASSETS = [
   "/",
   "/index.html",

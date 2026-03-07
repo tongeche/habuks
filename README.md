@@ -1,84 +1,91 @@
-# Habuks – Collective Operations & IGA Management Platform
+# Habuks Console
 
-Habuks is a lightweight operations dashboard designed to help small groups, self-help associations, and micro-organizations manage projects, members, and income-generating activities (IGAs).
+HabuKS operations platform for managing workspace members, projects, transactions, and internal support workflows through a React frontend backed by Supabase.
 
-Originally built for a Kenya-based self-help group, the platform has evolved into a reusable system for structured coordination, financial tracking, and collaborative project oversight.
+## What This App Includes
 
----
-
-## Overview
-
-Habuks enables small collectives to:
-
-* Track projects and operational activities
-* Manage members and access roles
-* Monitor income-generating activities (IGAs)
-* Maintain structured financial and contribution records
-* Centralize group-level coordination in one secure dashboard
-
-The system is designed for low-resource environments where clarity, accountability, and simplicity matter.
-
----
+- Tenant workspace and member management
+- Internal admin console for tenant support operations
+- Activity logs and tenant health/deployment views
+- Supabase-backed auth, data, and Edge Function support tooling
 
 ## Tech Stack
 
-Frontend:
+- Frontend: React 18 + Vite
+- Backend: Supabase (Postgres, Auth, Edge Functions)
+- Routing: React Router
 
-* React + Vite
+## Prerequisites
 
-Backend & Database:
+- Node.js 20+ and npm 10+
+- Supabase project (URL, anon key, service role key)
+- `psql` (required for seed scripts that run SQL files locally)
 
-* Supabase (PostgreSQL + Authentication)
+## Quick Start
 
-Architecture:
-
-* Role-based access control
-* Relational database design
-* Secure environment-based configuration
-
----
-
-## Core Features
-
-* Member authentication and role management
-* Project and activity tracking
-* Contribution and bookkeeping records
-* Structured relational data model
-* Admin invite and access control workflows
-
----
-
-## Database & Setup
-
-Environment configuration:
+1. Install dependencies:
 
 ```bash
-npm install
-cp .env.example .env   # Add Supabase credentials
+npm ci
+```
+
+2. Configure environment:
+
+```bash
+cp .env.example .env
+```
+
+3. Run local development:
+
+```bash
 npm run dev
 ```
 
-Database migrations (run sequentially in Supabase SQL Editor):
+4. Build production bundle:
 
-1. supabase/schema.sql
-2. migration files (admin + role control updates)
+```bash
+npm run build
+```
 
----
+## Environment Variables
 
-## Design Philosophy
+Use `.env.example` as the source of truth. Required variables for standard usage:
 
-Habuks is built around:
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 
-* Simplicity over feature bloat
-* Structured relational data
-* Transparency and accountability
-* Scalability from single-group to multi-tenant potential
+Additional optional variables support meeting-minutes AI integration.
 
----
+Server-only values such as `SUPABASE_SERVICE_ROLE_KEY` must never be exposed in browser code.
 
-## Future Direction
+## Scripts
 
-* Multi-tenant architecture
-* IGA analytics dashboard
-* Contribution reporting automation
-* Mobile-first optimizations
+- `npm run dev` - Start Vite dev server
+- `npm run build` - Build production assets into `dist/`
+- `npm run preview` - Preview built app
+- `npm run test` - Run test suite
+- `npm run templates:upload` - Upload organization templates to Supabase storage
+- `npm run seed:demo` - Seed full sample data set (requires `SUPABASE_PULLING`)
+- `npm run seed:demo:projects` - Seed sample project tables only
+- `npm run seed:demo:heavy` - Seed heavier sample data set
+- `npm run seed:demo:heavy:projects` - Seed heavier project tables only
+
+## Deployment Checklist
+
+1. Set all required environment variables in your deployment platform.
+2. Run tests and build locally:
+
+```bash
+npm run test
+npm run build
+```
+
+3. Apply Supabase migrations in order (`supabase/schema.sql`, then `supabase/migration_*.sql`).
+4. Deploy required Supabase Edge Functions (for example `admin-shell`) and configure function secrets.
+5. Deploy static frontend output from `dist/` to your hosting provider.
+
+
+
+## License
+
+No open-source license is declared in this repository. Treat as proprietary unless stated otherwise.
