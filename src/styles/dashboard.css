@@ -24526,10 +24526,15 @@
   grid-template-columns: 220px minmax(0, 1fr);
   min-height: 0;
   flex: 1;
+  position: relative;
 }
 
 .internal-admin-workspace.is-sidebar-collapsed {
   grid-template-columns: 62px minmax(0, 1fr);
+}
+
+.internal-admin-sidebar-backdrop {
+  display: none;
 }
 
 .internal-admin-sidebar {
@@ -26411,32 +26416,143 @@
 }
 
 @media (max-width: 900px) {
-  .internal-admin-sidebar-toggle {
-    display: none;
+  .internal-admin-topbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.6rem;
   }
 
-  .internal-admin-topbar {
-    flex-wrap: wrap;
-    align-items: stretch;
+  .internal-admin-sidebar-toggle {
+    width: 32px;
+    height: 32px;
   }
 
   .internal-admin-brand {
     min-width: 0;
   }
 
+  .internal-admin-brand-copy small {
+    display: none;
+  }
+
   .internal-admin-global-search {
-    order: 3;
-    width: 100%;
+    grid-column: 1 / -1;
     min-width: 0;
+    width: 100%;
+  }
+
+  .internal-admin-topbar-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    padding-bottom: 0.15rem;
+  }
+
+  .internal-admin-topbar-actions .btn-secondary {
+    flex: 0 0 auto;
+  }
+
+  .internal-admin-workspace,
+  .internal-admin-workspace.is-sidebar-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .internal-admin-sidebar-backdrop {
+    position: absolute;
+    inset: 0;
+    border: none;
+    background: rgba(15, 23, 42, 0.38);
+    backdrop-filter: blur(1px);
+    z-index: 12;
+    display: block;
+  }
+
+  .internal-admin-sidebar {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: min(82vw, 300px);
+    border-right: 1px solid var(--internal-admin-border);
+    border-bottom: none;
+    background: var(--internal-admin-surface);
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+    z-index: 14;
+    transform: translateX(0);
+    transition: transform 0.2s ease;
+    padding: 0;
+  }
+
+  .internal-admin-sidebar.is-collapsed {
+    transform: translateX(-102%);
+  }
+
+  .internal-admin-nav {
+    flex-direction: column;
+    gap: 0;
+    overflow-x: visible;
+    overflow-y: auto;
+    padding: 0.28rem 0;
+  }
+
+  .internal-admin-nav-section-title {
+    display: block;
+  }
+
+  .internal-admin-nav-link {
+    border-left: 2px solid transparent;
+    border-bottom: none;
+    white-space: nowrap;
+    padding: 0.52rem 0.7rem;
+    justify-content: flex-start;
+  }
+
+  .internal-admin-nav-link.is-active {
+    border-left-color: var(--internal-admin-accent);
+    border-bottom: none;
+  }
+
+  .internal-admin-sidebar.is-collapsed .internal-admin-nav-link {
+    justify-content: flex-start;
+    padding: 0.52rem 0.7rem;
+  }
+
+  .internal-admin-sidebar.is-collapsed .internal-admin-nav-label {
+    display: inline;
+  }
+
+  .internal-admin-sidebar.is-collapsed .internal-admin-sidebar-meta {
+    display: flex;
+  }
+
+  .internal-admin-sidebar-meta {
+    margin-top: auto;
+    padding: 0.62rem;
+    border-top: 1px solid var(--internal-admin-border);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+
+  .internal-admin-main {
+    padding: 0.82rem 0.75rem;
   }
 
   .internal-admin-shell-drawer {
-    max-height: min(62vh, 430px);
+    min-height: 260px;
+    max-height: min(78dvh, 560px);
+  }
+
+  .internal-admin-shell-resize-handle {
+    display: none;
   }
 
   .internal-admin-shell-vs-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(220px, 1fr) minmax(120px, 0.58fr);
+    grid-template-rows: minmax(0, 1fr) minmax(132px, 0.48fr);
   }
 
   .internal-admin-shell-col-resizer {
@@ -26458,76 +26574,12 @@
     gap: 0.25rem;
   }
 
-  .internal-admin-workspace {
-    grid-template-columns: 1fr;
-  }
-
-  .internal-admin-workspace.is-sidebar-collapsed {
-    grid-template-columns: 1fr;
-  }
-
-  .internal-admin-sidebar {
-    border-right: none;
-    border-bottom: 1px solid var(--internal-admin-border);
-    padding: 0.45rem 0.65rem;
-  }
-
-  .internal-admin-nav {
-    flex-direction: row;
-    gap: 0.25rem;
-    overflow-x: auto;
-    padding: 0 0 0.2rem;
-  }
-
-  .internal-admin-nav-section-title {
-    display: none;
-  }
-
-  .internal-admin-nav-link {
-    border-left: none;
-    border-bottom: 2px solid transparent;
-    white-space: nowrap;
-    padding: 0.55rem 0.72rem;
-  }
-
-  .internal-admin-nav-link.is-active {
-    border-left: none;
-    border-bottom-color: var(--internal-admin-accent);
-  }
-
-  .internal-admin-sidebar.is-collapsed .internal-admin-nav-link {
-    justify-content: flex-start;
-    padding: 0.55rem 0.72rem;
-  }
-
-  .internal-admin-sidebar.is-collapsed .internal-admin-nav-label {
-    display: inline;
-  }
-
-  .internal-admin-sidebar.is-collapsed .internal-admin-sidebar-meta {
-    display: flex;
-  }
-
   .internal-admin-shell .internal-admin-row-head-meta {
     gap: 0.35rem;
   }
 
   .internal-admin-shell .internal-admin-row-toggle {
     padding: 0.16rem 0.34rem;
-  }
-
-  .internal-admin-sidebar-meta {
-    margin-top: 0.45rem;
-    padding: 0.55rem 0 0;
-    border-top: 1px solid var(--internal-admin-border);
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.55rem;
-  }
-
-  .internal-admin-main {
-    padding: 0.85rem;
   }
 
   .internal-admin-page-head {
@@ -26594,25 +26646,29 @@
 /* Admin Panel - Mobile < 768px */
 @media (max-width: 768px) {
   .internal-admin-shell {
-    min-height: auto;
+    min-height: calc(100dvh - 96px);
   }
 
   .internal-admin-topbar {
-    padding: 0.6rem;
+    padding: 0.5rem;
     gap: 0.55rem;
   }
 
   .internal-admin-brand-copy strong {
-    font-size: 0.84rem;
+    font-size: 0.78rem;
   }
 
   .internal-admin-topbar-actions {
     width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 0.2rem;
   }
 
   .internal-admin-topbar-actions .btn-secondary {
-    flex: 1;
-    min-width: 0;
+    flex: 0 0 auto;
+    min-width: auto;
   }
 
   .internal-admin-shell-launch {
@@ -26621,15 +26677,16 @@
 
   .internal-admin-shell-drawer {
     min-height: 260px;
-    max-height: min(68vh, 480px);
+    max-height: min(82dvh, 640px);
   }
 
   .internal-admin-shell-vs-layout {
-    grid-template-rows: minmax(210px, 1fr) minmax(108px, 0.55fr);
+    grid-template-rows: minmax(0, 1fr) minmax(130px, 0.42fr);
   }
 
   .internal-admin-shell-drawer-head {
     padding: 0.5rem 0.6rem;
+    flex-wrap: wrap;
   }
 
   .internal-admin-shell-drawer-head-actions {
@@ -26655,6 +26712,35 @@
 
   .internal-admin-shell-pane-sessions .internal-admin-shell-session-list {
     grid-template-columns: 1fr;
+  }
+
+  .internal-admin-shell-pane-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.25rem 0.5rem;
+  }
+
+  .internal-admin-shell-prompt {
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .internal-admin-shell-prompt span {
+    flex: 1 1 100%;
+    font-size: 0.72rem;
+    white-space: normal;
+  }
+
+  .internal-admin-shell-prompt input {
+    min-height: 34px;
+    border: 1px solid #2f3745;
+    background: #0f131b;
+    padding: 0.3rem 0.45rem;
+  }
+
+  .internal-admin-shell-prompt .btn-secondary {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
   }
 
   .internal-admin-page-head h2 {

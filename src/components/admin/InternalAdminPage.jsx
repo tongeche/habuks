@@ -102,6 +102,7 @@ const INTERNAL_ADMIN_SHELL_RIGHT_MIN = 180;
 const INTERNAL_ADMIN_SHELL_TERMINAL_MIN = 520;
 const INTERNAL_ADMIN_SHELL_SPLITTER_WIDTH = 6;
 const INTERNAL_ADMIN_SHELL_MAX_TERMINALS = 16;
+const INTERNAL_ADMIN_MOBILE_BREAKPOINT = 900;
 
 const readStoredActiveShellTerminalId = () => {
   if (typeof window === "undefined") return "";
@@ -1888,6 +1889,10 @@ export default function InternalAdminPage() {
     if (typeof window === "undefined") return false;
     return String(window.localStorage.getItem(INTERNAL_ADMIN_SIDEBAR_COLLAPSED_KEY) || "") === "1";
   });
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= INTERNAL_ADMIN_MOBILE_BREAKPOINT;
+  });
 
   useEffect(() => {
     let active = true;
@@ -2284,6 +2289,26 @@ export default function InternalAdminPage() {
       isSidebarCollapsed ? "1" : "0"
     );
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleViewportResize = () => {
+      setIsMobileViewport(window.innerWidth <= INTERNAL_ADMIN_MOBILE_BREAKPOINT);
+    };
+    handleViewportResize();
+    window.addEventListener("resize", handleViewportResize);
+    return () => window.removeEventListener("resize", handleViewportResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileViewport) return;
+    setIsSidebarCollapsed(true);
+  }, [isMobileViewport, location.pathname]);
+
+  useEffect(() => {
+    if (!isMobileViewport || !isShellDrawerOpen) return;
+    setIsSidebarCollapsed(true);
+  }, [isMobileViewport, isShellDrawerOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -2917,6 +2942,11 @@ export default function InternalAdminPage() {
     navigate(`/admin/tenants?q=${encodeURIComponent(query)}`);
   };
 
+  const closeSidebarIfMobile = () => {
+    if (!isMobileViewport) return;
+    setIsSidebarCollapsed(true);
+  };
+
   return (
     <div className="dashboard-layout" style={{ "--dashboard-sidebar-width": "0px" }}>
       <main className="dashboard-main" style={{ marginLeft: 0 }}>
@@ -2969,7 +2999,10 @@ export default function InternalAdminPage() {
                 }`}
                 aria-controls="internal-admin-shell-drawer"
                 aria-expanded={isShellDrawerOpen}
-                onClick={() => setIsShellDrawerOpen((prev) => !prev)}
+                onClick={() => {
+                  closeSidebarIfMobile();
+                  setIsShellDrawerOpen((prev) => !prev);
+                }}
                 title={isShellDrawerOpen ? "Close shell" : "Open shell"}
               >
                 <Icon name="terminal" size={15} />
@@ -2992,6 +3025,14 @@ export default function InternalAdminPage() {
           </header>
 
           <div className={`internal-admin-workspace ${isSidebarCollapsed ? "is-sidebar-collapsed" : ""}`}>
+            {isMobileViewport && !isSidebarCollapsed ? (
+              <button
+                type="button"
+                className="internal-admin-sidebar-backdrop"
+                onClick={() => setIsSidebarCollapsed(true)}
+                aria-label="Close navigation"
+              />
+            ) : null}
             <aside className={`internal-admin-sidebar ${isSidebarCollapsed ? "is-collapsed" : ""}`}>
               <nav className="internal-admin-nav">
                 <p className="internal-admin-nav-section-title">Core</p>
@@ -2999,6 +3040,7 @@ export default function InternalAdminPage() {
                   to="/admin/tenants"
                   className={`internal-admin-nav-link ${activeNavKey === "tenants" ? "is-active" : ""}`}
                   title="Tenants"
+                  onClick={closeSidebarIfMobile}
                 >
                   <Icon name="layers" size={16} />
                   <span className="internal-admin-nav-label">Tenants</span>
@@ -3007,6 +3049,7 @@ export default function InternalAdminPage() {
                   to="/admin/members"
                   className={`internal-admin-nav-link ${activeNavKey === "members" ? "is-active" : ""}`}
                   title="Members"
+                  onClick={closeSidebarIfMobile}
                 >
                   <Icon name="users" size={16} />
                   <span className="internal-admin-nav-label">Members</span>
@@ -3015,6 +3058,7 @@ export default function InternalAdminPage() {
                   to="/admin/logs"
                   className={`internal-admin-nav-link ${activeNavKey === "logs" ? "is-active" : ""}`}
                   title="Activity Logs"
+                  onClick={closeSidebarIfMobile}
                 >
                   <Icon name="clock" size={16} />
                   <span className="internal-admin-nav-label">Activity Logs</span>
@@ -3022,7 +3066,10 @@ export default function InternalAdminPage() {
                 <button
                   type="button"
                   className="internal-admin-nav-link"
-                  onClick={() => navigate("/select-tenant")}
+                  onClick={() => {
+                    closeSidebarIfMobile();
+                    navigate("/select-tenant");
+                  }}
                   title="Workspace App"
                 >
                   <Icon name="globe" size={16} />
@@ -3038,6 +3085,7 @@ export default function InternalAdminPage() {
                       activeTenantHubKey === item.key ? "is-active" : ""
                     }`}
                     title={item.title}
+                    onClick={closeSidebarIfMobile}
                   >
                     <Icon name={item.icon} size={16} />
                     <span className="internal-admin-nav-label">{item.label}</span>
