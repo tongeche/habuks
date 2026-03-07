@@ -1,0 +1,18 @@
+{
+  "version": "5",
+  "remote": {
+    "https://esm.sh/@supabase/supabase-js@2.49.1": "947c71e163ca8bb5b538eccb5ee86fbc8da6bcb916a861586db5fad1af4701bb"
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@supabase/supabase-js@^2.90.0",
+        "npm:@vitejs/plugin-react@^4.3.1",
+        "npm:react-dom@^18.2.0",
+        "npm:react-router-dom@^7.12.0",
+        "npm:react@^18.2.0",
+        "npm:vite@^5.4.2"
+      ]
+    }
+  }
+}

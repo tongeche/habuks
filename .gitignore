@@ -46,7 +46,7 @@ about.txt
 poltry_brief.txt
 content.md
 migration.md
-todo.md
+/mobile-design/todo.md
 overview-page-mobile-redesign.md
 /mobile-design/access-control-execution-checklist.md
 /mobile-design/access-control-enforcement-plan.md
@@ -57,6 +57,7 @@ overview-page-mobile-redesign.md
 /mobile-design/projects-document-mobile-redesign.md
 /mobile-design/project-tasks-tab-mobile.md
 
+
 # Local Netlify folder
 .netlify
 
@@ -64,3 +65,5 @@ overview-page-mobile-redesign.md
 template-uploads/organization-templates/*
 !template-uploads/organization-templates/.gitkeep
 !template-uploads/organization-templates/README.md
+
+

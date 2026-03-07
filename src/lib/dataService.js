@@ -10323,6 +10323,226 @@ const normalizeAdminOffset = (value, fallback = 0) => {
   return parsed;
 };
 
+const isJwtAuthErrorMessage = (value) => {
+  const message = String(value || "").toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes("invalid jwt") ||
+    message.includes("jwt expired") ||
+    (message.includes("jwt") && message.includes("expired")) ||
+    message.includes("signature verification failed")
+  );
+};
+
+const extractSupabaseFunctionInvokeError = async (error) => {
+  let detail = "";
+  try {
+    const context = error?.context;
+    if (context && typeof context.clone === "function") {
+      const cloned = context.clone();
+      const contentType = String(cloned.headers?.get?.("content-type") || "").toLowerCase();
+      if (contentType.includes("application/json")) {
+        const errorPayload = await cloned.json();
+        detail = String(errorPayload?.error || errorPayload?.message || "").trim();
+      } else {
+        detail = String(await cloned.text()).trim();
+      }
+    }
+  } catch {
+    detail = "";
+  }
+  const message = String(error?.message || "").trim();
+  return detail || message || "Admin shell request failed.";
+};
+
+const invokeAdminShellEndpoint = async (payload = {}) => {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+  if (sessionError) {
+    throw new Error(sessionError?.message || "Failed to resolve current auth session.");
+  }
+
+  const accessToken = String(session?.access_token || "").trim();
+  if (!accessToken) {
+    throw new Error("No active auth session found. Please sign in again.");
+  }
+
+  const invokeWithToken = async (token) => {
+    const { data, error } = await supabase.functions.invoke("admin-shell", {
+      body: payload,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (error) {
+      const detail = await extractSupabaseFunctionInvokeError(error);
+      const message = String(error?.message || "").toLowerCase();
+      if (detail) {
+        throw new Error(detail);
+      }
+      if (message.includes("function") && message.includes("not found")) {
+        throw new Error("Admin shell API is not deployed yet.");
+      }
+      if (message.includes("failed to fetch") || message.includes("network")) {
+        throw new Error("Unable to reach admin-shell endpoint. Check CORS and network connectivity.");
+      }
+      throw new Error(error?.message || "Admin shell request failed.");
+    }
+
+    if (!data || data.ok !== true) {
+      throw new Error(data?.error || "Admin shell request failed.");
+    }
+
+    return data;
+  };
+
+  try {
+    return await invokeWithToken(accessToken);
+  } catch (invokeError) {
+    const message = String(invokeError?.message || "").trim();
+    if (!isJwtAuthErrorMessage(message)) {
+      throw invokeError;
+    }
+
+    const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError) {
+      throw new Error("Session expired. Please sign out and sign in again.");
+    }
+
+    const refreshedToken = String(refreshedData?.session?.access_token || "").trim();
+    if (!refreshedToken) {
+      throw new Error("Session expired. Please sign out and sign in again.");
+    }
+
+    try {
+      return await invokeWithToken(refreshedToken);
+    } catch (secondError) {
+      if (isJwtAuthErrorMessage(secondError?.message)) {
+        throw new Error("Invalid JWT. Please sign out and sign in again.");
+      }
+      throw secondError;
+    }
+  }
+};
+
+export async function startAdminShellSession(options = {}) {
+  const result = await invokeAdminShellEndpoint({
+    op: "start",
+    session_id: normalizeOptional(options?.session_id ?? options?.sessionId),
+    tenant_id: normalizeOptional(options?.tenant_id ?? options?.tenantId),
+    title: normalizeOptional(options?.title),
+  });
+
+  return {
+    session: result?.session || null,
+    output: Array.isArray(result?.output) ? result.output : [],
+  };
+}
+
+export async function getAdminShellHistory(options = {}) {
+  const sessionId = normalizeOptional(options?.session_id ?? options?.sessionId);
+  if (!sessionId) {
+    throw new Error("session_id is required.");
+  }
+
+  const result = await invokeAdminShellEndpoint({
+    op: "history",
+    session_id: sessionId,
+    after_id: normalizeAdminOffset(options?.after_id ?? options?.afterId, 0),
+    limit: normalizeAdminLimit(options?.limit, 120, 400),
+  });
+
+  return {
+    session: result?.session || null,
+    commands: Array.isArray(result?.commands) ? result.commands : [],
+    output: Array.isArray(result?.output) ? result.output : [],
+    next_after_id: normalizeAdminOffset(result?.next_after_id, 0),
+  };
+}
+
+export async function inputAdminShellCommand(options = {}) {
+  const sessionId = normalizeOptional(options?.session_id ?? options?.sessionId);
+  const input = String(options?.input || "").trim();
+  if (!sessionId) {
+    throw new Error("session_id is required.");
+  }
+  if (!input) {
+    throw new Error("input is required.");
+  }
+
+  const result = await invokeAdminShellEndpoint({
+    op: "input",
+    session_id: sessionId,
+    input,
+  });
+
+  return {
+    session: result?.session || null,
+    command: result?.command || null,
+    output: Array.isArray(result?.output) ? result.output : [],
+  };
+}
+
+export async function runAdminShellCommand(options = {}) {
+  const sessionId = normalizeOptional(options?.session_id ?? options?.sessionId);
+  const commandId = normalizeOptional(options?.command_id ?? options?.commandId);
+  const input = String(options?.input || "").trim();
+  if (!sessionId) {
+    throw new Error("session_id is required.");
+  }
+  if (!commandId && !input) {
+    throw new Error("input is required.");
+  }
+
+  const payload = {
+    op: "run",
+    session_id: sessionId,
+  };
+  if (commandId) {
+    payload.command_id = commandId;
+  }
+  if (input) {
+    payload.input = input;
+  }
+
+  const result = await invokeAdminShellEndpoint(payload);
+
+  return {
+    session: result?.session || null,
+    command: result?.command || null,
+    output: Array.isArray(result?.output) ? result.output : [],
+  };
+}
+
+export async function cancelAdminShellCommand(options = {}) {
+  const sessionId = normalizeOptional(options?.session_id ?? options?.sessionId);
+  const commandId = normalizeOptional(options?.command_id ?? options?.commandId);
+  if (!sessionId) {
+    throw new Error("session_id is required.");
+  }
+  if (!commandId) {
+    throw new Error("command_id is required.");
+  }
+
+  const result = await invokeAdminShellEndpoint({
+    op: "cancel",
+    session_id: sessionId,
+    command_id: commandId,
+  });
+
+  return {
+    command: result?.command || null,
+    output: Array.isArray(result?.output) ? result.output : [],
+  };
+};
+
 export async function getInternalAdminAccess() {
   if (!shouldUseSupabase()) {
     return { allowed: false, role: null, email: null };
@@ -10420,6 +10640,37 @@ export async function getAdminTenantOverview(tenantId) {
   return data[0] || null;
 }
 
+export async function getAdminTenantProfile(tenantId) {
+  if (!shouldUseSupabase()) {
+    return null;
+  }
+
+  const safeTenantId = normalizeOptional(tenantId);
+  if (!safeTenantId) {
+    return null;
+  }
+
+  const { data, error } = await supabase.rpc("admin_get_tenant_profile", {
+    p_tenant_id: safeTenantId,
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingRelationError(error, "tenants") ||
+      isMissingFunctionError(error, "admin_get_tenant_profile")
+    ) {
+      return null;
+    }
+    throw error;
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    return null;
+  }
+  return data[0] || null;
+}
+
 export async function getAdminTenantMembers(tenantId, options = {}) {
   if (!shouldUseSupabase()) {
     return [];
@@ -10504,6 +10755,232 @@ export async function getAdminTenantTransactions(tenantId, options = {}) {
   }
 
   return Array.isArray(data) ? data : [];
+}
+
+export async function updateAdminTenantProfile(tenantId, payload = {}) {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  const safeTenantId = normalizeOptional(tenantId);
+  if (!safeTenantId) {
+    throw new Error("Tenant ID is required.");
+  }
+
+  const { data, error } = await supabase.rpc("admin_update_tenant_profile", {
+    p_tenant_id: safeTenantId,
+    p_name: Object.prototype.hasOwnProperty.call(payload, "name")
+      ? String(payload?.name ?? "")
+      : null,
+    p_tagline: Object.prototype.hasOwnProperty.call(payload, "tagline")
+      ? String(payload?.tagline ?? "")
+      : null,
+    p_location: Object.prototype.hasOwnProperty.call(payload, "location")
+      ? String(payload?.location ?? "")
+      : null,
+    p_contact_email: Object.prototype.hasOwnProperty.call(payload, "contact_email")
+      ? String(payload?.contact_email ?? "")
+      : null,
+    p_contact_phone: Object.prototype.hasOwnProperty.call(payload, "contact_phone")
+      ? String(payload?.contact_phone ?? "")
+      : null,
+    p_is_public: Object.prototype.hasOwnProperty.call(payload, "is_public")
+      ? Boolean(payload?.is_public)
+      : null,
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingFunctionError(error, "admin_update_tenant_profile")
+    ) {
+      throw new Error("Internal admin tenant profile update is not available yet.");
+    }
+    throw error;
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error("Tenant update failed.");
+  }
+  return data[0] || null;
+}
+
+export async function setAdminTenantWorkspacePause(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  const safeTenantId = normalizeOptional(tenantId);
+  if (!safeTenantId) {
+    throw new Error("Tenant ID is required.");
+  }
+
+  const pause = Boolean(options?.pause);
+  const pauseDays = Number.parseInt(String(options?.pause_days ?? options?.pauseDays ?? 30), 10);
+  const { data, error } = await supabase.rpc("admin_set_tenant_workspace_pause", {
+    p_tenant_id: safeTenantId,
+    p_pause: pause,
+    p_reason: normalizeOptional(options?.reason),
+    p_pause_days: Number.isInteger(pauseDays) && pauseDays > 0 ? pauseDays : 30,
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingFunctionError(error, "admin_set_tenant_workspace_pause")
+    ) {
+      throw new Error("Internal admin workspace pause control is not available yet.");
+    }
+    throw error;
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error("Workspace state update failed.");
+  }
+  return data[0] || null;
+}
+
+export async function updateAdminTenantMembership(tenantMembershipId, payload = {}) {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  const safeMembershipId = normalizeOptional(tenantMembershipId);
+  if (!safeMembershipId) {
+    throw new Error("Tenant membership ID is required.");
+  }
+
+  const role = Object.prototype.hasOwnProperty.call(payload, "tenant_role")
+    ? normalizeOptional(payload?.tenant_role)
+    : Object.prototype.hasOwnProperty.call(payload, "role")
+      ? normalizeOptional(payload?.role)
+      : null;
+  const status = Object.prototype.hasOwnProperty.call(payload, "tenant_status")
+    ? normalizeOptional(payload?.tenant_status)
+    : Object.prototype.hasOwnProperty.call(payload, "status")
+      ? normalizeOptional(payload?.status)
+      : null;
+
+  if (!role && !status) {
+    throw new Error("No tenant member changes were provided.");
+  }
+
+  const { data, error } = await supabase.rpc("admin_update_tenant_membership", {
+    p_tenant_membership_id: safeMembershipId,
+    p_role: role,
+    p_status: status,
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingFunctionError(error, "admin_update_tenant_membership")
+    ) {
+      throw new Error("Internal admin tenant member controls are not available yet.");
+    }
+    throw error;
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error("Tenant member update failed.");
+  }
+  return data[0] || null;
+}
+
+export async function getAdminTenantMagicLinkInvites(tenantId, options = {}) {
+  if (!shouldUseSupabase()) {
+    return [];
+  }
+
+  const safeTenantId = normalizeOptional(tenantId);
+  if (!safeTenantId) {
+    return [];
+  }
+
+  const { data, error } = await supabase.rpc("admin_get_tenant_magic_link_invites", {
+    p_tenant_id: safeTenantId,
+    p_limit: normalizeAdminLimit(options?.limit, 200, 1000),
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingRelationError(error, "magic_link_invites") ||
+      isMissingFunctionError(error, "admin_get_tenant_magic_link_invites")
+    ) {
+      return [];
+    }
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+export async function resendAdminTenantMagicLinkInvite(inviteId, options = {}) {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  const safeInviteId = normalizeOptional(inviteId);
+  if (!safeInviteId) {
+    throw new Error("Invite id is required.");
+  }
+
+  const expiresInDays = Number.parseInt(
+    String(options?.expires_in_days ?? options?.expiresInDays ?? 7),
+    10
+  );
+  const validDays = Number.isInteger(expiresInDays) && expiresInDays > 0 ? expiresInDays : 7;
+
+  const { data, error } = await supabase.rpc("admin_resend_tenant_magic_link_invite", {
+    p_invite_id: safeInviteId,
+    p_expires_in_days: validDays,
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingFunctionError(error, "admin_resend_tenant_magic_link_invite")
+    ) {
+      throw new Error("Internal admin invite resend control is not available yet.");
+    }
+    throw error;
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error("Invite could not be reissued.");
+  }
+  return data[0] || null;
+}
+
+export async function cancelAdminTenantMagicLinkInvite(inviteId) {
+  if (!shouldUseSupabase()) {
+    throw new Error("Supabase not configured");
+  }
+
+  const safeInviteId = normalizeOptional(inviteId);
+  if (!safeInviteId) {
+    throw new Error("Invite id is required.");
+  }
+
+  const { data, error } = await supabase.rpc("admin_cancel_tenant_magic_link_invite", {
+    p_invite_id: safeInviteId,
+  });
+
+  if (error) {
+    if (
+      isMissingRelationError(error, "admin_users") ||
+      isMissingFunctionError(error, "admin_cancel_tenant_magic_link_invite")
+    ) {
+      throw new Error("Internal admin invite revoke control is not available yet.");
+    }
+    throw error;
+  }
+
+  if (!Array.isArray(data) || !data.length) {
+    throw new Error("Invite could not be canceled.");
+  }
+  return data[0] || null;
 }
 
 export async function getAdminActivityLogs(options = {}) {

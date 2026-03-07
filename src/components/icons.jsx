@@ -70,6 +70,14 @@ export const Icon = ({ name, size = 18, className = "" }) => {
           <path d="M3 18h18" />
         </svg>
       );
+    case "terminal":
+      return (
+        <svg {...common} aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M7 9l3 3-3 3" />
+          <path d="M12 15h5" />
+        </svg>
+      );
     case "volunteer":
       return (
         <svg {...common} aria-hidden="true">
