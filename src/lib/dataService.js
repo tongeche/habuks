@@ -77,6 +77,7 @@ export async function getMembersWithTotalWelfare(tenantId) {
   return data || [];
 }
 import { normalizeCurrencyCode } from "./currency.js";
+import { isUuidProjectId, normalizeProjectId, normalizeProjectIdList } from "./projectIds.js";
 import { supabase, isSupabaseConfigured } from "./supabase.js";
 import {
   DEFAULT_SUBSCRIPTION_PLAN_ID,
@@ -1001,8 +1002,8 @@ export async function getProjectsWithMembership(memberId, tenantId) {
     }
 
     const projectIds = projects
-      .map((project) => Number.parseInt(String(project?.id), 10))
-      .filter((projectId) => Number.isInteger(projectId) && projectId > 0);
+      .map((project) => normalizeProjectId(project?.id))
+      .filter(Boolean);
     const budgetSummaryByProject = new Map();
 
     if (projectIds.length) {
@@ -1018,8 +1019,8 @@ export async function getProjectsWithMembership(memberId, tenantId) {
           console.warn("Unable to fetch project budget summaries:", budgetError);
         } else {
           (budgetRows || []).forEach((row) => {
-            const projectId = Number.parseInt(String(row?.project_id), 10);
-            if (!Number.isInteger(projectId) || projectId <= 0) return;
+            const projectId = normalizeProjectId(row?.project_id);
+            if (!projectId) return;
 
             const itemKey = String(row?.item || "").trim().toLowerCase();
             if (
@@ -1069,7 +1070,7 @@ export async function getProjectsWithMembership(memberId, tenantId) {
       projects.map(async (project) => {
         let memberCount = 0;
         let membership = null;
-        const projectId = Number.parseInt(String(project?.id), 10);
+        const projectId = normalizeProjectId(project?.id);
 
         try {
           let countQuery = supabase
@@ -1105,11 +1106,11 @@ export async function getProjectsWithMembership(memberId, tenantId) {
           ...project,
           module_key: normalizeOptional(project?.module_key) || resolveModuleKey(project?.code) || null,
           budget_total:
-            Number.isInteger(projectId) && budgetSummaryByProject.has(projectId)
+            projectId && budgetSummaryByProject.has(projectId)
               ? budgetSummaryByProject.get(projectId)?.budget_total ?? null
               : null,
           expected_revenue:
-            Number.isInteger(projectId) && budgetSummaryByProject.has(projectId)
+            projectId && budgetSummaryByProject.has(projectId)
               ? budgetSummaryByProject.get(projectId)?.expected_revenue ?? null
               : null,
           member_count: memberCount,
@@ -1235,11 +1236,14 @@ const parseNonNegativeNumberOrNull = (value) => {
 };
 
 const parseProjectIdOrThrow = (projectId) => {
-  const parsed = Number.parseInt(String(projectId), 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  const normalized = normalizeProjectId(projectId);
+  if (!normalized) {
     throw new Error("Project id is required.");
   }
-  return parsed;
+  if (isUuidProjectId(normalized)) {
+    return normalized;
+  }
+  return Number.parseInt(normalized, 10);
 };
 
 const normalizeModuleKeyForProject = (value) => {
@@ -1381,8 +1385,8 @@ export async function getTenantProjectMediaLibrary(tenantId, options = {}) {
 
   const perProjectCounter = new Map();
   return data.filter((row) => {
-    const projectId = Number.parseInt(String(row?.project_id || ""), 10);
-    if (!Number.isInteger(projectId) || projectId <= 0) {
+    const projectId = normalizeProjectId(row?.project_id);
+    if (!projectId) {
       return false;
     }
     const count = perProjectCounter.get(projectId) || 0;
@@ -1873,8 +1877,8 @@ export async function createIgaBudgetEntries(projectId, entries = [], tenantId) 
     throw new Error("Database not configured");
   }
 
-  const parsedProjectId = Number.parseInt(String(projectId), 10);
-  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+  if (!parsedProjectId) {
     throw new Error("Invalid project id");
   }
 
@@ -2788,17 +2792,38 @@ async function resolveProjectId(projectRef, tenantId) {
     throw new Error("Project is required");
   }
 
-  if (typeof projectRef === "number") {
-    return projectRef;
-  }
-
   const trimmed = String(projectRef).trim();
   if (!trimmed) {
     throw new Error("Project is required");
   }
 
-  if (/^\d+$/.test(trimmed)) {
-    return Number(trimmed);
+  const normalizedProjectId = normalizeProjectId(trimmed);
+  if (normalizedProjectId) {
+    if (isUuidProjectId(normalizedProjectId)) {
+      let uuidQuery = supabase
+        .from("iga_projects")
+        .select("id")
+        .eq("project_uuid", normalizedProjectId)
+        .limit(1);
+      uuidQuery = applyTenantFilter(uuidQuery, tenantId);
+      const { data: uuidProject, error: uuidError } = await uuidQuery.maybeSingle();
+
+      if (uuidError && isMissingColumnError(uuidError, "project_uuid")) {
+        throw new Error(
+          "Project UUID support is missing in this database. Run migration_086_project_uuid_support.sql."
+        );
+      }
+      if (uuidError) {
+        console.error("Error fetching project by uuid:", uuidError);
+        throw uuidError;
+      }
+      const legacyProjectId = normalizeProjectId(uuidProject?.id);
+      if (!legacyProjectId) {
+        throw new Error("Project not found.");
+      }
+      return Number.parseInt(legacyProjectId, 10);
+    }
+    return Number.parseInt(normalizedProjectId, 10);
   }
 
   const moduleKey = resolveModuleKey(trimmed);
@@ -2838,7 +2863,11 @@ async function resolveProjectId(projectRef, tenantId) {
       throw new Error(`Project not found for module ${moduleKey}.`);
     }
 
-    return moduleProject.id;
+    const resolvedModuleProjectId = normalizeProjectId(moduleProject.id);
+    if (!resolvedModuleProjectId) {
+      throw new Error(`Project not found for module ${moduleKey}.`);
+    }
+    return Number.parseInt(resolvedModuleProjectId, 10);
   }
 
   const projectCode = trimmed.toUpperCase();
@@ -2855,7 +2884,11 @@ async function resolveProjectId(projectRef, tenantId) {
     throw new Error(`Project not found for code ${projectCode}.`);
   }
 
-  return project.id;
+  const resolvedProjectId = normalizeProjectId(project.id);
+  if (!resolvedProjectId) {
+    throw new Error(`Project not found for code ${projectCode}.`);
+  }
+  return Number.parseInt(resolvedProjectId, 10);
 }
 
 async function resolveModuleProjectId(moduleKey, tenantId, projectId) {
@@ -4764,8 +4797,8 @@ export async function createProjectMediaAssets(projectId, files = [], tenantId) 
     throw new Error("Database not configured");
   }
 
-  const parsedProjectId = Number.parseInt(String(projectId), 10);
-  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+  if (!parsedProjectId) {
     throw new Error("Invalid project id");
   }
 
@@ -5159,8 +5192,8 @@ export async function uploadProjectExpenseReceipt(expenseId, file, tenantId) {
     throw new Error("Expense not found.");
   }
 
-  const projectId = Number.parseInt(String(expenseRow?.project_id ?? ""), 10);
-  if (!Number.isInteger(projectId) || projectId <= 0) {
+  const projectId = normalizeProjectId(expenseRow?.project_id);
+  if (!projectId) {
     throw new Error("Expense is missing a valid project.");
   }
 
@@ -6925,6 +6958,11 @@ const parseOptionalInteger = (value) => {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 };
 
+const parseOptionalProjectId = (value) => {
+  const normalized = normalizeProjectId(value);
+  return normalized || null;
+};
+
 const parseOptionalSubscriberId = (value) => {
   const normalized = String(value || "").trim();
   return normalized || null;
@@ -7167,7 +7205,7 @@ const buildOrganizationActivityPayload = (payload = {}, tenantId) => {
     notes: normalizeOptional(payload?.notes),
     location: normalizeOptional(payload?.location),
     status: normalizeMeetingStatus(payload?.status),
-    project_id: parseOptionalInteger(payload?.project_id),
+    project_id: parseOptionalProjectId(payload?.project_id),
     owner_member_id: explicitOwner ?? assignees[0] ?? null,
     start_at: normalizeOptional(payload?.start_at),
     end_at: normalizeOptional(payload?.end_at),
@@ -7199,7 +7237,7 @@ const buildOrganizationActivityLegacyPayload = (payload = {}, tenantId) => {
     notes: normalizeOptional(payload?.notes),
     location: normalizeOptional(payload?.location),
     status: normalizeMeetingStatus(payload?.status),
-    project_id: parseOptionalInteger(payload?.project_id),
+    project_id: parseOptionalProjectId(payload?.project_id),
     owner_member_id: explicitOwner ?? assignees[0] ?? null,
     start_at: normalizeOptional(payload?.start_at),
     end_at: normalizeOptional(payload?.end_at),
@@ -7223,7 +7261,7 @@ const buildOrganizationActivityLegacyMinimalPayload = (payload = {}, tenantId) =
     notes: normalizeOptional(payload?.notes),
     location: normalizeOptional(payload?.location),
     status: normalizeMeetingStatus(payload?.status),
-    project_id: parseOptionalInteger(payload?.project_id),
+    project_id: parseOptionalProjectId(payload?.project_id),
     owner_member_id: explicitOwner ?? assignees[0] ?? null,
     start_at: normalizeOptional(payload?.start_at),
     end_at: normalizeOptional(payload?.end_at),
@@ -8385,8 +8423,8 @@ export async function checkTenantLimit(tenantId, limitKey, options = {}) {
 
 async function resolveTenantIdForProject(projectId, fallbackTenantId = null) {
   const normalizedFallback = normalizeOptional(fallbackTenantId);
-  const parsedProjectId = Number.parseInt(String(projectId || ""), 10);
-  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+  const normalizedProjectId = normalizeProjectId(projectId);
+  if (!normalizedProjectId) {
     return normalizedFallback;
   }
 
@@ -8394,11 +8432,19 @@ async function resolveTenantIdForProject(projectId, fallbackTenantId = null) {
     return normalizedFallback;
   }
 
-  const { data, error } = await supabase
-    .from("iga_projects")
-    .select("tenant_id")
-    .eq("id", parsedProjectId)
-    .maybeSingle();
+  let query = supabase.from("iga_projects").select("tenant_id");
+  if (isUuidProjectId(normalizedProjectId)) {
+    query = query.eq("project_uuid", normalizedProjectId);
+  } else {
+    query = query.eq("id", normalizedProjectId);
+  }
+
+  const { data, error } = await query.maybeSingle();
+
+  if (error && isUuidProjectId(normalizedProjectId) && isMissingColumnError(error, "project_uuid")) {
+    console.warn("Unable to resolve tenant from project UUID: project_uuid column missing.");
+    return normalizedFallback;
+  }
 
   if (error) {
     console.warn("Unable to resolve tenant from project:", error);
@@ -8589,8 +8635,8 @@ export async function createProjectMemberAssignments(projectId, assignments = []
     return { created: [], skipped: [] };
   }
 
-  const parsedProjectId = Number.parseInt(String(projectId), 10);
-  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+  if (!parsedProjectId) {
     throw new Error("Project id is required.");
   }
 
@@ -9174,15 +9220,8 @@ function normalizeInviteProjectScope(scope) {
 }
 
 function normalizeInviteProjectIds(projectIds) {
-  if (!Array.isArray(projectIds)) {
-    return [];
-  }
-  return Array.from(
-    new Set(
-      projectIds
-        .map((projectId) => Number.parseInt(String(projectId || ""), 10))
-        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
-    )
+  return normalizeProjectIdList(projectIds).map((projectId) =>
+    isUuidProjectId(projectId) ? projectId : Number.parseInt(projectId, 10)
   );
 }
 
@@ -9233,8 +9272,8 @@ export async function getProjectMagicLinkInvites(projectId) {
     throw new Error("Supabase not configured");
   }
 
-  const parsedProjectId = Number.parseInt(String(projectId || ""), 10);
-  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+  const parsedProjectId = parseProjectIdOrThrow(projectId);
+  if (!parsedProjectId) {
     return [];
   }
 
@@ -9270,8 +9309,8 @@ export async function createProjectMagicLinkInvite(payload) {
     throw new Error("Supabase not configured");
   }
 
-  const parsedProjectId = Number.parseInt(String(payload?.project_id || payload?.projectId || ""), 10);
-  if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+  const parsedProjectId = parseProjectIdOrThrow(payload?.project_id || payload?.projectId || "");
+  if (!parsedProjectId) {
     throw new Error("Valid project id is required.");
   }
 
@@ -9489,8 +9528,8 @@ export async function getProjectMemberAssignmentsSummary(tenantId, memberId = nu
   const projectIds = Array.from(
     new Set(
       rows
-        .map((row) => Number.parseInt(String(row?.project_id || ""), 10))
-        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
+        .map((row) => normalizeProjectId(row?.project_id))
+        .filter(Boolean)
     )
   );
 
@@ -9506,8 +9545,8 @@ export async function getProjectMemberAssignmentsSummary(tenantId, memberId = nu
       throw projectsError;
     }
     (projectRows || []).forEach((project) => {
-      const projectId = Number.parseInt(String(project?.id || ""), 10);
-      if (!Number.isInteger(projectId) || projectId <= 0) return;
+      const projectId = normalizeProjectId(project?.id);
+      if (!projectId) return;
       projectNameById.set(projectId, {
         id: projectId,
         name: project?.name || `Project ${projectId}`,
@@ -9518,7 +9557,7 @@ export async function getProjectMemberAssignmentsSummary(tenantId, memberId = nu
   }
 
   return rows.map((row) => {
-    const parsedProjectId = Number.parseInt(String(row?.project_id || ""), 10);
+    const parsedProjectId = normalizeProjectId(row?.project_id);
     const parsedMemberRef = Number.parseInt(String(row?.member_id || ""), 10);
     const projectInfo = projectNameById.get(parsedProjectId) || null;
     return {
@@ -9527,7 +9566,7 @@ export async function getProjectMemberAssignmentsSummary(tenantId, memberId = nu
       member_id: parsedMemberRef,
       role: row?.role || "Member",
       term_start: row?.term_start || null,
-      project_name: projectInfo?.name || (Number.isInteger(parsedProjectId) ? `Project ${parsedProjectId}` : "Project"),
+      project_name: projectInfo?.name || (parsedProjectId ? `Project ${parsedProjectId}` : "Project"),
       project_module_key: projectInfo?.module_key || "",
       project_status: projectInfo?.status || "",
     };

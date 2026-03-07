@@ -16,6 +16,7 @@ import {
   updateMemberAdmin,
   updateTenantMembershipAdmin,
 } from "../../lib/dataService.js";
+import { normalizeProjectId, normalizeProjectIdList } from "../../lib/projectIds.js";
 
 const createInviteForm = () => ({
   name: "",
@@ -69,16 +70,7 @@ const normalizeInviteProjectScope = (scope) => {
 };
 
 const normalizeInviteProjectIds = (projectIds) => {
-  if (!Array.isArray(projectIds)) {
-    return [];
-  }
-  return Array.from(
-    new Set(
-      projectIds
-        .map((projectId) => Number.parseInt(String(projectId || ""), 10))
-        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
-    )
-  );
+  return normalizeProjectIdList(projectIds);
 };
 
 const isInviteAdminRole = (role) => {
@@ -795,18 +787,18 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
   };
 
   const handleInviteProjectToggle = (projectId) => {
-    const parsedProjectId = Number.parseInt(String(projectId || ""), 10);
-    if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    const normalizedProjectId = normalizeProjectId(projectId);
+    if (!normalizedProjectId) {
       return;
     }
     setInviteForm((prev) => {
       const current = normalizeInviteProjectIds(prev.project_ids);
-      const hasProject = current.includes(parsedProjectId);
+      const hasProject = current.includes(normalizedProjectId);
       return {
         ...prev,
         project_ids: hasProject
-          ? current.filter((id) => id !== parsedProjectId)
-          : [...current, parsedProjectId],
+          ? current.filter((id) => id !== normalizedProjectId)
+          : [...current, normalizedProjectId],
       };
     });
   };
@@ -1763,8 +1755,8 @@ export default function MembersPage({ tenantInfo, tenantId, user, tenantRole, se
                 <div className="data-modal-checkbox-list">
                   {projects.length ? (
                     projects.map((project) => {
-                      const projectId = Number.parseInt(String(project?.id || ""), 10);
-                      if (!Number.isInteger(projectId) || projectId <= 0) return null;
+                      const projectId = normalizeProjectId(project?.id);
+                      if (!projectId) return null;
                       const checked = inviteProjectIds.includes(projectId);
                       return (
                         <label key={projectId} className="data-modal-checkbox-item">

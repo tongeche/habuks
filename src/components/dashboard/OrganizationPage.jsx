@@ -35,6 +35,7 @@ import {
   setIgaProjectVisibility,
   updateTenant,
 } from "../../lib/dataService.js";
+import { normalizeProjectId, normalizeProjectIdList } from "../../lib/projectIds.js";
 import { presentAppError } from "../../lib/appErrors.js";
 import {
   COMMON_CURRENCY_OPTIONS,
@@ -150,16 +151,7 @@ const normalizeInviteProjectScope = (scope) => {
 };
 
 const normalizeInviteProjectIds = (projectIds) => {
-  if (!Array.isArray(projectIds)) {
-    return [];
-  }
-  return Array.from(
-    new Set(
-      projectIds
-        .map((projectId) => Number.parseInt(String(projectId || ""), 10))
-        .filter((projectId) => Number.isInteger(projectId) && projectId > 0)
-    )
-  );
+  return normalizeProjectIdList(projectIds);
 };
 
 const isInviteAdminRole = (role) => {
@@ -3292,7 +3284,7 @@ function OrganizationPage({
       start_at: toIsoStringOrNull(meetingForm.startAt),
       end_at: toIsoStringOrNull(meetingForm.endAt),
       location: String(meetingForm.location || "").trim(),
-      project_id: meetingForm.projectId ? Number.parseInt(String(meetingForm.projectId), 10) : null,
+      project_id: normalizeProjectId(meetingForm.projectId) || null,
       owner_member_id: meetingForm.ownerMemberId
         ? Number.parseInt(String(meetingForm.ownerMemberId), 10)
         : null,
@@ -3668,18 +3660,18 @@ function OrganizationPage({
   };
 
   const handleInviteProjectToggle = (projectId) => {
-    const parsedProjectId = Number.parseInt(String(projectId || ""), 10);
-    if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    const normalizedProjectId = normalizeProjectId(projectId);
+    if (!normalizedProjectId) {
       return;
     }
     setInviteForm((prev) => {
       const current = normalizeInviteProjectIds(prev.project_ids);
-      const hasProject = current.includes(parsedProjectId);
+      const hasProject = current.includes(normalizedProjectId);
       return {
         ...prev,
         project_ids: hasProject
-          ? current.filter((id) => id !== parsedProjectId)
-          : [...current, parsedProjectId],
+          ? current.filter((id) => id !== normalizedProjectId)
+          : [...current, normalizedProjectId],
       };
     });
   };
@@ -4616,8 +4608,8 @@ function OrganizationPage({
     }
     if (selected.has("finance_records")) {
       const projectIds = projects
-        .map((project) => Number.parseInt(String(project?.id || ""), 10))
-        .filter((projectId) => Number.isInteger(projectId) && projectId > 0);
+        .map((project) => normalizeProjectId(project?.id))
+        .filter(Boolean);
       const [contributions, payouts, welfareTransactions, projectExpenses, projectSales] =
         await Promise.all([
           getTenantContributions(tenantId),
@@ -7799,8 +7791,8 @@ function OrganizationPage({
                 <div className="data-modal-checkbox-list">
                   {projects.length ? (
                     projects.map((project) => {
-                      const projectId = Number.parseInt(String(project?.id || ""), 10);
-                      if (!Number.isInteger(projectId) || projectId <= 0) return null;
+                      const projectId = normalizeProjectId(project?.id);
+                      if (!projectId) return null;
                       const checked = inviteProjectIds.includes(projectId);
                       return (
                         <label key={projectId} className="data-modal-checkbox-item">
@@ -8413,7 +8405,9 @@ function OrganizationPage({
                   {partnerProjectOptions.length ? (
                     <div className="org-shell-partner-project-picker">
                       {partnerProjectOptions.map((project) => {
-                        const checked = (partnerForm.linked_project_ids || []).includes(project.id);
+                        const checked = (partnerForm.linked_project_ids || []).includes(
+                          String(project?.id || "").trim()
+                        );
                         return (
                           <label key={`partner-project-${project.id}`} className="org-shell-partner-project-option">
                             <input

@@ -48,6 +48,7 @@ import {
 import { presentAppError } from "../../lib/appErrors.js";
 import { formatCurrencyAmount } from "../../lib/currency.js";
 import { buildProjectTemplateOfficialReportFile } from "../../lib/reporting/projectTemplateOfficialReport.js";
+import { normalizeProjectId } from "../../lib/projectIds.js";
 import { Icon } from "../icons.jsx";
 import DataModal from "./DataModal.jsx";
 import ProjectEditorForm from "./ProjectEditorForm.jsx";
@@ -1218,8 +1219,8 @@ export function ProjectsPage({
   const canSelfManageMembership = isAdmin;
   const canAcceptProjectInvites = Boolean(user?.id);
   const activeProjectActionTarget = selectedProject || mobileProjectActionTarget;
-  const parsedEditingProjectId = Number.parseInt(String(editingProjectId ?? ""), 10);
-  const isEditingProject = Number.isInteger(parsedEditingProjectId) && parsedEditingProjectId > 0;
+  const normalizedEditingProjectId = normalizeProjectId(editingProjectId);
+  const isEditingProject = Boolean(normalizedEditingProjectId);
 
   const openResponseModal = useCallback((payload) => {
     setResponseData({
@@ -2372,7 +2373,10 @@ export function ProjectsPage({
           try {
             await deleteIgaProject(project.id, tenantId);
             successCount += 1;
-            deletedIds.push(Number.parseInt(String(project.id), 10));
+            const deletedProjectId = normalizeProjectId(project.id);
+            if (deletedProjectId) {
+              deletedIds.push(deletedProjectId);
+            }
           } catch (error) {
             failureCount += 1;
             if (!firstFailure) firstFailure = error;
@@ -2389,7 +2393,7 @@ export function ProjectsPage({
         }
 
         if (deletedIds.length && selectedProject?.id) {
-          const selectedId = Number.parseInt(String(selectedProject.id), 10);
+          const selectedId = normalizeProjectId(selectedProject.id);
           if (deletedIds.includes(selectedId)) {
             setSelectedProject(null);
           }
@@ -2994,8 +2998,8 @@ export function ProjectsPage({
   }, [selectedProject?.id, tenantId]);
 
   const loadProjectInvites = useCallback(async () => {
-    const parsedProjectId = Number.parseInt(String(selectedProject?.id || ""), 10);
-    if (!canViewProjectInvites || !Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    const projectId = normalizeProjectId(selectedProject?.id);
+    if (!canViewProjectInvites || !projectId) {
       setProjectInvites([]);
       return;
     }
@@ -3003,7 +3007,7 @@ export function ProjectsPage({
     setProjectInvitesLoading(true);
     setProjectInvitesError("");
     try {
-      const rows = await getProjectMagicLinkInvites(parsedProjectId);
+      const rows = await getProjectMagicLinkInvites(projectId);
       setProjectInvites(Array.isArray(rows) ? rows : []);
     } catch (error) {
       console.error("Error loading project invites:", error);
@@ -4676,8 +4680,8 @@ export function ProjectsPage({
     event.preventDefault();
     if (!canManageProjectContent) return;
 
-    const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
-    if (!Number.isInteger(projectId) || projectId <= 0) {
+    const projectId = normalizeProjectId(selectedProject?.id);
+    if (!projectId) {
       setExpenseCategoriesError("Select a valid project before managing categories.");
       return;
     }
@@ -5081,10 +5085,10 @@ export function ProjectsPage({
   const handleExpenseFormSubmit = async (event) => {
     event.preventDefault();
     if (!canManageProjectContent) return;
-    const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
+    const projectId = normalizeProjectId(selectedProject?.id);
     const normalizedEditingExpenseId = String(editingExpenseId || "").trim();
     const isEditingExpense = Boolean(normalizedEditingExpenseId);
-    if (!Number.isInteger(projectId) || projectId <= 0) {
+    if (!projectId) {
       setExpenseFormError("Select a valid project before adding an expense.");
       return;
     }
@@ -5599,9 +5603,9 @@ export function ProjectsPage({
     if (!canManageProjectContent) return;
     const files = Array.from(event.target.files || []);
     event.target.value = "";
-    const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
+    const projectId = normalizeProjectId(selectedProject?.id);
     if (!files.length) return;
-    if (!Number.isInteger(projectId) || projectId <= 0) {
+    if (!projectId) {
       setProjectDocumentsError("Select a valid project before uploading documents.");
       return;
     }
@@ -6249,8 +6253,8 @@ export function ProjectsPage({
     ) {
       return;
     }
-    const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
-    if (!Number.isInteger(projectId) || projectId <= 0) {
+    const projectId = normalizeProjectId(selectedProject?.id);
+    if (!projectId) {
       setProjectDocumentsError("Select a valid project before emitting documents.");
       return;
     }
@@ -6838,11 +6842,11 @@ export function ProjectsPage({
   const handleTaskFormSubmit = async (event) => {
     event.preventDefault();
     if (!canManageProjectContent) return;
-    const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
+    const projectId = normalizeProjectId(selectedProject?.id);
     const parsedEditingTaskId = String(editingTaskId || "").trim();
     const isEditingTask = Boolean(parsedEditingTaskId);
 
-    if (!Number.isInteger(projectId) || projectId <= 0) {
+    if (!projectId) {
       setTaskFormError("Select a valid project before adding a task.");
       return;
     }
@@ -7346,11 +7350,11 @@ export function ProjectsPage({
   const handleNoteFormSubmit = async (event) => {
     event.preventDefault();
     if (!canManageProjectContent) return;
-    const projectId = Number.parseInt(String(selectedProject?.id ?? ""), 10);
+    const projectId = normalizeProjectId(selectedProject?.id);
     const parsedEditingNoteId = String(editingNoteId || "").trim();
     const isEditingNote = Boolean(parsedEditingNoteId);
 
-    if (!Number.isInteger(projectId) || projectId <= 0) {
+    if (!projectId) {
       setNoteFormError("Select a valid project before adding a note.");
       return;
     }
@@ -7669,8 +7673,8 @@ export function ProjectsPage({
   }, []);
 
   const openProjectInviteModal = useCallback(() => {
-    const parsedProjectId = Number.parseInt(String(selectedProject?.id || ""), 10);
-    if (!canViewProjectInvites || !Number.isInteger(parsedProjectId) || parsedProjectId <= 0) {
+    const projectId = normalizeProjectId(selectedProject?.id);
+    if (!canViewProjectInvites || !projectId) {
       return;
     }
     resetProjectInviteForm();
@@ -7697,8 +7701,8 @@ export function ProjectsPage({
     event.preventDefault();
     if (!canViewProjectInvites) return;
 
-    const projectId = Number.parseInt(String(selectedProject?.id || ""), 10);
-    if (!Number.isInteger(projectId) || projectId <= 0) {
+    const projectId = normalizeProjectId(selectedProject?.id);
+    if (!projectId) {
       setProjectInviteFormError("Select a valid project before inviting members.");
       return;
     }
@@ -7945,15 +7949,15 @@ export function ProjectsPage({
   const visibleProjectIds = useMemo(
     () =>
       visibleProjects
-        .map((project) => Number.parseInt(String(project?.id), 10))
-        .filter((projectId) => Number.isInteger(projectId) && projectId > 0),
+        .map((project) => normalizeProjectId(project?.id))
+        .filter(Boolean),
     [visibleProjects]
   );
 
   const selectedProjects = useMemo(() => {
     const selectedIdSet = new Set(selectedProjectIds);
     return visibleProjects.filter((project) =>
-      selectedIdSet.has(Number.parseInt(String(project?.id), 10))
+      selectedIdSet.has(normalizeProjectId(project?.id))
     );
   }, [visibleProjects, selectedProjectIds]);
 
@@ -7980,13 +7984,13 @@ export function ProjectsPage({
   };
 
   const handleToggleProjectSelection = (projectId) => {
-    const parsedProjectId = Number.parseInt(String(projectId), 10);
-    if (!Number.isInteger(parsedProjectId) || parsedProjectId <= 0) return;
+    const normalizedProjectId = normalizeProjectId(projectId);
+    if (!normalizedProjectId) return;
     setSelectedProjectIds((prev) => {
-      if (prev.includes(parsedProjectId)) {
-        return prev.filter((id) => id !== parsedProjectId);
+      if (prev.includes(normalizedProjectId)) {
+        return prev.filter((id) => id !== normalizedProjectId);
       }
-      return [...prev, parsedProjectId];
+      return [...prev, normalizedProjectId];
     });
   };
 
@@ -8467,7 +8471,7 @@ export function ProjectsPage({
           {projectView === "grid" ? (
             <div className="projects-card-grid">
               {visibleProjects.map((project) => {
-                const projectId = Number.parseInt(String(project.id), 10);
+                const projectId = normalizeProjectId(project?.id);
                 const isProjectMenuOpen = String(openProjectMenuId ?? "") === String(project?.id ?? "");
                 const progressValue = getProjectProgress(project);
                 const avatarLetters = getAvatarLetters(project);
@@ -8588,8 +8592,8 @@ export function ProjectsPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleProjects.map((project) => {
-                    const projectId = Number.parseInt(String(project.id), 10);
+              {visibleProjects.map((project) => {
+                    const projectId = normalizeProjectId(project?.id);
                     const isChecked = selectedProjectIds.includes(projectId);
                     const isVisible = project?.is_visible !== false;
                     const budgetAmount = getProjectBudgetAmount(project);
@@ -8649,7 +8653,7 @@ export function ProjectsPage({
           {projectView === "list" ? (
             <div className="projects-list-view">
               {visibleProjects.map((project) => {
-                const projectId = Number.parseInt(String(project.id), 10);
+                const projectId = normalizeProjectId(project?.id);
                 const isChecked = selectedProjectIds.includes(projectId);
                 const isVisible = project?.is_visible !== false;
                 const budgetAmount = getProjectBudgetAmount(project);
