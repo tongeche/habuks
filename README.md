@@ -1,10 +1,10 @@
 # Habuks Console
 
-HabuKS operations platform for managing workspace members, projects, transactions, and internal support workflows through a React frontend backed by Supabase.
+Habuks is an operations platform for managing workspace members, projects, transactions, and internal support workflows.
 
 ## What This App Includes
 
-- Tenant workspace and member management
+- Organization workspace and member management
 - Internal admin console for tenant support operations
 - Activity logs and tenant health/deployment views
 - Supabase-backed auth, data, and Edge Function support tooling
@@ -54,7 +54,6 @@ Use `.env.example` as the source of truth. Required variables for standard usage
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-Additional optional variables support meeting-minutes AI integration.
 
 Server-only values such as `SUPABASE_SERVICE_ROLE_KEY` must never be exposed in browser code.
 
